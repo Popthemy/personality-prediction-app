@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Research Tools{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100">
+  <!-- Header -->
+  <div class="bg-white border-b border-stone-200">
+    <div class="max-w-7xl mx-auto px-6 py-8">
+      <h1 class="text-4xl font-bold text-stone-900">Research Tools</h1>
+      <p class="text-stone-600 mt-2">Manage data import, X integration, and pipeline execution</p>
+    </div>
+  </div>
+
+  <div class="max-w-7xl mx-auto px-6 py-8">
+    <!-- Tool Cards Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+      
+      <!-- CSV Import Card -->
+      <div class="bg-white rounded-lg border border-stone-200 shadow-sm hover:shadow-md transition overflow-hidden">
+        <div class="h-2 bg-gradient-to-r from-blue-400 to-blue-600"></div>
+        <div class="p-6">
+          <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold text-stone-900 mb-2">Import BFI-44 Survey</h3>
+          <p class="text-stone-600 text-sm mb-4">Upload Google Form CSV with Big Five Inventory responses as ground truth</p>
+          <a href="{% url 'tools:csv_upload' %}" class="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition">
+            Upload CSV
+          </a>
+        </div>
+      </div>
+
+      <!-- X/Twitter Fetch Card -->
+      <div class="bg-white rounded-lg border border-stone-200 shadow-sm hover:shadow-md transition overflow-hidden">
+        <div class="h-2 bg-gradient-to-r from-purple-400 to-purple-600"></div>
+        <div class="p-6">
+          <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold text-stone-900 mb-2">Fetch X Posts</h3>
+          <p class="text-stone-600 text-sm mb-4">Retrieve recent posts from volunteers' X (Twitter) accounts</p>
+          <a href="{% url 'tools:fetch_posts' %}" class="inline-block px-4 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition">
+            Fetch Posts
+          </a>
+        </div>
+      </div>
+
+      <!-- Pipeline Execution Card -->
+      <div class="bg-white rounded-lg border border-stone-200 shadow-sm hover:shadow-md transition overflow-hidden">
+        <div class="h-2 bg-gradient-to-r from-green-400 to-green-600"></div>
+        <div class="p-6">
+          <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold text-stone-900 mb-2">Run ML Pipeline</h3>
+          <p class="text-stone-600 text-sm mb-4">Execute full pipeline: Q-Learning → BERT → GAN → Lasso</p>
+          <a href="{% url 'tools:index' %}" class="inline-block px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition">
+            Execute Pipeline
+          </a>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Pipeline Overview -->
+    <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-8 mb-8">
+      <h2 class="text-2xl font-bold text-stone-900 mb-6">Pipeline Architecture</h2>
+      <div class="space-y-4">
+        <div class="flex items-start">
+          <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+            <span class="text-blue-600 font-bold">1</span>
+          </div>
+          <div class="ml-4">
+            <h3 class="font-bold text-stone-900">Q-Learning Active Signal Selection</h3>
+            <p class="text-stone-600 text-sm mt-1">Intelligent post selection using epsilon-greedy exploration strategy</p>
+          </div>
+        </div>
+        <div class="flex items-start">
+          <div class="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+            <span class="text-purple-600 font-bold">2</span>
+          </div>
+          <div class="ml-4">
+            <h3 class="font-bold text-stone-900">BERT Contextual Embeddings</h3>
+            <p class="text-stone-600 text-sm mt-1">Extract 768-dimensional contextual embeddings using bert-base-uncased</p>
+          </div>
+        </div>
+        <div class="flex items-start">
+          <div class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+            <span class="text-green-600 font-bold">3</span>
+          </div>
+          <div class="ml-4">
+            <h3 class="font-bold text-stone-900">GAN Data Augmentation</h3>
+            <p class="text-stone-600 text-sm mt-1">Generate synthetic samples for improved model training robustness</p>
+          </div>
+        </div>
+        <div class="flex items-start">
+          <div class="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+            <span class="text-orange-600 font-bold">4</span>
+          </div>
+          <div class="ml-4">
+            <h3 class="font-bold text-stone-900">Lasso Regression Prediction</h3>
+            <p class="text-stone-600 text-sm mt-1">Train per-trait models with L1 regularization for feature interpretability</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="bg-white rounded-lg border border-stone-200 shadow-sm overflow-hidden">
+      <div class="px-6 py-4 border-b border-stone-200">
+        <h2 class="text-lg font-bold text-stone-900">Recent Volunteer Additions</h2>
+      </div>
+      <div class="divide-y divide-stone-200">
+        {% for volunteer in recent_volunteers %}
+        <div class="px-6 py-4 flex items-center justify-between hover:bg-stone-50">
+          <div>
+            <p class="font-medium text-stone-900">@{{ volunteer.twitter_handle }}</p>
+            <p class="text-sm text-stone-600">Added {{ volunteer.created_at|date:"M d, Y H:i" }}</p>
+          </div>
+          <a href="{% url 'dashboard:volunteer_detail' pk=volunteer.id %}" class="text-blue-600 hover:text-blue-800 font-medium">View Profile</a>
+        </div>
+        {% empty %}
+        <div class="px-6 py-8 text-center text-stone-500">
+          No volunteers added yet
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

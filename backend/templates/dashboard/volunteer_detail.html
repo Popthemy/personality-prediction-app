@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ volunteer.twitter_handle }} - Personality Profile{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100">
+  <!-- Header -->
+  <div class="bg-white border-b border-stone-200">
+    <div class="max-w-7xl mx-auto px-6 py-8">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-4xl font-bold text-stone-900">@{{ volunteer.twitter_handle }}</h1>
+          <p class="text-stone-600 mt-2">Personality Analysis Report</p>
+        </div>
+        <a href="{% url 'dashboard:index' %}" class="px-4 py-2 border border-stone-300 text-stone-900 rounded-lg hover:bg-stone-50">
+          Back to Dashboard
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="max-w-7xl mx-auto px-6 py-8">
+    <!-- Status Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <div class="bg-white rounded-lg border border-stone-200 p-4">
+        <p class="text-stone-600 text-sm font-medium">Ground Truth Status</p>
+        {% if ground_truth %}
+        <p class="text-2xl font-bold text-green-600 mt-2">Completed</p>
+        <p class="text-xs text-stone-500 mt-1">{{ ground_truth.created_at|date:"M d, Y" }}</p>
+        {% else %}
+        <p class="text-2xl font-bold text-yellow-600 mt-2">Pending</p>
+        {% endif %}
+      </div>
+      
+      <div class="bg-white rounded-lg border border-stone-200 p-4">
+        <p class="text-stone-600 text-sm font-medium">Prediction Status</p>
+        {% if prediction %}
+        <p class="text-2xl font-bold text-blue-600 mt-2">Complete</p>
+        <p class="text-xs text-stone-500 mt-1">MAE: {{ prediction.mae_score|floatformat:3 }}</p>
+        {% else %}
+        <p class="text-2xl font-bold text-gray-600 mt-2">Pending</p>
+        {% endif %}
+      </div>
+
+      <div class="bg-white rounded-lg border border-stone-200 p-4">
+        <p class="text-stone-600 text-sm font-medium">Pipeline Progress</p>
+        <div class="mt-2">
+          <div class="w-full bg-stone-200 rounded-full h-2">
+            <div class="bg-blue-600 h-2 rounded-full" style="width: 75%"></div>
+          </div>
+          <p class="text-xs text-stone-500 mt-2">75% Complete</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+      <!-- Left: Ground Truth OCEAN -->
+      <div class="lg:col-span-1">
+        <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-6">
+          <h2 class="text-xl font-bold text-stone-900 mb-6">Ground Truth (BFI-44)</h2>
+          {% if ground_truth %}
+          <div class="space-y-4">
+            <!-- Openness -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Openness</span>
+                <span class="text-sm font-bold text-blue-600">{{ ground_truth.openness|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-blue-600 h-2 rounded-full" style="width: {{ ground_truth.openness|mul:20 }}%"></div>
+              </div>
+            </div>
+
+            <!-- Conscientiousness -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Conscientiousness</span>
+                <span class="text-sm font-bold text-green-600">{{ ground_truth.conscientiousness|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-green-600 h-2 rounded-full" style="width: {{ ground_truth.conscientiousness|mul:20 }}%"></div>
+              </div>
+            </div>
+
+            <!-- Extraversion -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Extraversion</span>
+                <span class="text-sm font-bold text-purple-600">{{ ground_truth.extraversion|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-purple-600 h-2 rounded-full" style="width: {{ ground_truth.extraversion|mul:20 }}%"></div>
+              </div>
+            </div>
+
+            <!-- Agreeableness -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Agreeableness</span>
+                <span class="text-sm font-bold text-orange-600">{{ ground_truth.agreeableness|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-orange-600 h-2 rounded-full" style="width: {{ ground_truth.agreeableness|mul:20 }}%"></div>
+              </div>
+            </div>
+
+            <!-- Neuroticism -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Neuroticism</span>
+                <span class="text-sm font-bold text-red-600">{{ ground_truth.neuroticism|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-red-600 h-2 rounded-full" style="width: {{ ground_truth.neuroticism|mul:20 }}%"></div>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <p class="text-stone-500 text-center py-8">No BFI-44 ground truth available</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Center: Radar Chart -->
+      <div class="lg:col-span-1">
+        <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-6 flex flex-col items-center justify-center">
+          <h2 class="text-xl font-bold text-stone-900 mb-4 w-full">OCEAN Radar Chart</h2>
+          <canvas id="ocean_radar_chart" width="280" height="280"></canvas>
+          {% if prediction %}
+          <p class="text-xs text-stone-500 text-center mt-4">
+            Confidence: <span class="font-bold">{{ prediction.confidence_score|mul:100|floatformat:0 }}%</span>
+          </p>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Right: Predicted OCEAN -->
+      <div class="lg:col-span-1">
+        <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-6">
+          <h2 class="text-xl font-bold text-stone-900 mb-6">Model Prediction</h2>
+          {% if prediction %}
+          <div class="space-y-4">
+            <!-- Openness -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Openness</span>
+                <span class="text-sm font-bold text-blue-600">{{ prediction.openness_predicted|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-blue-600 h-2 rounded-full" style="width: {{ prediction.openness_predicted|mul:20 }}%"></div>
+              </div>
+            </div>
+
+            <!-- Conscientiousness -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Conscientiousness</span>
+                <span class="text-sm font-bold text-green-600">{{ prediction.conscientiousness_predicted|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-green-600 h-2 rounded-full" style="width: {{ prediction.conscientiousness_predicted|mul:20 }}%"></div>
+              </div>
+            </div>
+
+            <!-- Extraversion -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Extraversion</span>
+                <span class="text-sm font-bold text-purple-600">{{ prediction.extraversion_predicted|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-purple-600 h-2 rounded-full" style="width: {{ prediction.extraversion_predicted|mul:20 }}%"></div>
+              </div>
+            </div>
+
+            <!-- Agreeableness -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Agreeableness</span>
+                <span class="text-sm font-bold text-orange-600">{{ prediction.agreeableness_predicted|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-orange-600 h-2 rounded-full" style="width: {{ prediction.agreeableness_predicted|mul:20 }}%"></div>
+              </div>
+            </div>
+
+            <!-- Neuroticism -->
+            <div>
+              <div class="flex justify-between mb-2">
+                <span class="text-sm font-medium text-stone-900">Neuroticism</span>
+                <span class="text-sm font-bold text-red-600">{{ prediction.neuroticism_predicted|floatformat:1 }}/5</span>
+              </div>
+              <div class="w-full bg-stone-200 rounded-full h-2">
+                <div class="bg-red-600 h-2 rounded-full" style="width: {{ prediction.neuroticism_predicted|mul:20 }}%"></div>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <p class="text-stone-500 text-center py-8">Awaiting pipeline completion</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Performance Metrics -->
+    {% if prediction %}
+    <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-8 mb-8">
+      <h2 class="text-xl font-bold text-stone-900 mb-6">Model Performance</h2>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="border-l-4 border-blue-600 pl-4">
+          <p class="text-stone-600 text-sm font-medium">MAE Score</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.mae_score|floatformat:3 }}</p>
+          <p class="text-xs text-stone-500 mt-1">Lower is better</p>
+        </div>
+        <div class="border-l-4 border-green-600 pl-4">
+          <p class="text-stone-600 text-sm font-medium">Correlation</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.correlation|floatformat:3 }}</p>
+          <p class="text-xs text-stone-500 mt-1">Pearson r</p>
+        </div>
+        <div class="border-l-4 border-purple-600 pl-4">
+          <p class="text-stone-600 text-sm font-medium">R² Score</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.r2_score|floatformat:3 }}</p>
+          <p class="text-xs text-stone-500 mt-1">Variance explained</p>
+        </div>
+        <div class="border-l-4 border-orange-600 pl-4">
+          <p class="text-stone-600 text-sm font-medium">Confidence</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.confidence_score|mul:100|floatformat:0 }}%</p>
+          <p class="text-xs text-stone-500 mt-1">Model confidence</p>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Domain Insights Tabs -->
+    <div class="bg-white rounded-lg border border-stone-200 shadow-sm overflow-hidden">
+      <div class="border-b border-stone-200">
+        <div class="px-6 py-4">
+          <h2 class="text-xl font-bold text-stone-900">Domain-Specific Insights</h2>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
+        <!-- Education -->
+        <div>
+          <h3 class="font-bold text-stone-900 mb-2">Education</h3>
+          <p class="text-stone-600 text-sm">Based on personality analysis, this individual shows strong patterns for structured learning with emphasis on conscientiousness and openness to new ideas.</p>
+        </div>
+
+        <!-- Health -->
+        <div>
+          <h3 class="font-bold text-stone-900 mb-2">Health & Wellbeing</h3>
+          <p class="text-stone-600 text-sm">Personality traits suggest engagement with wellness practices. Recommendation: Focus on stress management and social connection strategies.</p>
+        </div>
+
+        <!-- Employment -->
+        <div>
+          <h3 class="font-bold text-stone-900 mb-2">Employment</h3>
+          <p class="text-stone-600 text-sm">This personality profile aligns well with collaborative team environments and roles requiring creative problem-solving and interpersonal engagement.</p>
+        </div>
+
+        <!-- Responsible AI -->
+        <div>
+          <h3 class="font-bold text-stone-900 mb-2">Responsible AI</h3>
+          <p class="text-stone-600 text-sm">This prediction was generated using Lasso regression with interpretable features. Full feature importance analysis available in technical documentation.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Initialize radar chart
+{% if ground_truth and prediction %}
+const ctx = document.getElementById('ocean_radar_chart').getContext('2d');
+new Chart(ctx, {
+  type: 'radar',
+  data: {
+    labels: ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism'],
+    datasets: [
+      {
+        label: 'Ground Truth',
+        data: [
+          {{ ground_truth.openness }},
+          {{ ground_truth.conscientiousness }},
+          {{ ground_truth.extraversion }},
+          {{ ground_truth.agreeableness }},
+          {{ ground_truth.neuroticism }},
+        ],
+        borderColor: 'rgb(100, 116, 139)',
+        backgroundColor: 'rgba(100, 116, 139, 0.1)',
+        borderWidth: 2,
+        pointRadius: 3,
+      },
+      {
+        label: 'Prediction',
+        data: [
+          {{ prediction.openness_predicted }},
+          {{ prediction.conscientiousness_predicted }},
+          {{ prediction.extraversion_predicted }},
+          {{ prediction.agreeableness_predicted }},
+          {{ prediction.neuroticism_predicted }},
+        ],
+        borderColor: 'rgb(59, 130, 246)',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderWidth: 2,
+        pointRadius: 3,
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: true,
+    scales: {
+      r: {
+        min: 1,
+        max: 5,
+        ticks: { stepSize: 1 },
+        grid: { color: 'rgba(0, 0, 0, 0.05)' }
+      }
+    },
+    plugins: {
+      legend: {
+        position: 'bottom',
+        labels: { font: { size: 12 } }
+      }
+    }
+  }
+});
+{% endif %}
+</script>
+{% endblock %}

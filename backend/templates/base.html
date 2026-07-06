@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ site_name }}{% endblock %}</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js for visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- HTMX for interactive elements -->
+    <script src="https://unpkg.com/htmx.org"></script>
+    
+    <style>
+        :root {
+            --color-primary: #8B4513;
+            --color-accent: #A0522D;
+            --color-light: #F5F5F5;
+            --color-dark: #1a1a1a;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        .navbar {
+            background-color: var(--color-primary);
+            border-bottom: 3px solid var(--color-accent);
+        }
+        
+        .btn-primary {
+            background-color: var(--color-primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--color-accent);
+        }
+        
+        .ocean-chart {
+            max-width: 400px;
+        }
+    </style>
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="h-full bg-gray-50 flex flex-col">
+    <!-- Navigation -->
+    <nav class="navbar shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center gap-4">
+                    <a href="{% url 'public:index' %}" class="text-white text-2xl font-bold">
+                        Big Five
+                    </a>
+                </div>
+                
+                <div class="flex items-center gap-6">
+                    {% if user.is_authenticated %}
+                        <a href="{% url 'dashboard:index' %}" class="text-white hover:text-gray-200">Dashboard</a>
+                        <a href="{% url 'tools:index' %}" class="text-white hover:text-gray-200">Tools</a>
+                        <a href="{% url 'dashboard:insights' %}" class="text-white hover:text-gray-200">Insights</a>
+                        <a href="{% url 'accounts:profile' %}" class="text-white hover:text-gray-200">{{ user.username }}</a>
+                        <a href="{% url 'accounts:logout' %}" class="text-white hover:text-gray-200">Logout</a>
+                    {% else %}
+                        <a href="{% url 'public:live_prediction' %}" class="text-white hover:text-gray-200">Live Prediction</a>
+                        <a href="{% url 'accounts:login' %}" class="text-white hover:text-gray-200">Login</a>
+                        <a href="{% url 'accounts:register' %}" class="btn-primary px-4 py-2 rounded">Register</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main content -->
+    <main class="flex-1 max-w-7xl mx-auto w-full px-4 py-8">
+        {% if messages %}
+            <div class="mb-6">
+                {% for message in messages %}
+                    <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-2">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+        
+        {% block content %}{% endblock %}
+    </main>
+    
+    <!-- Footer -->
+    <footer class="bg-gray-900 text-white mt-auto py-6 border-t-4" style="border-color: var(--color-accent);">
+        <div class="max-w-7xl mx-auto px-4 text-center">
+            <p>&copy; 2024 Big Five Personality Prediction System. Research purposes only.</p>
+        </div>
+    </footer>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

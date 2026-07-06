@@ -1,0 +1,336 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Live Personality Prediction{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100">
+  <!-- Header -->
+  <div class="bg-white border-b border-stone-200">
+    <div class="max-w-4xl mx-auto px-6 py-12">
+      <h1 class="text-4xl font-bold text-stone-900">Live Personality Predictor</h1>
+      <p class="text-stone-600 mt-3">Discover your Big Five personality traits from text</p>
+    </div>
+  </div>
+
+  <div class="max-w-4xl mx-auto px-6 py-12">
+    <!-- Input Form -->
+    <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-8 mb-8">
+      <h2 class="text-2xl font-bold text-stone-900 mb-6">Enter Your Text</h2>
+      
+      <div class="space-y-4 mb-6">
+        <!-- Text Input Tab -->
+        <div>
+          <label for="input_text" class="block text-sm font-medium text-stone-900 mb-2">Paste your text here:</label>
+          <textarea 
+            id="input_text"
+            placeholder="Share your thoughts, opinions, or any text sample for analysis..."
+            class="w-full px-4 py-3 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            rows="6"
+          ></textarea>
+          <p class="text-xs text-stone-500 mt-2">Longer text (200+ characters) provides more accurate predictions</p>
+        </div>
+
+        <!-- Twitter Handle Input -->
+        <div>
+          <label for="twitter_handle" class="block text-sm font-medium text-stone-900 mb-2">Or enter Twitter handle:</label>
+          <div class="flex gap-2">
+            <div class="flex-1 flex items-center border border-stone-300 rounded-lg px-3">
+              <span class="text-stone-500">@</span>
+              <input 
+                type="text"
+                id="twitter_handle"
+                placeholder="username"
+                class="flex-1 ml-2 py-3 focus:outline-none"
+              />
+            </div>
+          </div>
+          <p class="text-xs text-stone-500 mt-2">Note: X API integration coming soon</p>
+        </div>
+      </div>
+
+      <!-- Submit Button -->
+      <button
+        id="predict_btn"
+        onclick="predictPersonality()"
+        class="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Predict Personality
+      </button>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading_state" class="hidden bg-white rounded-lg border border-stone-200 shadow-sm p-8 mb-8">
+      <div class="flex items-center justify-center space-x-3">
+        <div class="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style="animation-delay: 0s"></div>
+        <div class="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+        <div class="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
+        <span class="text-stone-600 font-medium">Analyzing your personality...</span>
+      </div>
+    </div>
+
+    <!-- Results Section -->
+    <div id="results_section" class="hidden">
+      <!-- OCEAN Scores -->
+      <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-8 mb-8">
+        <h2 class="text-2xl font-bold text-stone-900 mb-6">Your OCEAN Profile</h2>
+        
+        <!-- Radar Chart -->
+        <div class="flex justify-center mb-8">
+          <canvas id="ocean_chart" width="300" height="300"></canvas>
+        </div>
+
+        <!-- Individual Scores -->
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div class="text-center">
+            <p class="text-stone-600 text-sm font-medium mb-2">Openness</p>
+            <div class="text-3xl font-bold text-blue-600" id="score_openness">—</div>
+            <div class="w-full bg-stone-200 rounded-full h-2 mt-2">
+              <div class="bg-blue-600 h-2 rounded-full" id="bar_openness" style="width: 0%"></div>
+            </div>
+          </div>
+          <div class="text-center">
+            <p class="text-stone-600 text-sm font-medium mb-2">Conscientiousness</p>
+            <div class="text-3xl font-bold text-green-600" id="score_conscientiousness">—</div>
+            <div class="w-full bg-stone-200 rounded-full h-2 mt-2">
+              <div class="bg-green-600 h-2 rounded-full" id="bar_conscientiousness" style="width: 0%"></div>
+            </div>
+          </div>
+          <div class="text-center">
+            <p class="text-stone-600 text-sm font-medium mb-2">Extraversion</p>
+            <div class="text-3xl font-bold text-purple-600" id="score_extraversion">—</div>
+            <div class="w-full bg-stone-200 rounded-full h-2 mt-2">
+              <div class="bg-purple-600 h-2 rounded-full" id="bar_extraversion" style="width: 0%"></div>
+            </div>
+          </div>
+          <div class="text-center">
+            <p class="text-stone-600 text-sm font-medium mb-2">Agreeableness</p>
+            <div class="text-3xl font-bold text-orange-600" id="score_agreeableness">—</div>
+            <div class="w-full bg-stone-200 rounded-full h-2 mt-2">
+              <div class="bg-orange-600 h-2 rounded-full" id="bar_agreeableness" style="width: 0%"></div>
+            </div>
+          </div>
+          <div class="text-center">
+            <p class="text-stone-600 text-sm font-medium mb-2">Neuroticism</p>
+            <div class="text-3xl font-bold text-red-600" id="score_neuroticism">—</div>
+            <div class="w-full bg-stone-200 rounded-full h-2 mt-2">
+              <div class="bg-red-600 h-2 rounded-full" id="bar_neuroticism" style="width: 0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Domain Insights -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <!-- Education -->
+        <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-6">
+          <div class="flex items-center mb-4">
+            <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C6.5 6.253 2 10.998 2 17.25c0 5.25 4.25 9.749 10 9.749s10-4.499 10-9.749c0-6.252-4.5-11-10-11z"></path>
+              </svg>
+            </div>
+            <h3 class="ml-3 font-bold text-stone-900">Education</h3>
+          </div>
+          <p class="text-stone-600 text-sm" id="insight_education">—</p>
+        </div>
+
+        <!-- Health & Wellbeing -->
+        <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-6">
+          <div class="flex items-center mb-4">
+            <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+              <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
+              </svg>
+            </div>
+            <h3 class="ml-3 font-bold text-stone-900">Health & Wellbeing</h3>
+          </div>
+          <p class="text-stone-600 text-sm" id="insight_health">—</p>
+        </div>
+
+        <!-- Employment -->
+        <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-6">
+          <div class="flex items-center mb-4">
+            <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+              <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4m0 2a2 2 0 11-4 0m0 0a2 2 0 014 0m6 0v10m0 0a8.017 8.017 0 01-12.986 6.755M15 6a3 3 0 11-6 0m6 0a3 3 0 00-6 0m0 0H3m0 0v5.25"></path>
+              </svg>
+            </div>
+            <h3 class="ml-3 font-bold text-stone-900">Employment</h3>
+          </div>
+          <p class="text-stone-600 text-sm" id="insight_employment">—</p>
+        </div>
+
+        <!-- Responsible AI -->
+        <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-6">
+          <div class="flex items-center mb-4">
+            <div class="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+              <svg class="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m7.538-4a2 2 0 00-2.675-.11l-.08.054a2 2 0 01-2.4-3.154l.323-.89A2 2 0 005.571 4.854m13.967 11.192l-.323.89a2 2 0 01-2.4 3.154l-.08-.054a2 2 0 00-2.675.11m0 0a2 2 0 11-2.828-2.828m15.657-1.414a2 2 0 00-2.828 0m0 0a2 2 0 11-2.829 2.829"></path>
+              </svg>
+            </div>
+            <h3 class="ml-3 font-bold text-stone-900">Responsible AI</h3>
+          </div>
+          <p class="text-stone-600 text-sm" id="insight_responsible_ai">—</p>
+        </div>
+      </div>
+
+      <!-- Summary -->
+      <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-stone-200 shadow-sm p-8">
+        <h3 class="text-lg font-bold text-stone-900 mb-4">Your Personality Summary</h3>
+        <p class="text-stone-600 text-lg leading-relaxed" id="personality_summary">—</p>
+        <div class="mt-4">
+          <p class="text-xs text-stone-500">Prediction Confidence: <span id="confidence_score">—</span></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Message -->
+    <div id="error_message" class="hidden bg-red-50 border border-red-200 rounded-lg p-6 mb-8">
+      <p class="text-red-700 font-medium" id="error_text"></p>
+    </div>
+  </div>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let radarChart = null;
+
+async function predictPersonality() {
+  const input_text = document.getElementById('input_text').value.trim();
+  const twitter_handle = document.getElementById('twitter_handle').value.trim();
+  const predict_btn = document.getElementById('predict_btn');
+  const loading_state = document.getElementById('loading_state');
+  const results_section = document.getElementById('results_section');
+  const error_message = document.getElementById('error_message');
+
+  // Reset states
+  results_section.classList.add('hidden');
+  error_message.classList.add('hidden');
+
+  if (!input_text && !twitter_handle) {
+    showError('Please enter text or a Twitter handle');
+    return;
+  }
+
+  // Show loading
+  loading_state.classList.remove('hidden');
+  predict_btn.disabled = true;
+
+  try {
+    const response = await fetch('/api/predict/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: input_text,
+        twitter_handle: twitter_handle,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      showError(data.error || 'Prediction failed');
+      return;
+    }
+
+    // Display results
+    displayResults(data);
+    results_section.classList.remove('hidden');
+
+  } catch (error) {
+    showError('Network error: ' + error.message);
+  } finally {
+    loading_state.classList.add('hidden');
+    predict_btn.disabled = false;
+  }
+}
+
+function displayResults(data) {
+  const scores = data.ocean_scores;
+  
+  // Update individual scores
+  document.getElementById('score_openness').textContent = scores.openness.toFixed(2);
+  document.getElementById('score_conscientiousness').textContent = scores.conscientiousness.toFixed(2);
+  document.getElementById('score_extraversion').textContent = scores.extraversion.toFixed(2);
+  document.getElementById('score_agreeableness').textContent = scores.agreeableness.toFixed(2);
+  document.getElementById('score_neuroticism').textContent = scores.neuroticism.toFixed(2);
+
+  // Update progress bars
+  document.getElementById('bar_openness').style.width = (scores.openness / 5 * 100) + '%';
+  document.getElementById('bar_conscientiousness').style.width = (scores.conscientiousness / 5 * 100) + '%';
+  document.getElementById('bar_extraversion').style.width = (scores.extraversion / 5 * 100) + '%';
+  document.getElementById('bar_agreeableness').style.width = (scores.agreeableness / 5 * 100) + '%';
+  document.getElementById('bar_neuroticism').style.width = (scores.neuroticism / 5 * 100) + '%';
+
+  // Update domain insights
+  const insights = data.domain_insights;
+  document.getElementById('insight_education').textContent = insights.education;
+  document.getElementById('insight_health').textContent = insights.health;
+  document.getElementById('insight_employment').textContent = insights.employment;
+  document.getElementById('insight_responsible_ai').textContent = insights.responsible_ai;
+
+  // Update summary
+  document.getElementById('personality_summary').textContent = data.personality_summary;
+  document.getElementById('confidence_score').textContent = (data.confidence * 100).toFixed(0) + '%';
+
+  // Update radar chart
+  updateRadarChart(data.radar_data);
+}
+
+function updateRadarChart(radarData) {
+  const ctx = document.getElementById('ocean_chart').getContext('2d');
+  
+  if (radarChart) {
+    radarChart.destroy();
+  }
+
+  radarChart = new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels: radarData.labels,
+      datasets: [{
+        label: 'OCEAN Scores',
+        data: radarData.data,
+        borderColor: 'rgb(37, 99, 235)',
+        backgroundColor: 'rgba(37, 99, 235, 0.1)',
+        borderWidth: 2,
+        pointRadius: 5,
+        pointBackgroundColor: 'rgb(37, 99, 235)',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      scales: {
+        r: {
+          min: 1,
+          max: 5,
+          ticks: {
+            stepSize: 1,
+          },
+          grid: {
+            color: 'rgba(0, 0, 0, 0.1)',
+          }
+        }
+      },
+      plugins: {
+        legend: {
+          display: false,
+        }
+      }
+    }
+  });
+}
+
+function showError(message) {
+  document.getElementById('error_message').classList.remove('hidden');
+  document.getElementById('error_text').textContent = message;
+}
+</script>
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Import BFI-44 Survey{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100">
+  <!-- Header -->
+  <div class="bg-white border-b border-stone-200">
+    <div class="max-w-4xl mx-auto px-6 py-8">
+      <h1 class="text-3xl font-bold text-stone-900">Import BFI-44 Survey Data</h1>
+      <p class="text-stone-600 mt-2">Upload Google Form CSV responses as ground truth</p>
+    </div>
+  </div>
+
+  <div class="max-w-4xl mx-auto px-6 py-8">
+    <!-- Instructions -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-8">
+      <h3 class="font-bold text-blue-900 mb-3">CSV Format Requirements</h3>
+      <ul class="text-blue-800 text-sm space-y-2">
+        <li>• Column 1: <code class="bg-blue-100 px-2 py-1 rounded">twitter_handle</code> (required)</li>
+        <li>• Columns 2-45: <code class="bg-blue-100 px-2 py-1 rounded">q1, q2, ..., q44</code> (BFI-44 responses, 1-5 scale)</li>
+        <li>• Export directly from Google Forms or compatible survey tool</li>
+        <li>• Minimum 90% response rate per volunteer</li>
+      </ul>
+    </div>
+
+    <!-- Upload Form -->
+    <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-8 mb-8">
+      <form method="post" enctype="multipart/form-data" class="space-y-6">
+        {% csrf_token %}
+
+        <!-- File Input -->
+        <div>
+          <label for="csv_file" class="block text-sm font-medium text-stone-900 mb-3">
+            Select CSV File
+          </label>
+          <div class="border-2 border-dashed border-stone-300 rounded-lg p-8 text-center hover:border-blue-400 transition cursor-pointer" 
+               onclick="document.getElementById('csv_file').click()">
+            <svg class="w-12 h-12 mx-auto text-stone-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            <p class="text-stone-600 font-medium">Click to upload or drag and drop</p>
+            <p class="text-stone-500 text-sm mt-1">CSV files only (.csv)</p>
+          </div>
+          <input 
+            type="file"
+            id="csv_file"
+            name="csv_file"
+            accept=".csv"
+            class="hidden"
+            onchange="updateFileName(this)"
+            required
+          />
+          <p id="file_name" class="text-sm text-stone-600 mt-2"></p>
+          {% if form.csv_file.errors %}
+          <p class="text-red-600 text-sm mt-2">{{ form.csv_file.errors.0 }}</p>
+          {% endif %}
+        </div>
+
+        <!-- Submit -->
+        <div class="flex gap-4">
+          <button
+            type="submit"
+            class="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition"
+          >
+            Import CSV
+          </button>
+          <a href="{% url 'tools:index' %}" class="px-6 py-2 border border-stone-300 text-stone-900 font-medium rounded-lg hover:bg-stone-50 transition">
+            Cancel
+          </a>
+        </div>
+      </form>
+    </div>
+
+    <!-- Recent Imports -->
+    <div class="bg-white rounded-lg border border-stone-200 shadow-sm overflow-hidden">
+      <div class="px-6 py-4 border-b border-stone-200">
+        <h3 class="font-bold text-stone-900">Import History</h3>
+      </div>
+      <div class="divide-y divide-stone-200">
+        <div class="px-6 py-4 text-center text-stone-500 text-sm">
+          No imports yet
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function updateFileName(input) {
+  const fileName = input.files[0]?.name || '';
+  document.getElementById('file_name').textContent = fileName ? '✓ ' + fileName : '';
+}
+</script>
+{% endblock %}

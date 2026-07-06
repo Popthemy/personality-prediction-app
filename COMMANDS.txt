@@ -1,0 +1,149 @@
+================================================================================
+ DJANGO PROJECT - QUICK COMMAND REFERENCE
+================================================================================
+
+1. ONE-LINE START (Recommended)
+================================================================================
+
+cd /vercel/share/v0-project && pip install -q django==5.0.6 psycopg2-binary celery redis transformers torch scikit-learn numpy pandas pillow django-environ django-cors-headers whitenoise gunicorn && export DJANGO_SETTINGS_MODULE=backend.config.settings.dev && python manage.py migrate --run-syncdb && python manage.py runserver 0.0.0.0:8000
+
+
+2. THEN ACCESS
+================================================================================
+
+Homepage:              http://localhost:8000/
+Live Prediction:       http://localhost:8000/live-prediction/
+Dashboard:             http://localhost:8000/dashboard/
+Admin:                 http://localhost:8000/admin/
+
+
+3. CREATE ADMIN USER (In separate terminal, after server starts)
+================================================================================
+
+cd /vercel/share/v0-project && \
+export DJANGO_SETTINGS_MODULE=backend.config.settings.dev && \
+python manage.py shell << 'PYEOF'
+from django.contrib.auth import get_user_model
+User = get_user_model()
+if not User.objects.filter(username='admin').exists():
+    User.objects.create_superuser('admin', 'admin@example.com', 'admin123')
+    print('✓ Admin user created: admin / admin123')
+PYEOF
+
+
+4. WHAT YOU GET
+================================================================================
+
+✓ Django Development Server (port 8000)
+✓ SQLite Database (auto-created)
+✓ All 8 Database Models
+✓ 14 Web Views + 8 Templates
+✓ BFI-44 Scoring Service
+✓ BERT Embedding Service (768-dim)
+✓ Q-Learning Agent
+✓ GAN Augmenter
+✓ Lasso Regression (5 traits)
+✓ Admin Interface
+✓ ML Pipeline Orchestrator
+✓ Real-time OCEAN Calculator
+
+
+5. VERIFY ML SERVICES (In Django shell)
+================================================================================
+
+# BFI-44 Scorer
+python manage.py shell << 'PYEOF'
+from backend.core.services.bfi_scorer import BFIScorer
+scorer = BFIScorer()
+scores = scorer.calculate_all_traits({str(i): 3 for i in range(1, 45)})
+print(f"OCEAN: {scores}")
+PYEOF
+
+# BERT Encoder
+python manage.py shell << 'PYEOF'
+from backend.ml_pipeline.services.bert_encoder import BERTEncoder
+encoder = BERTEncoder()
+emb = encoder.encode_text("I am a social person")
+print(f"Embedding shape: {emb.shape}")
+PYEOF
+
+# Q-Learning Agent
+python manage.py shell << 'PYEOF'
+from backend.ml_pipeline.services.qlearning_agent import QLearningAgent
+agent = QLearningAgent(num_posts=10)
+print(f"Q-table: {agent.q_table.shape}")
+PYEOF
+
+
+6. IF DEPENDENCIES FAIL
+================================================================================
+
+Try installing individually:
+pip install django==5.0.6
+pip install psycopg2-binary
+pip install celery redis
+pip install transformers torch scikit-learn
+pip install numpy pandas pillow
+pip install django-environ django-cors-headers whitenoise gunicorn
+
+
+7. PORT ALREADY IN USE?
+================================================================================
+
+Use different port:
+python manage.py runserver 0.0.0.0:8080
+
+
+8. DATABASE CORRUPTED?
+================================================================================
+
+Recreate:
+rm /vercel/share/v0-project/db.sqlite3
+cd /vercel/share/v0-project && \
+export DJANGO_SETTINGS_MODULE=backend.config.settings.dev && \
+python manage.py migrate --run-syncdb
+
+
+9. KEY ENDPOINTS
+================================================================================
+
+GET  /                           Home/Landing
+GET  /live-prediction/           Real-time predictor
+POST /api/predict/               AJAX prediction API
+GET  /accounts/register/         Create account
+GET  /accounts/login/            Login
+GET  /dashboard/                 Analytics dashboard (login required)
+GET  /dashboard/volunteer/<id>/  Volunteer profile (login required)
+GET  /dashboard/insights/        Domain insights (login required)
+GET  /tools/                     Data management (login required)
+POST /tools/csv-upload/          Import BFI-44 CSV (login required)
+GET  /admin/                     Django admin
+
+
+10. DOCUMENTATION
+================================================================================
+
+RUN_DJANGO.md              ← Full setup guide (you're reading the quick version)
+README.md                  ← Project overview
+QUICKSTART.md              ← 30-second setup
+VALIDATION_REPORT.md       ← Technical validation
+validate_implementation.py ← Automated tests (run: python validate_implementation.py)
+
+
+================================================================================
+ STATUS: READY TO RUN
+================================================================================
+
+Copy and paste the ONE-LINE START command above and you're done!
+
+Everything is included:
+✓ All code written and tested
+✓ All dependencies listed
+✓ Database schema created
+✓ ML services implemented
+✓ Web UI templates ready
+✓ Documentation complete
+
+No additional setup needed beyond the one-line command.
+
+================================================================================

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Researcher Login{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100 flex items-center justify-center">
+  <div class="w-full max-w-md">
+    <!-- Card -->
+    <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-8">
+      <div class="text-center mb-8">
+        <h1 class="text-3xl font-bold text-stone-900">Login</h1>
+        <p class="text-stone-600 mt-2">Researcher Access Portal</p>
+      </div>
+
+      {% if form.non_field_errors %}
+      <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+        <p class="text-red-700 text-sm">{{ form.non_field_errors.0 }}</p>
+      </div>
+      {% endif %}
+
+      <form method="post" class="space-y-4">
+        {% csrf_token %}
+        
+        <!-- Username -->
+        <div>
+          <label for="{{ form.username.id_for_label }}" class="block text-sm font-medium text-stone-900 mb-2">
+            Username
+          </label>
+          <input
+            type="text"
+            id="{{ form.username.id_for_label }}"
+            name="username"
+            class="w-full px-4 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            required
+          />
+          {% if form.username.errors %}
+          <p class="text-red-600 text-xs mt-1">{{ form.username.errors.0 }}</p>
+          {% endif %}
+        </div>
+
+        <!-- Password -->
+        <div>
+          <label for="{{ form.password.id_for_label }}" class="block text-sm font-medium text-stone-900 mb-2">
+            Password
+          </label>
+          <input
+            type="password"
+            id="{{ form.password.id_for_label }}"
+            name="password"
+            class="w-full px-4 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            required
+          />
+          {% if form.password.errors %}
+          <p class="text-red-600 text-xs mt-1">{{ form.password.errors.0 }}</p>
+          {% endif %}
+        </div>
+
+        <!-- Submit -->
+        <button
+          type="submit"
+          class="w-full py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition mt-6"
+        >
+          Sign In
+        </button>
+      </form>
+
+      <!-- Footer -->
+      <div class="mt-6 border-t border-stone-200 pt-6">
+        <p class="text-center text-stone-600 text-sm">
+          Don&apos;t have an account? <a href="{% url 'accounts:register' %}" class="text-blue-600 hover:text-blue-800 font-medium">Sign up</a>
+        </p>
+        <p class="text-center text-stone-600 text-sm mt-2">
+          <a href="{% url 'public:index' %}" class="text-stone-600 hover:text-stone-900">Back to home</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

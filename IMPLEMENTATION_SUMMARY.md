@@ -1,4 +1,4 @@
-# Implementation Summary: Big Five Personality Prediction System
+t# Implementation Summary: Big Five Personality Prediction System
 
 ## Project Overview
 

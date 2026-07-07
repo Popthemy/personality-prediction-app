@@ -1,0 +1,52 @@
+{% extends "base.html" %} 
+{% load static %}
+{% block title %}Registration {% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card mt-5">
+                <div class="card-header">
+                    <h2 class="text-center">Register</h2>
+                </div>
+                <div class="card-body">
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+                        {% for field in form %}
+                            <div class="form-group mb-3">
+                                {{ field.label_tag }}
+                                {{ field }}
+                                {% if field.help_text %}
+                                    <small class="form-text text-muted">{{ field.help_text }}</small>
+                                {% endif %}
+                                {% for error in field.errors %}
+                                    <p class="text-danger">{{ error }}</p>
+                                {% endfor %}
+                            </div>
+                        {% endfor %}
+                        {% if form.non_field_errors %}
+                            {% for error in form.non_field_errors %}
+                                <p class="text-danger">{{ error }}</p>
+                            {% endfor %}
+                        {% endif %}
+                        <button type="submit" class="btn btn-primary btn-block">Register</button>
+                    </form>
+
+                     <!-- Footer -->
+      <div class="mt-6 border-t border-stone-200 pt-6">
+        <p class="text-center text-stone-600 text-sm">
+          Already have an account? <a href="{% url 'accounts:login' %}" class="text-blue-600 hover:text-blue-800 font-medium">Sign in</a>
+        </p>
+        <p class="text-center text-stone-600 text-sm mt-2">
+          <a href="{% url 'public:index' %}" class="text-stone-600 hover:text-stone-900">Back to home</a>
+        </p>
+      </div>
+
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
-
-{% block title %}{{ volunteer.twitter_handle }} - Personality Profile{% endblock %}
+{% load mathfilters %}
+{% block title %}{{ volunteer.x_handle }} - Personality Profile{% endblock %}
 
 {% block content %}
 <div class="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100">
@@ -10,7 +10,7 @@
     <div class="max-w-7xl mx-auto px-6 py-8">
       <div class="flex items-center justify-between">
         <div>
-          <h1 class="text-4xl font-bold text-stone-900">@{{ volunteer.twitter_handle }}</h1>
+          <h1 class="text-4xl font-bold text-stone-900">@{{ volunteer.x_handle }}</h1>
           <p class="text-stone-600 mt-2">Personality Analysis Report</p>
         </div>
         <a href="{% url 'dashboard:index' %}" class="px-4 py-2 border border-stone-300 text-stone-900 rounded-lg hover:bg-stone-50">
@@ -132,7 +132,7 @@
           <p class="text-xs text-stone-500 text-center mt-4">
             Confidence: <span class="font-bold">{{ prediction.confidence_score|mul:100|floatformat:0 }}%</span>
           </p>
-          {% endif %}
+         {% endif %}
         </div>
       </div>
 
@@ -273,42 +273,49 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 // Initialize radar chart
-{% if ground_truth and prediction %}
 const ctx = document.getElementById('ocean_radar_chart').getContext('2d');
+const dataset = []
+
+{% if ground_truth %}
+dataset.push({
+  label: 'Ground Truth',
+  data: [
+    {{ ground_truth.openness }},
+    {{ ground_truth.conscientiousness }},
+    {{ ground_truth.extraversion }},
+    {{ ground_truth.agreeableness }},
+    {{ ground_truth.neuroticism }},
+  ],
+  borderColor: 'rgb(100, 116, 139)',
+  backgroundColor: 'rgba(100, 116, 139, 0.1)',
+  borderWidth: 2,
+  pointRadius: 3,
+});
+{% endif %}
+
+{% if prediction %}
+dataset.push({
+  label: 'Prediction',
+  data: [
+    {{ prediction.openness_predicted }},
+    {{ prediction.conscientiousness_predicted }},
+    {{ prediction.extraversion_predicted }},
+    {{ prediction.agreeableness_predicted }},
+    {{ prediction.neuroticism_predicted }},
+  ],
+  borderColor: 'rgb(59, 130, 246)',
+  backgroundColor: 'rgba(59, 130, 246, 0.1)',
+  borderWidth: 2,
+  pointRadius: 3,
+});
+{%endif %}
+
+
 new Chart(ctx, {
   type: 'radar',
   data: {
     labels: ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism'],
-    datasets: [
-      {
-        label: 'Ground Truth',
-        data: [
-          {{ ground_truth.openness }},
-          {{ ground_truth.conscientiousness }},
-          {{ ground_truth.extraversion }},
-          {{ ground_truth.agreeableness }},
-          {{ ground_truth.neuroticism }},
-        ],
-        borderColor: 'rgb(100, 116, 139)',
-        backgroundColor: 'rgba(100, 116, 139, 0.1)',
-        borderWidth: 2,
-        pointRadius: 3,
-      },
-      {
-        label: 'Prediction',
-        data: [
-          {{ prediction.openness_predicted }},
-          {{ prediction.conscientiousness_predicted }},
-          {{ prediction.extraversion_predicted }},
-          {{ prediction.agreeableness_predicted }},
-          {{ prediction.neuroticism_predicted }},
-        ],
-        borderColor: 'rgb(59, 130, 246)',
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
-        borderWidth: 2,
-        pointRadius: 3,
-      }
-    ]
+    datasets: dataset,
   },
   options: {
     responsive: true,
@@ -329,6 +336,5 @@ new Chart(ctx, {
     }
   }
 });
-{% endif %}
 </script>
 {% endblock %}

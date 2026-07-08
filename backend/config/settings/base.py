@@ -10,7 +10,8 @@ env = environ.Env(
     DEBUG=(bool, False),
     SECRET_KEY=(str, 'django-insecure-dev-key-change-in-production'),
     ALLOWED_HOSTS=(list, ['localhost', '127.0.0.1']),
-    DATABASE_URL=(str, 'postgresql://user:password@localhost:5432/personality_db'),
+    DATABASE_URL=(
+        str, 'postgresql://user:password@localhost:5432/personality_db'),
     REDIS_URL=(str, 'redis://localhost:6379/0'),
     CELERY_BROKER_URL=(str, 'redis://localhost:6379/1'),
 )
@@ -47,6 +48,7 @@ PROJECT_APPS = [
 
 THIRD_PARTY_APPS = [
     'corsheaders',
+    'mathfilters',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + PROJECT_APPS + THIRD_PARTY_APPS
@@ -218,5 +220,3 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ]
-
-

@@ -6,7 +6,7 @@ from backend.ml_pipeline.services.qlearning_agent import QLearningAgent
 from backend.ml_pipeline.services.bert_encoder import BERTEncoder
 from backend.ml_pipeline.services.gan_augmenter import GANAugmenter
 from backend.ml_pipeline.services.lasso_regressor import LassoTrainer
-from backend.core.services.bfi_scorer import BFIScorer
+from backend.core.services.bfi_scorer import BFIScorer, score_bfi_survey
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ def run_full_pipeline_task(self, volunteer_id):
         logger.info(f"Q-Learning selected {len(selected_posts)} posts")
         
         # Stage 2: BERT Contextual Embedding Extraction
-        logger.info(f"Stage 2: BERT Encoding for {volunteer.twitter_handle}")
-        bert_encoder = BertEncoder()
+        logger.info(f"Stage 2: BERT Encoding for {volunteer.x_handle}")
+        bert_encoder = BERTEncoder()
         
         # Get post texts and encode
         from backend.core.models import POST

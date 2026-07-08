@@ -62,6 +62,7 @@ class VolunteerDetailView(LoginRequiredMixin, DetailView):
         
         # Ground truth BFI
         bfi_survey = volunteer.bfi_surveys.first()
+        print(f"#### Volunteer: {volunteer.x_handle}, BFI Survey: {bfi_survey}")
         context['ground_truth'] = bfi_survey
         
         # Prediction profile

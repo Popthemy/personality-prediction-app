@@ -7,8 +7,8 @@ Trains one model per OCEAN trait.
 import logging
 from typing import Dict, List, Tuple
 import numpy as np
-from sklearn.linear_model import Lasso, LassoCV
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+# from sklearn.linear_model import Lasso, LassoCV
+# from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import json
 
 logger = logging.getLogger('ml_pipeline')

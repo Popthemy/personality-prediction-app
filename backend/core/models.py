@@ -47,7 +47,8 @@ class VOLUNTEER(models.Model):
         default='pending',
         db_index=True
     )
-    
+    bfi_surveys = models.ManyToManyField('BFI_SURVEY', related_name='volunteers', blank=True)
+
     # Consent & metadata
     consent_given = models.BooleanField(default=False)
     notes = models.TextField(blank=True)

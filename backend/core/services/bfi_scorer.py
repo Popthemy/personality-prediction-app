@@ -7,7 +7,7 @@ Some items are reverse-scored before trait calculation.
 OCEAN Traits:
 - O (Openness): Items 5, 10, 15, 20, 25, 30, 35, 40, 41, 44
 - C (Conscientiousness): Items 3, 8, 13, 18, 23, 28, 33, 38, 43
-- E (Extraversion): Items 1, 6, 11, 16, 26, 31, 36
+- E (Extraversion): Items 1, 6, 11, 16, 21, 26, 31, 36
 - A (Agreeableness): Items 2, 7, 12, 17, 22, 27, 32, 37, 42
 - N (Neuroticism): Items 4, 9, 14, 19, 24, 29, 34, 39
 
@@ -23,7 +23,7 @@ logger = logging.getLogger('ml_pipeline')
 BFI_ITEMS = {
     'Openness': [5, 10, 15, 20, 25, 30, 35, 40, 41, 44],
     'Conscientiousness': [3, 8, 13, 18, 23, 28, 33, 38, 43],
-    'Extraversion': [1, 6, 11, 16, 26, 31, 36],
+    'Extraversion': [1, 6, 11, 16, 21, 26, 31, 36],
     'Agreeableness': [2, 7, 12, 17, 22, 27, 32, 37, 42],
     'Neuroticism': [4, 9, 14, 19, 24, 29, 34, 39],
 }
@@ -93,7 +93,7 @@ class BFIScorer:
                 logger.warning(f"Missing response for item {item}")
         
         if not scores:
-            return None
+            raise ValueError(f"No valid responses for trait {trait}")
         
         return sum(scores) / len(scores)
     
@@ -119,7 +119,7 @@ class BFIScorer:
         
         logger.debug(f"BFI scoring complete. Traits: {traits}")
         return traits
-    
+
     @staticmethod
     def validate_responses(responses: Dict[str, int]) -> tuple[bool, List[str]]:
         """

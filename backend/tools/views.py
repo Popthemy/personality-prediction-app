@@ -2,6 +2,7 @@
 import csv
 import logging
 import json
+import re
 from io import StringIO, BytesIO
 from django.views.generic import TemplateView, FormView, View
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -63,14 +64,17 @@ class CSVUploadView(LoginRequiredMixin, FormView):
                 
                 # Extract BFI-44 responses (questions 1-44)
                 responses = {}
-                for i in range(1, 45):
-                    key = f'q{i}'
-                    if key in row:
+                for header, value in row.items():
+                    match = re.match(r'q(\d+)', header)
+                    if not match:
+                        continue
+                    item = int(match.group(1))
+                    if 1 <= item <= 44:
                         try:
-                            responses[key] = int(row[key])
-                        except (ValueError, KeyError):
-                            pass
-                
+                            responses[str(item)] = int(value)
+                        except ValueError:
+                            logger.warning(f"Invalid response for item {item}: {value}")
+                 
                 if len(responses) >= 40:  # At least 90% responses
                     # Calculate BFI scores
                     scores = scorer.calculate_scores(responses)

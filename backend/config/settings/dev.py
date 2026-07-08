@@ -15,8 +15,41 @@ DATABASES = {
 }
 
 # Development logging
-LOGGING['loggers']['django']['level'] = 'DEBUG'
-LOGGING['handlers']['console']['level'] = 'DEBUG'
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+
+        "django.utils.autoreload": {
+            "handlers": [],
+            "level": "WARNING",
+            "propagate": False,
+        },
+
+        "django.server": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
 
 # CORS for development
 CORS_ALLOW_ALL_ORIGINS = True

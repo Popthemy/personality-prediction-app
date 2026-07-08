@@ -4,7 +4,7 @@ BERT Contextual Embedding Extraction Service.
 Uses HuggingFace transformers bert-base-uncased to extract 768-dimensional contextual embeddings.
 """
 import logging
-import torch
+# import torch
 from typing import List, Dict
 import json
 

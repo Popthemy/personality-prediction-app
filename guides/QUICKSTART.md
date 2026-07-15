@@ -57,13 +57,33 @@ backend/
 │   ├── models.py       # 8 core models
 │   └── services/
 │       └── bfi_scorer.py  # BFI-44 calculator
-├── ml_pipeline/        # ML pipeline services
-│   ├── services/
-│   │   ├── qlearning_agent.py
-│   │   ├── bert_encoder.py
-│   │   ├── gan_augmenter.py
-│   │   ├── lasso_regressor.py
-│   │   └── pipeline_orchestrator.py
+├── ml_pipeline/
+    │
+    ├── cleaning/
+    │   └── cleaner.py
+    │
+    ├── processors/
+    │   ├── base.py
+    │   ├── profile.py
+    │   ├── linguistic.py
+    │   ├── temporal.py
+    │   ├── engagement.py
+    │   ├── network.py
+    │   └── sentiment.py
+    │
+    ├── aggregation/
+    │   └── aggregator.py
+    │
+    ├── services/
+    │   ├── qlearning_agent.py
+    │   ├── selection_collector.py
+    │   ├── bert_encoder.py
+    │   ├── gan_augmenter.py
+    │   ├── lasso_regressor.py
+    │   ├── pipeline_orchestrator.py
+    │   └── insight_engine.py
+    │
+    └── tests/
 │   └── tasks.py        # Celery tasks
 ├── dashboard/          # Researcher dashboard
 ├── tools/              # CSV import & pipeline trigger

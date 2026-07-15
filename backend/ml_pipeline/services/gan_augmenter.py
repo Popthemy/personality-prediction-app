@@ -8,7 +8,7 @@ import logging
 import json
 import random
 from typing import List, Dict
-# import numpy as np
+import numpy as np
 
 logger = logging.getLogger('ml_pipeline')
 

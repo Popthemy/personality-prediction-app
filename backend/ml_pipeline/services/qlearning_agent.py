@@ -7,7 +7,7 @@ by observing engagement metrics and downstream prediction accuracy.
 import logging
 import json
 from typing import Dict, Tuple, List
-# import numpy as np
+import numpy as np
 
 logger = logging.getLogger('ml_pipeline')
 

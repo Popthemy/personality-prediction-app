@@ -10,7 +10,7 @@ Strict execution order:
 """
 import logging
 from typing import Dict, List, Optional
-# import numpy as np
+import numpy as np
 from datetime import datetime
 
 from django.db import transaction

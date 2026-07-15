@@ -57,14 +57,14 @@ class ValidationSuite:
             )
             
             models_info = {
-                'VOLUNTEER': (VOLUNTEER, ['twitter_handle', 'researcher']),
+                'VOLUNTEER': (VOLUNTEER, ['x_handle', 'researcher']),
                 'BFI_SURVEY': (BFI_SURVEY, ['volunteer', 'responses', 'openness']),
-                'POST': (POST, ['volunteer', 'text', 'selected_by_qlearning']),
+                'POST': (POST, ['volunteer', 'content', 'selected_by_qlearning']),
                 'BERT_EMBEDDING': (BERT_EMBEDDING, ['post', 'embedding_vector']),
                 'Q_LEARNING_LOG': (Q_LEARNING_LOG, ['volunteer', 'episode', 'reward']),
-                'SYNTHETIC_DATA': (SYNTHETIC_DATA, ['volunteer', 'generated_text']),
-                'LASSO_MODEL': (LASSO_MODEL, ['volunteer', 'feature_importance']),
-                'PSYCHOMETRIC_PROFILE': (PSYCHOMETRIC_PROFILE, ['volunteer', 'predicted_ocean']),
+                'SYNTHETIC_DATA': (SYNTHETIC_DATA, ['volunteer', 'synthetic_text']),
+                'LASSO_MODEL': (LASSO_MODEL, ['volunteer', 'coefficients']),
+                'PSYCHOMETRIC_PROFILE': (PSYCHOMETRIC_PROFILE, ['volunteer', 'predicted_openness']),
             }
             
             for model_name, (model_class, required_fields) in models_info.items():

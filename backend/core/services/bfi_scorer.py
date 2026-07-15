@@ -122,6 +122,16 @@ class BFIScorer:
         return traits
 
     @staticmethod
+    def calculate_scores(responses: Dict[str, int]) -> Dict[str, float]:
+        """
+        Calculate BFI trait scores with lowercase keys for compatibility
+        with validation script.
+        """
+        traits = BFIScorer.calculate_all_traits(responses)
+        return {k.lower(): v for k, v in traits.items()}
+
+
+    @staticmethod
     def validate_responses(responses: Dict[str, int]) -> tuple[bool, List[str]]:
         """
         Validate BFI-44 responses.

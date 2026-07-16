@@ -25,7 +25,6 @@
         box-shadow: 0 0 15px rgba(217, 119, 6, 0.25);
     }
     
-    /* Elegant amber button styling */
     .btn-pulse {
         background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
         transition: all 0.3s ease;
@@ -39,6 +38,18 @@
     
     .btn-pulse:active {
         transform: translateY(0);
+    }
+
+    .btn-outline {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.03);
+        color: #e7e5e4;
+        transition: all 0.2s ease;
+    }
+
+    .btn-outline:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.2);
     }
     
     /* Core loading spinner styles */
@@ -74,17 +85,27 @@
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
+
+    /* Likert option label styling */
+    .likert-radio:checked + label {
+        background-color: #d97706 !important;
+        border-color: #fbbf24 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 10px rgba(217, 119, 6, 0.5);
+    }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="flex flex-col items-center justify-center min-h-[75vh] px-4 md:px-0">
+<div class="flex flex-col items-center justify-center min-h-[75vh] px-4 md:px-0 py-8">
+    
+    {% if not show_survey %}
+    <!-- STEP 1: X Handle Input Form -->
     <div class="w-full max-w-xl glass-card rounded-2xl p-8 md:p-12 relative overflow-hidden">
         <!-- Background accents -->
         <div class="absolute -top-32 -left-32 w-64 h-64 bg-amber-600 rounded-full filter blur-[120px] opacity-15 pointer-events-none"></div>
         <div class="absolute -bottom-32 -right-32 w-64 h-64 bg-amber-800 rounded-full filter blur-[120px] opacity-15 pointer-events-none"></div>
         
-        <!-- Center form container -->
         <div id="form-container" class="space-y-8">
             <div class="text-center space-y-3">
                 <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight">
@@ -98,7 +119,6 @@
             <form method="POST" id="analyze-form" class="space-y-6">
                 {% csrf_token %}
                 
-                <!-- Form handle input -->
                 <div class="space-y-2">
                     <label for="id_x_handle" class="block text-sm font-semibold tracking-wide text-amber-500 uppercase">
                         X Handle / Username
@@ -109,6 +129,7 @@
                         </div>
                         <input type="text" name="x_handle" id="id_x_handle" required
                                placeholder="21Century_Dev" 
+                               value="{{ form.x_handle.value|default:'' }}"
                                class="block w-full pl-10 pr-4 py-3 bg-stone-900/60 border border-stone-800 rounded-xl text-stone-100 placeholder-stone-600 focus:outline-none glow-input text-lg font-medium transition duration-200">
                     </div>
                     {% if form.x_handle.errors %}
@@ -118,22 +139,22 @@
                     {% endif %}
                 </div>
                 
-                <!-- Additional limit settings -->
                 <div class="grid grid-cols-2 gap-4">
                     <div class="space-y-2">
                         <label for="id_limit" class="block text-xs font-semibold text-stone-400 uppercase">
                             Posts Limit
                         </label>
                         <select name="limit" id="id_limit" class="block w-full bg-stone-900/60 border border-stone-800 rounded-lg px-3 py-2 text-stone-300 text-sm focus:outline-none">
-                            <option value="25">25 tweets</option>
-                            <option value="50" selected>50 tweets</option>
-                            <option value="100">100 tweets</option>
-                            <option value="200">200 tweets</option>
+                            <option value="25" {% if form.limit.value == '25' %}selected{% endif %}>25 tweets</option>
+                            <option value="50" {% if not form.limit.value or form.limit.value == '50' %}selected{% endif %}>50 tweets</option>
+                            <option value="100" {% if form.limit.value == '100' %}selected{% endif %}>100 tweets</option>
+                            <option value="200" {% if form.limit.value == '200' %}selected{% endif %}>200 tweets</option>
                         </select>
                     </div>
                     
                     <div class="flex items-center space-x-2 pt-6">
-                        <input type="checkbox" name="exclude_retweets" id="id_exclude_retweets" checked
+                        <input type="checkbox" name="exclude_retweets" id="id_exclude_retweets" 
+                               {% if form.exclude_retweets.value != False %}checked{% endif %}
                                class="w-4 h-4 rounded bg-stone-900/60 border-stone-800 text-amber-600 focus:ring-amber-500">
                         <label for="id_exclude_retweets" class="text-xs font-medium text-stone-400">
                             Exclude retweets
@@ -141,14 +162,12 @@
                     </div>
                 </div>
                 
-                <!-- Action button -->
                 <button type="submit" class="btn-pulse w-full py-4 text-white font-bold rounded-xl text-lg hover:shadow-amber-500/20 tracking-wider">
-                    Analyze Footprint
+                    Verify & Analyze
                 </button>
             </form>
         </div>
         
-        <!-- Loading overlay -->
         <div id="loading-container" class="hidden flex-col items-center justify-center space-y-6 py-12">
             <div class="loader-ring"><div></div><div></div><div></div><div></div></div>
             <div class="text-center space-y-2 animate-pulse">
@@ -156,12 +175,165 @@
                 <p class="text-stone-400 text-sm px-4">
                     Fetching timelines, sanitising text content, selecting active signal posts, and generating BERT contextual embeddings.
                 </p>
-                <p id="wait-message" class="text-xs text-stone-500 italic mt-2">This may take up to a minute depending on profile size...</p>
+                <p id="wait-message" class="text-xs text-stone-500 italic mt-2">Checking database records...</p>
             </div>
         </div>
     </div>
+
+    {% else %}
+    <!-- STEP 2: Ground Truth BFI-44 Survey Form (Wizard style) -->
+    <div class="w-full max-w-2xl glass-card rounded-2xl p-6 md:p-10 relative overflow-hidden">
+        <!-- Background accents -->
+        <div class="absolute -top-32 -left-32 w-64 h-64 bg-amber-600 rounded-full filter blur-[120px] opacity-10 pointer-events-none"></div>
+        <div class="absolute -bottom-32 -right-32 w-64 h-64 bg-amber-800 rounded-full filter blur-[120px] opacity-10 pointer-events-none"></div>
+        
+        <!-- Header -->
+        <div class="text-center space-y-2 mb-6">
+            <span class="px-3 py-1 bg-amber-900/50 border border-amber-700/50 rounded-full text-amber-400 text-xs font-semibold tracking-wider uppercase">
+                BFI-44 Ground Truth Required
+            </span>
+            <h1 class="text-3xl font-extrabold text-stone-100">
+                Setup for <span class="text-gradient">@{{ x_handle }}</span>
+            </h1>
+            <p class="text-stone-400 text-sm font-light max-w-lg mx-auto">
+                No ground truth BFI data was found for this handle. Please complete the self-rating questionnaire below to enable detailed MAE validation mapping.
+            </p>
+        </div>
+
+        <!-- Progress Indicator -->
+        <div class="mb-8">
+            <div class="flex justify-between items-center text-xs text-stone-400 mb-2 font-medium">
+                <span id="step-label">Page 1 of 4</span>
+                <span id="percent-label">25% Completed</span>
+            </div>
+            <div class="w-full bg-stone-850 border border-stone-800 rounded-full h-2.5">
+                <div id="progress-bar" class="bg-gradient-to-r from-amber-600 to-amber-400 h-2 rounded-full transition-all duration-300" style="width: 25%"></div>
+            </div>
+        </div>
+
+        <form method="POST" id="bfi-survey-form" class="space-y-8">
+            {% csrf_token %}
+            <!-- Hidden context trackers -->
+            <input type="hidden" name="x_handle" value="{{ x_handle }}">
+            <input type="hidden" name="limit" value="{{ limit }}">
+            <input type="hidden" name="exclude_retweets" value="{% if exclude_retweets %}on{% else %}off{% endif %}">
+            <input type="hidden" name="is_survey_submission" value="true">
+
+            <!-- Question Blocks with JS pagination -->
+            <div id="questions-wrapper">
+                
+                <!-- BFI Questions mapping (1-44) -->
+                {% block questions_content %}
+                
+                <!-- Page 1 (Q1 to Q11) -->
+                <div class="survey-page space-y-6" id="page-1">
+                    <div class="border-b border-stone-800 pb-3 mb-4">
+                        <span class="text-amber-500 font-semibold text-sm">Interpersonal & Energy Factors</span>
+                    </div>
+                    {% include "tools/snippets/bfi_q.html" with num=1 q="Talks a lot" %}
+                    {% include "tools/snippets/bfi_q.html" with num=2 q="Notices other people’s weak points" %}
+                    {% include "tools/snippets/bfi_q.html" with num=3 q="Does things carefully and completely" %}
+                    {% include "tools/snippets/bfi_q.html" with num=4 q="Is sad, depressed" %}
+                    {% include "tools/snippets/bfi_q.html" with num=5 q="Is original, comes up with new ideas" %}
+                    {% include "tools/snippets/bfi_q.html" with num=6 q="Keeps their thoughts to themselves" %}
+                    {% include "tools/snippets/bfi_q.html" with num=7 q="Is helpful and not selfish with others" %}
+                    {% include "tools/snippets/bfi_q.html" with num=8 q="Can be kind of careless" %}
+                    {% include "tools/snippets/bfi_q.html" with num=9 q="Is relaxed, handles stress well" %}
+                    {% include "tools/snippets/bfi_q.html" with num=10 q="Is curious about lots of different things" %}
+                    {% include "tools/snippets/bfi_q.html" with num=11 q="Has a lot of energy" %}
+                </div>
+
+                <!-- Page 2 (Q12 to Q22) -->
+                <div class="survey-page space-y-6 hidden" id="page-2">
+                    <div class="border-b border-stone-800 pb-3 mb-4">
+                        <span class="text-amber-500 font-semibold text-sm">Work Ethic & Self Expression</span>
+                    </div>
+                    {% include "tools/snippets/bfi_q.html" with num=12 q="Starts arguments with others" %}
+                    {% include "tools/snippets/bfi_q.html" with num=13 q="Is a good, hard worker" %}
+                    {% include "tools/snippets/bfi_q.html" with num=14 q="Can be tense; not always easy going" %}
+                    {% include "tools/snippets/bfi_q.html" with num=15 q="Clever; thinks a lot" %}
+                    {% include "tools/snippets/bfi_q.html" with num=16 q="Makes things exciting" %}
+                    {% include "tools/snippets/bfi_q.html" with num=17 q="Forgives others easily" %}
+                    {% include "tools/snippets/bfi_q.html" with num=18 q="Isn’t very organized" %}
+                    {% include "tools/snippets/bfi_q.html" with num=19 q="Worries a lot" %}
+                    {% include "tools/snippets/bfi_q.html" with num=20 q="Has a good, active imagination" %}
+                    {% include "tools/snippets/bfi_q.html" with num=21 q="Tends to be quiet" %}
+                    {% include "tools/snippets/bfi_q.html" with num=22 q="Usually trusts people" %}
+                </div>
+
+                <!-- Page 3 (Q23 to Q33) -->
+                <div class="survey-page space-y-6 hidden" id="page-3">
+                    <div class="border-b border-stone-800 pb-3 mb-4">
+                        <span class="text-amber-500 font-semibold text-sm">Altruism & Daily Habitual Styles</span>
+                    </div>
+                    {% include "tools/snippets/bfi_q.html" with num=23 q="Tends to be lazy" %}
+                    {% include "tools/snippets/bfi_q.html" with num=24 q="Doesn’t get upset easily; steady" %}
+                    {% include "tools/snippets/bfi_q.html" with num=25 q="Is creative and inventive" %}
+                    {% include "tools/snippets/bfi_q.html" with num=26 w=t q="Has a good, strong personality" %}
+                    {% include "tools/snippets/bfi_q.html" with num=27 q="Can be cold and distant with others" %}
+                    {% include "tools/snippets/bfi_q.html" with num=28 q="Keeps working until things are done" %}
+                    {% include "tools/snippets/bfi_q.html" with num=29 q="Can be moody" %}
+                    {% include "tools/snippets/bfi_q.html" with num=30 q="Likes artistic and creative experiences" %}
+                    {% include "tools/snippets/bfi_q.html" with num=31 q="Is kind of shy" %}
+                    {% include "tools/snippets/bfi_q.html" with num=32 q="Kind and considerate to almost everyone" %}
+                    {% include "tools/snippets/bfi_q.html" with num=33 q="Does things quickly and carefully" %}
+                </div>
+
+                <!-- Page 4 (Q34 to Q44) -->
+                <div class="survey-page space-y-6 hidden" id="page-4">
+                    <div class="border-b border-stone-800 pb-3 mb-4">
+                        <span class="text-amber-500 font-semibold text-sm">Emotional Tolerance & Cognitive Openness</span>
+                    </div>
+                    {% include "tools/snippets/bfi_q.html" with num=34 q="Stays calm in difficult situations" %}
+                    {% include "tools/snippets/bfi_q.html" with num=35 q="Likes work that is the same every time" %}
+                    {% include "tools/snippets/bfi_q.html" with num=36 q="Is outgoing; likes to be with people" %}
+                    {% include "tools/snippets/bfi_q.html" with num=37 q="Is sometimes rude to others" %}
+                    {% include "tools/snippets/bfi_q.html" with num=38 q="Makes plans and sticks to them" %}
+                    {% include "tools/snippets/bfi_q.html" with num=39 q="Gets nervous easily" %}
+                    {% include "tools/snippets/bfi_q.html" with num=40 q="Likes to think and play with ideas" %}
+                    {% include "tools/snippets/bfi_q.html" with num=41 q="Doesn’t like artistic things (plays, music)" %}
+                    {% include "tools/snippets/bfi_q.html" with num=42 q="Likes to cooperate; goes along with others" %}
+                    {% include "tools/snippets/bfi_q.html" with num=43 q="Has trouble paying attention" %}
+                    {% include "tools/snippets/bfi_q.html" with num=44 q="Knows a lot about art, music and books" %}
+                </div>
+                {% endblock %}
+            </div>
+
+            <!-- Validation Error Alert Container -->
+            <div id="survey-validation-alert" class="hidden p-4 rounded-xl border border-red-500/50 bg-red-950/20 text-red-400 text-sm">
+                Please rate all questions on this page before moving to the next section.
+            </div>
+
+            <!-- Page Actions -->
+            <div class="flex justify-between items-center pt-6 border-t border-stone-800/80">
+                <button type="button" id="prev-btn" class="px-5 py-2.5 rounded-xl text-sm font-semibold btn-outline invisible">
+                    Previous
+                </button>
+                <button type="button" id="next-btn" class="px-6 py-2.5 rounded-xl text-sm font-semibold btn-pulse text-white">
+                    Next Section
+                </button>
+                <button type="submit" id="submit-btn" class="px-6 py-2.5 rounded-xl text-sm font-semibold btn-pulse text-white hidden">
+                    Complete Setup & Run Model
+                </button>
+            </div>
+        </form>
+
+        <!-- Loader overlay for BFI pipeline trigger -->
+        <div id="bfi-loading-container" class="hidden flex-col items-center justify-center space-y-6 py-12 absolute inset-0 bg-stone-950/95 z-55">
+            <div class="loader-ring"><div></div><div></div><div></div><div></div></div>
+            <div class="text-center space-y-2 animate-pulse">
+                <h3 class="text-xl font-bold text-amber-500">Compiling Survey & Predicting...</h3>
+                <p class="text-stone-400 text-sm px-10">
+                    Applying BFI-44 scoring matrix, fetching timeline, and running active Selection Pipeline.
+                </p>
+                <p id="bfi-wait-message" class="text-xs text-stone-500 italic mt-2">Computing MAE values against ground truth...</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
+{% if not show_survey %}
 <script>
     const form = document.getElementById('analyze-form');
     const formContainer = document.getElementById('form-container');
@@ -183,7 +355,6 @@
         formContainer.classList.add('hidden');
         loadingContainer.classList.remove('hidden');
         
-        // Cycle status messages to keep the dashboard descriptive
         let msgIndex = 0;
         setInterval(() => {
             if (msgIndex < statusMessages.length) {
@@ -193,4 +364,106 @@
         }, 5000);
     });
 </script>
+{% else %}
+<script>
+    // Paginated Setup Questionnaire code
+    let currentPage = 1;
+    const totalPages = 4;
+    
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const submitBtn = document.getElementById('submit-btn');
+    const stepLabel = document.getElementById('step-label');
+    const percentLabel = document.getElementById('percent-label');
+    const progressBar = document.getElementById('progress-bar');
+    const valAlert = document.getElementById('survey-validation-alert');
+    const bfiForm = document.getElementById('bfi-survey-form');
+    const bfiLoader = document.getElementById('bfi-loading-container');
+
+    const bfiStatusMessages = [
+        "Computing BFI-44 reverse scored trait vectors...",
+        "Storing ground truth parameters standard data...",
+        "Fetching X timelines via public Nitter...",
+        "Applying Clean & Selected filters (removing mentions)...",
+        "Encoding selection blocks in BERT-uncased...",
+        "Training active Lasso regression parameters on volunteer...",
+        "Fusing ground truth with predictions for dashboard metrics..."
+    ];
+
+    function validateCurrentPage() {
+        const pageSel = document.getElementById(`page-${currentPage}`);
+        const checkedRadios = pageSel.querySelectorAll('input[type="radio"]:checked');
+        // Page 1-3 have 11 questions. Page 4 has 11 questions. Let's make it generic: number of question blocks on page
+        const totalQs = pageSel.querySelectorAll('.bfi-question-card').length;
+        if (checkedRadios.length < totalQs) {
+            valAlert.classList.remove('hidden');
+            // Scroll to the alert
+            valAlert.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return false;
+        }
+        valAlert.classList.add('hidden');
+        return true;
+    }
+
+    function showPage(page) {
+        document.querySelectorAll('.survey-page').forEach(p => p.classList.add('hidden'));
+        document.getElementById(`page-${page}`).classList.remove('hidden');
+        
+        currentPage = page;
+        
+        // Update labels
+        stepLabel.textContent = `Page ${page} of ${totalPages}`;
+        const pct = Math.round((page / totalPages) * 100);
+        percentLabel.textContent = `${pct}% Completed`;
+        progressBar.style.width = `${pct}%`;
+        
+        // Header navigation buttons
+        if (page === 1) {
+            prevBtn.classList.add('invisible');
+        } else {
+            prevBtn.classList.remove('invisible');
+        }
+        
+        if (page === totalPages) {
+            nextBtn.classList.add('hidden');
+            submitBtn.classList.remove('hidden');
+        } else {
+            nextBtn.classList.remove('hidden');
+            submitBtn.classList.add('hidden');
+        }
+
+        // Scroll back to top of form
+        document.getElementById('bfi-survey-form').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    nextBtn.addEventListener('click', () => {
+        if (validateCurrentPage()) {
+            showPage(currentPage + 1);
+        }
+    });
+
+    prevBtn.addEventListener('click', () => {
+        valAlert.classList.add('hidden');
+        showPage(currentPage - 1);
+    });
+
+    bfiForm.addEventListener('submit', (e) => {
+        if (!validateCurrentPage()) {
+            e.preventDefault();
+            return;
+        }
+        bfiLoader.classList.remove('hidden');
+        
+        // Cycle status messages
+        let msgIndex = 0;
+        const loaderMsg = document.getElementById('bfi-wait-message');
+        setInterval(() => {
+            if (msgIndex < bfiStatusMessages.length) {
+                loaderMsg.textContent = bfiStatusMessages[msgIndex];
+                msgIndex++;
+            }
+        }, 5000);
+    });
+</script>
+{% endif %}
 {% endblock %}

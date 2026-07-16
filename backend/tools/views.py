@@ -225,19 +225,90 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
         exclude_retweets = form.cleaned_data.get('exclude_retweets', True)
 
         try:
-            # 1. Create or retrieve volunteer dynamically
-            volunteer, created = VOLUNTEER.objects.get_or_create(
-                x_handle=x_handle,
-                defaults={
-                    'researcher': self.request.user,
-                    'consent_given': True,
-                    'pipeline_status': 'idle'
-                }
-            )            # 2. Fetch posts
+            from backend.core.models import BFI_SURVEY
+            
+            # Check if this handle has a volunteer and BFI survey
+            volunteer_exists = VOLUNTEER.objects.filter(x_handle=x_handle).exists()
+            has_bfi = False
+            volunteer = None
+            if volunteer_exists:
+                volunteer = VOLUNTEER.objects.get(x_handle=x_handle)
+                has_bfi = BFI_SURVEY.objects.filter(volunteer=volunteer).exists()
+
+            is_survey_submission = self.request.POST.get('is_survey_submission') == 'true'
+
+            if not has_bfi and not is_survey_submission:
+                # First step: redirect to BFI Survey display
+                return self.render_to_response(self.get_context_data(
+                    form=form,
+                    show_survey=True,
+                    x_handle=x_handle,
+                    limit=limit,
+                    exclude_retweets=exclude_retweets
+                ))
+
+            if is_survey_submission:
+                # Second step: Process BFI survey responses
+                responses = {}
+                for i in range(1, 45):
+                    val = self.request.POST.get(f'q{i}')
+                    if not val or not val.isdigit() or not (1 <= int(val) <= 5):
+                        messages.error(self.request, f"Please answer all 44 questions. (Question {i} needs a rating).")
+                        return self.render_to_response(self.get_context_data(
+                            form=form,
+                            show_survey=True,
+                            x_handle=x_handle,
+                            limit=limit,
+                            exclude_retweets=exclude_retweets,
+                            survey_responses=self.request.POST
+                        ))
+                    responses[str(i)] = int(val)
+
+                from backend.core.services.bfi_scorer import BFIScorer
+                traits = BFIScorer.calculate_scores(responses)
+
+                # Ensure volunteer exists
+                volunteer, created = VOLUNTEER.objects.get_or_create(
+                    x_handle=x_handle,
+                    defaults={
+                        'researcher': self.request.user,
+                        'consent_given': True,
+                        'pipeline_status': 'idle'
+                    }
+                )
+
+                # Create/update BFI Survey
+                bfi_survey, _ = BFI_SURVEY.objects.update_or_create(
+                    volunteer=volunteer,
+                    defaults={
+                        'responses': responses,
+                        'openness': traits['openness'],
+                        'conscientiousness': traits['conscientiousness'],
+                        'extraversion': traits['extraversion'],
+                        'agreeableness': traits['agreeableness'],
+                        'neuroticism': traits['neuroticism'],
+                    }
+                )
+                if not volunteer.bfi_surveys.filter(id=bfi_survey.id).exists():
+                    volunteer.bfi_surveys.add(bfi_survey)
+
+            # Ensure we have volunteer object instantiated at this stage
+            if not volunteer:
+                volunteer, created = VOLUNTEER.objects.get_or_create(
+                    x_handle=x_handle,
+                    defaults={
+                        'researcher': self.request.user,
+                        'consent_given': True,
+                        'pipeline_status': 'idle'
+                    }
+                )
+
+            # 2. Fetch posts
             from backend.core.services.twitter_fetcher import TwitterFetcher
             fetcher = TwitterFetcher()
             fetcher._max_posts = limit
             saved, skipped = fetcher.fetch_and_save(volunteer)
+
 
 
             posts_qs = POST.objects.filter(volunteer=volunteer)

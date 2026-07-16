@@ -1,0 +1,34 @@
+<div class="bfi-question-card bg-stone-900/30 border border-stone-800/80 rounded-xl p-4 md:p-5 space-y-4 hover:border-amber-800/40 hover:bg-stone-900/50 transition">
+    <div class="flex items-start justify-between">
+        <h4 class="text-stone-200 font-medium text-sm md:text-base leading-relaxed">
+            <span class="text-amber-500 font-bold mr-1">{{ num }}.</span> {{ q }} <span class="text-red-500 ml-0.5 font-bold">*</span>
+        </h4>
+    </div>
+    
+    <div class="flex items-center justify-between gap-2 pt-2">
+        <span class="text-[10px] md:text-xs font-semibold text-stone-500 uppercase tracking-wider w-1/4 text-left">
+            Disagree a lot
+        </span>
+        
+        <div class="flex justify-between items-center w-2/4 max-w-xs mx-auto gap-1">
+            {% for i in "12345" %}
+                <div class="relative">
+                    <input type="radio" 
+                           name="q{{ num }}" 
+                           id="q{{ num }}_opt_{{ i }}" 
+                           value="{{ i }}" 
+                           required
+                           class="likert-radio sr-only">
+                    <label for="q{{ num }}_opt_{{ i }}" 
+                           class="flex items-center justify-center w-9 h-9 md:w-10 md:h-10 rounded-full border border-stone-700 bg-stone-900 text-stone-300 font-bold text-sm cursor-pointer select-none hover:bg-stone-850 hover:border-stone-500 transition duration-150">
+                        {{ i }}
+                    </label>
+                </div>
+            {% endfor %}
+        </div>
+        
+        <span class="text-[10px] md:text-xs font-semibold text-stone-500 uppercase tracking-wider w-1/4 text-right">
+            Agree a lot
+        </span>
+    </div>
+</div>

@@ -90,21 +90,24 @@ class CSVUploadView(LoginRequiredMixin, FormView):
                                 f"Invalid response for item {item}: {value}")
 
                 if len(responses) >= 40:  # At least 90% responses
-                    # Calculate BFI scores
+                    # Calculate BFI scores (lowercase keys from calculate_scores)
                     scores = score_bfi_survey(responses)
 
-                    # Save BFI survey
-                    bfi_survey =  BFI_SURVEY.objects.create(
+                    # Upsert BFI survey — handles re-uploads without crashing
+                    bfi_survey, created = BFI_SURVEY.objects.update_or_create(
                         volunteer=volunteer,
-                        responses=responses,
-                        openness=scores['Openness'],
-                        conscientiousness=scores['Conscientiousness'],
-                        extraversion=scores['Extraversion'],
-                        agreeableness=scores['Agreeableness'],
-                        neuroticism=scores['Neuroticism'],
-                        completed_at=timezone.now(),
+                        defaults={
+                            'responses': responses,
+                            'openness': scores.get('Openness') or scores.get('openness'),
+                            'conscientiousness': scores.get('Conscientiousness') or scores.get('conscientiousness'),
+                            'extraversion': scores.get('Extraversion') or scores.get('extraversion'),
+                            'agreeableness': scores.get('Agreeableness') or scores.get('agreeableness'),
+                            'neuroticism': scores.get('Neuroticism') or scores.get('neuroticism'),
+                            'completed_at': timezone.now(),
+                        }
                     )
-                    volunteer.bfi_surveys.add(bfi_survey)
+                    if not volunteer.bfi_surveys.filter(id=bfi_survey.id).exists():
+                        volunteer.bfi_surveys.add(bfi_survey)
                     processed_count += 1
 
             messages.success(

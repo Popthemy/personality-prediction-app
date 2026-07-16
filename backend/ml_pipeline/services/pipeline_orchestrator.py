@@ -200,9 +200,17 @@ class PipelineOrchestrator:
             
             # Encode post (using cleaned text)
             cleaned_text = getattr(post, 'cleaned_content', post.content)
+
+            # Idempotency: skip re-encoding if embedding already exists
+            existing = BERT_EMBEDDING.objects.filter(post=post).first()
+            if existing:
+                embeddings.append(existing)
+                post.embedding_processed = True
+                post.save()
+                continue
+
             result = encoder.encode_text(cleaned_text)
 
-            
             # Save to database
             embedding_obj = BERT_EMBEDDING.objects.create(
                 post=post,
@@ -215,6 +223,7 @@ class PipelineOrchestrator:
             embeddings.append(embedding_obj)
             post.embedding_processed = True
             post.save()
+
             
             if (i + 1) % 5 == 0:
                 self.logger.debug(f"Processed {i+1}/{len(posts)} posts")

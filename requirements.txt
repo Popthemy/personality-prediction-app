@@ -25,3 +25,8 @@ python-decouple==3.8
 # Image handling
 pillow==10.1.0
 numpy
+django-mathfilters
+
+# X (Twitter) post fetching — free, no API key required
+# Install from source: git+https://github.com/ythx-101/x-tweet-fetcher.git
+x-tweet-fetcher

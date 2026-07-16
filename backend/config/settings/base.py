@@ -220,3 +220,14 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ]
+
+# X (Twitter) Post Fetcher — uses x-tweet-fetcher (xtf) library via public Nitter instances.
+# Override by setting XTF_NITTER in .env as a comma-separated list of Nitter base URLs.
+XTF_NITTER = os.environ.get(
+    'XTF_NITTER',
+    'https://nitter.kareem.one,https://nitter.privacyredirect.com,https://nitter.tiekoetter.com'
+)
+
+# Max posts to fetch per volunteer per API call
+XTF_MAX_POSTS = int(os.environ.get('XTF_MAX_POSTS', '50'))
+

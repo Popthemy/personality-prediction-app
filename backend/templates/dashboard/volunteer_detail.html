@@ -37,7 +37,7 @@
         <p class="text-stone-600 text-sm font-medium">Prediction Status</p>
         {% if prediction %}
         <p class="text-2xl font-bold text-blue-600 mt-2">Complete</p>
-        <p class="text-xs text-stone-500 mt-1">MAE: {{ prediction.mae_score|floatformat:3 }}</p>
+        <p class="text-xs text-stone-500 mt-1">MAE: {{ prediction.overall_mae|default:"N/A"|floatformat:3 }}</p>
         {% else %}
         <p class="text-2xl font-bold text-gray-600 mt-2">Pending</p>
         {% endif %}
@@ -47,9 +47,23 @@
         <p class="text-stone-600 text-sm font-medium">Pipeline Progress</p>
         <div class="mt-2">
           <div class="w-full bg-stone-200 rounded-full h-2">
-            <div class="bg-blue-600 h-2 rounded-full" style="width: 75%"></div>
+            {% if volunteer.pipeline_status == 'success' %}
+            <div class="bg-blue-600 h-2 rounded-full" style="width: 100%"></div>
+            {% elif volunteer.pipeline_status == 'running' %}
+            <div class="bg-blue-600 h-2 rounded-full" style="width: 60%"></div>
+            {% else %}
+            <div class="bg-blue-600 h-2 rounded-full" style="width: 25%"></div>
+            {% endif %}
           </div>
-          <p class="text-xs text-stone-500 mt-2">75% Complete</p>
+          <p class="text-xs text-stone-500 mt-2">
+            {% if volunteer.pipeline_status == 'success' %}
+            100% Complete
+            {% elif volunteer.pipeline_status == 'running' %}
+            60% Processing...
+            {% else %}
+            25% Connected
+            {% endif %}
+          </p>
         </div>
       </div>
     </div>
@@ -130,7 +144,7 @@
           <canvas id="ocean_radar_chart" width="280" height="280"></canvas>
           {% if prediction %}
           <p class="text-xs text-stone-500 text-center mt-4">
-            Confidence: <span class="font-bold">{{ prediction.confidence_score|mul:100|floatformat:0 }}%</span>
+            Confidence: <span class="font-bold">{{ prediction.prediction_confidence|mul:100|floatformat:0 }}%</span>
           </p>
          {% endif %}
         </div>
@@ -146,10 +160,10 @@
             <div>
               <div class="flex justify-between mb-2">
                 <span class="text-sm font-medium text-stone-900">Openness</span>
-                <span class="text-sm font-bold text-blue-600">{{ prediction.openness_predicted|floatformat:1 }}/5</span>
+                <span class="text-sm font-bold text-blue-600">{{ prediction.predicted_openness|floatformat:1 }}/5</span>
               </div>
               <div class="w-full bg-stone-200 rounded-full h-2">
-                <div class="bg-blue-600 h-2 rounded-full" style="width: {{ prediction.openness_predicted|mul:20 }}%"></div>
+                <div class="bg-blue-600 h-2 rounded-full" style="width: {{ prediction.predicted_openness|mul:20 }}%"></div>
               </div>
             </div>
 
@@ -157,10 +171,10 @@
             <div>
               <div class="flex justify-between mb-2">
                 <span class="text-sm font-medium text-stone-900">Conscientiousness</span>
-                <span class="text-sm font-bold text-green-600">{{ prediction.conscientiousness_predicted|floatformat:1 }}/5</span>
+                <span class="text-sm font-bold text-green-600">{{ prediction.predicted_conscientiousness|floatformat:1 }}/5</span>
               </div>
               <div class="w-full bg-stone-200 rounded-full h-2">
-                <div class="bg-green-600 h-2 rounded-full" style="width: {{ prediction.conscientiousness_predicted|mul:20 }}%"></div>
+                <div class="bg-green-600 h-2 rounded-full" style="width: {{ prediction.predicted_conscientiousness|mul:20 }}%"></div>
               </div>
             </div>
 
@@ -168,10 +182,10 @@
             <div>
               <div class="flex justify-between mb-2">
                 <span class="text-sm font-medium text-stone-900">Extraversion</span>
-                <span class="text-sm font-bold text-purple-600">{{ prediction.extraversion_predicted|floatformat:1 }}/5</span>
+                <span class="text-sm font-bold text-purple-600">{{ prediction.predicted_extraversion|floatformat:1 }}/5</span>
               </div>
               <div class="w-full bg-stone-200 rounded-full h-2">
-                <div class="bg-purple-600 h-2 rounded-full" style="width: {{ prediction.extraversion_predicted|mul:20 }}%"></div>
+                <div class="bg-purple-600 h-2 rounded-full" style="width: {{ prediction.predicted_extraversion|mul:20 }}%"></div>
               </div>
             </div>
 
@@ -179,10 +193,10 @@
             <div>
               <div class="flex justify-between mb-2">
                 <span class="text-sm font-medium text-stone-900">Agreeableness</span>
-                <span class="text-sm font-bold text-orange-600">{{ prediction.agreeableness_predicted|floatformat:1 }}/5</span>
+                <span class="text-sm font-bold text-orange-600">{{ prediction.predicted_agreeableness|floatformat:1 }}/5</span>
               </div>
               <div class="w-full bg-stone-200 rounded-full h-2">
-                <div class="bg-orange-600 h-2 rounded-full" style="width: {{ prediction.agreeableness_predicted|mul:20 }}%"></div>
+                <div class="bg-orange-600 h-2 rounded-full" style="width: {{ prediction.predicted_agreeableness|mul:20 }}%"></div>
               </div>
             </div>
 
@@ -190,10 +204,10 @@
             <div>
               <div class="flex justify-between mb-2">
                 <span class="text-sm font-medium text-stone-900">Neuroticism</span>
-                <span class="text-sm font-bold text-red-600">{{ prediction.neuroticism_predicted|floatformat:1 }}/5</span>
+                <span class="text-sm font-bold text-red-600">{{ prediction.predicted_neuroticism|floatformat:1 }}/5</span>
               </div>
               <div class="w-full bg-stone-200 rounded-full h-2">
-                <div class="bg-red-600 h-2 rounded-full" style="width: {{ prediction.neuroticism_predicted|mul:20 }}%"></div>
+                <div class="bg-red-600 h-2 rounded-full" style="width: {{ prediction.predicted_neuroticism|mul:20 }}%"></div>
               </div>
             </div>
           </div>
@@ -211,22 +225,22 @@
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div class="border-l-4 border-blue-600 pl-4">
           <p class="text-stone-600 text-sm font-medium">MAE Score</p>
-          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.mae_score|floatformat:3 }}</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.overall_mae|default:"N/A"|floatformat:3 }}</p>
           <p class="text-xs text-stone-500 mt-1">Lower is better</p>
         </div>
         <div class="border-l-4 border-green-600 pl-4">
           <p class="text-stone-600 text-sm font-medium">Correlation</p>
-          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.correlation|floatformat:3 }}</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{% if prediction.correlation %}{{ prediction.correlation|floatformat:3 }}{% else %}N/A{% endif %}</p>
           <p class="text-xs text-stone-500 mt-1">Pearson r</p>
         </div>
         <div class="border-l-4 border-purple-600 pl-4">
           <p class="text-stone-600 text-sm font-medium">R² Score</p>
-          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.r2_score|floatformat:3 }}</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{% if prediction.r2_score %}{{ prediction.r2_score|floatformat:3 }}{% else %}N/A{% endif %}</p>
           <p class="text-xs text-stone-500 mt-1">Variance explained</p>
         </div>
         <div class="border-l-4 border-orange-600 pl-4">
           <p class="text-stone-600 text-sm font-medium">Confidence</p>
-          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.confidence_score|mul:100|floatformat:0 }}%</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.prediction_confidence|mul:100|floatformat:0 }}%</p>
           <p class="text-xs text-stone-500 mt-1">Model confidence</p>
         </div>
       </div>
@@ -245,25 +259,59 @@
         <!-- Education -->
         <div>
           <h3 class="font-bold text-stone-900 mb-2">Education</h3>
-          <p class="text-stone-600 text-sm">Based on personality analysis, this individual shows strong patterns for structured learning with emphasis on conscientiousness and openness to new ideas.</p>
+          <p class="text-stone-600 text-sm">
+            {% if prediction %}
+              {% if prediction.predicted_conscientiousness > 3.5 %}
+                Highly structured learning environments, systematic course designs, and clear study objectives suit this individual's high conscientiousness trait.
+              {% else %}
+                Responsive to flexible, self-paced, and highly interactive learning mediums that allow room for creative navigation.
+              {% endif %}
+            {% else %}
+              Awaiting prediction analysis to map learning style recommendations.
+            {% endif %}
+          </p>
         </div>
 
         <!-- Health -->
         <div>
           <h3 class="font-bold text-stone-900 mb-2">Health & Wellbeing</h3>
-          <p class="text-stone-600 text-sm">Personality traits suggest engagement with wellness practices. Recommendation: Focus on stress management and social connection strategies.</p>
+          <p class="text-stone-600 text-sm">
+            {% if prediction %}
+              {% if prediction.predicted_neuroticism > 3.0 %}
+                Personality traits point to elevated stress vulnerability. Recommend structured routine, mindfulness, and cognitive stress control strategies.
+              {% else %}
+                Traits suggest healthy resilience to daily stressors with low emotional volatility. Focus on standard physical vigor and wellness longevity.
+              {% endif %}
+            {% else %}
+              Awaiting prediction analysis to yield personalized wellness metrics.
+            {% endif %}
+          </p>
         </div>
 
         <!-- Employment -->
         <div>
           <h3 class="font-bold text-stone-900 mb-2">Employment</h3>
-          <p class="text-stone-600 text-sm">This personality profile aligns well with collaborative team environments and roles requiring creative problem-solving and interpersonal engagement.</p>
+          <p class="text-stone-600 text-sm">
+            {% if prediction %}
+              {% if prediction.predicted_extraversion > 3.5 %}
+                Excellent alignment with active customer-facing, public speaking, or team-centric collaboration roles that reward high social energy.
+              {% else %}
+                Best matched for independent, analytical, or research-oriented workspaces that reward deep focusing.
+              {% endif %}
+            {% else %}
+              Awaiting prediction analysis to formulate workplace compatibility insights.
+            {% endif %}
+          </p>
         </div>
 
         <!-- Responsible AI -->
         <div>
           <h3 class="font-bold text-stone-900 mb-2">Responsible AI</h3>
-          <p class="text-stone-600 text-sm">This prediction was generated using Lasso regression with interpretable features. Full feature importance analysis available in technical documentation.</p>
+          <p class="text-stone-600 text-sm">
+            This prediction was generated using an explainable Lasso linear regression model trained on 
+            {% if prediction %}{{ prediction.posts_analyzed }}{% else %}0{% endif %} post-level signal samples and BERT embeddings. 
+            No sensitive demographics were parsed.
+          </p>
         </div>
       </div>
     </div>
@@ -297,18 +345,18 @@ dataset.push({
 dataset.push({
   label: 'Prediction',
   data: [
-    {{ prediction.openness_predicted }},
-    {{ prediction.conscientiousness_predicted }},
-    {{ prediction.extraversion_predicted }},
-    {{ prediction.agreeableness_predicted }},
-    {{ prediction.neuroticism_predicted }},
+    {{ prediction.predicted_openness }},
+    {{ prediction.predicted_conscientiousness }},
+    {{ prediction.predicted_extraversion }},
+    {{ prediction.predicted_agreeableness }},
+    {{ prediction.predicted_neuroticism }},
   ],
   borderColor: 'rgb(59, 130, 246)',
   backgroundColor: 'rgba(59, 130, 246, 0.1)',
   borderWidth: 2,
   pointRadius: 3,
 });
-{%endif %}
+{% endif %}
 
 
 new Chart(ctx, {

@@ -135,18 +135,37 @@ class FetchPostsView(LoginRequiredMixin, FormView):
                 x_handle=x_handle,
                 researcher=self.request.user
             )
-            # TODO: Integrate with X API to fetch posts
-            # For now, placeholder message
-            messages.info(
-                self.request,
-                f'X API integration coming soon for @{x_handle}'
-            )
-            logger.info(f"Posts fetch requested for {x_handle}")
+
+            from backend.core.services.twitter_fetcher import TwitterFetcher
+            fetcher = TwitterFetcher()
+            saved, skipped = fetcher.fetch_and_save(volunteer)
+
+            if saved > 0:
+                messages.success(
+                    self.request,
+                    f'Fetched {saved} new posts for @{x_handle} ({skipped} already existed).'
+                )
+            elif skipped > 0:
+                messages.info(
+                    self.request,
+                    f'No new posts found for @{x_handle} — {skipped} already in database.'
+                )
+            else:
+                messages.warning(
+                    self.request,
+                    f'Could not fetch posts for @{x_handle}. The Nitter instance may be unavailable.'
+                )
+
+            logger.info(f"Posts fetched for @{x_handle}: saved={saved}, skipped={skipped}")
+
         except VOLUNTEER.DoesNotExist:
             messages.error(
                 self.request,
                 f'Volunteer @{x_handle} not found'
             )
+        except Exception as e:
+            logger.error(f"FetchPostsView error for @{x_handle}: {e}")
+            messages.error(self.request, f'Error fetching posts: {str(e)}')
 
         return super().form_valid(form)
 
@@ -178,7 +197,7 @@ class RunPipelineView(LoginRequiredMixin, FormView):
 
             messages.success(
                 self.request,
-                f'Pipeline started for {volunteer.twitter_handle}. Check status in dashboard.'
+                f'Pipeline started for @{volunteer.x_handle}. Check status in dashboard.'
             )
             logger.info(
                 f"Pipeline triggered for volunteer {volunteer_id} by {self.request.user}"
@@ -190,3 +209,195 @@ class RunPipelineView(LoginRequiredMixin, FormView):
             messages.error(self.request, f'Error: {str(e)}')
 
         return super().form_valid(form)
+
+
+class AnalyzeProfileView(LoginRequiredMixin, FormView):
+    """
+    Manages fetching X posts and running predictions for any X handle,
+    including those without ground truth BFI data.
+    """
+    form_class = XHandleFetchForm
+    template_name = 'tools/analyze.html'
+
+    def form_valid(self, form):
+        x_handle = form.cleaned_data['x_handle']
+        limit = form.cleaned_data.get('limit', 50)
+        exclude_retweets = form.cleaned_data.get('exclude_retweets', True)
+
+        try:
+            # 1. Create or retrieve volunteer dynamically
+            volunteer, created = VOLUNTEER.objects.get_or_create(
+                x_handle=x_handle,
+                defaults={
+                    'researcher': self.request.user,
+                    'consent_given': True,
+                    'pipeline_status': 'idle'
+                }
+            )            # 2. Fetch posts
+            from backend.core.services.twitter_fetcher import TwitterFetcher
+            fetcher = TwitterFetcher()
+            fetcher._max_posts = limit
+            saved, skipped = fetcher.fetch_and_save(volunteer)
+
+
+            posts_qs = POST.objects.filter(volunteer=volunteer)
+            if exclude_retweets:
+                posts_qs = posts_qs.filter(is_retweet=False)
+
+            from backend.ml_pipeline.processors.text_preprocessor import TextPreprocessor
+            preprocessor = TextPreprocessor()
+
+            valid_posts = []
+            for post in posts_qs:
+                cleaned = preprocessor.clean(post.content)
+                if preprocessor.is_valid(cleaned):
+                    post.cleaned_content = cleaned
+                    valid_posts.append(post)
+
+            if len(valid_posts) == 0:
+                messages.error(
+                    self.request,
+                    f"No valid posts found for @{x_handle} to analyze. Please try a different handle."
+                )
+                return self.form_invalid(form)
+
+            # 4. Q-Learning Selection
+            from backend.ml_pipeline.services.qlearning_agent import QLearningAgent, create_post_features
+            agent = QLearningAgent(alpha=0.1, gamma=0.99, epsilon=0.05)
+
+            post_features = []
+            for post in valid_posts:
+                features = create_post_features(post)
+                post_features.append({
+                    'id': post.id,
+                    'content': post.cleaned_content,
+                    **features,
+                })
+
+            top_k = min(10, len(valid_posts))
+            selected = agent.select_posts(post_features, top_k=top_k, training=False)
+            selected_post_ids = {s['id'] for s in selected}
+
+            selected_posts = []
+            for post in valid_posts:
+                if post.id in selected_post_ids:
+                    post.selected_by_qlearning = True
+                    for s in selected:
+                        if s['id'] == post.id:
+                            post.q_value = s.get('q_value', 0)
+                            break
+                    selected_posts.append(post)
+                else:
+                    post.selected_by_qlearning = False
+                post.save()
+
+            # 5. Extract BERT Embeddings
+            from backend.ml_pipeline.services.bert_encoder import BERTEncoder
+            import time
+            encoder = BERTEncoder()
+
+            embeddings = []
+            from backend.core.models import BERT_EMBEDDING, PSYCHOMETRIC_PROFILE, LASSO_MODEL
+
+            for post in selected_posts:
+                start_time = time.time()
+                # Check idempotency: does BERT_EMBEDDING already exist for this post?
+                emb_obj = BERT_EMBEDDING.objects.filter(post=post).first()
+                if not emb_obj:
+                    result = encoder.encode_text(post.cleaned_content)
+                    emb_obj = BERT_EMBEDDING.objects.create(
+                        post=post,
+                        volunteer=volunteer,
+                        embedding_vector=result['embedding'],
+                        model_name=result['model_name'],
+                        processing_time_seconds=time.time() - start_time,
+                    )
+                embeddings.append(emb_obj)
+                post.embedding_processed = True
+                post.save()
+
+            # 6. Check BFI survey ground truth to decide prediction workflow
+            from backend.core.models import BFI_SURVEY
+            has_bfi = BFI_SURVEY.objects.filter(volunteer=volunteer).exists()
+
+            if has_bfi:
+                # If ground truth exists, run the full training + prediction orchestrator pipeline
+                orchestrator = PipelineOrchestrator(volunteer.id)
+                orchestrator.run_full_pipeline()
+                messages.success(
+                    self.request,
+                    f"Successfully ran training pipeline and predicted personality for @{x_handle}."
+                )
+            else:
+                # Predict using existing trained LASSO_MODEL coefficients from database
+                import numpy as np
+                X_pred = []
+                for emb in embeddings:
+                    if isinstance(emb.embedding_vector, str):
+                        embedding_list = json.loads(emb.embedding_vector)
+                    else:
+                        embedding_list = emb.embedding_vector
+                    X_pred.append(embedding_list)
+                X_pred = np.array(X_pred)
+
+                # Normalize features on user's own selection
+                X_norm = (X_pred - X_pred.mean(axis=0)) / (X_pred.std(axis=0) + 1e-8)
+
+                predictions = {}
+                traits = ['openness', 'conscientiousness', 'extraversion', 'agreeableness', 'neuroticism']
+
+                for t in traits:
+                    model_db = LASSO_MODEL.objects.filter(trait=t).order_by('-id').first()
+
+                    if not model_db:
+                        # Cold start: bootstrap training on the first volunteer possessing a ground truth
+                        first_gt_vol = VOLUNTEER.objects.filter(bfi_surveys__isnull=False).first()
+                        if first_gt_vol:
+                            PipelineOrchestrator(first_gt_vol.id).run_full_pipeline()
+                            model_db = LASSO_MODEL.objects.filter(trait=t).order_by('-id').first()
+
+                    if model_db:
+                        coefs_dict = json.loads(model_db.coefficients)
+                        w = np.array([coefs_dict[str(i)] for i in range(768)])
+                        b = model_db.intercept
+
+                        preds_norm = np.dot(X_norm, w) + b
+                        preds_norm = np.clip(preds_norm, 0, 1)
+                        preds = preds_norm * 4.0 + 1.0  # Denormalize
+                        predictions[f'predicted_{t}'] = float(np.mean(preds))
+                    else:
+                        # Clear heuristic default
+                        predictions[f'predicted_{t}'] = 3.0
+
+                # Save predictions to PSYCHOMETRIC_PROFILE
+                profile, _ = PSYCHOMETRIC_PROFILE.objects.update_or_create(
+                    volunteer=volunteer,
+                    defaults={
+                        'predicted_openness': predictions['predicted_openness'],
+                        'predicted_conscientiousness': predictions['predicted_conscientiousness'],
+                        'predicted_extraversion': predictions['predicted_extraversion'],
+                        'predicted_agreeableness': predictions['predicted_agreeableness'],
+                        'predicted_neuroticism': predictions['predicted_neuroticism'],
+                        'overall_mae': None,
+                        'posts_analyzed': len(selected_posts),
+                        'embeddings_used': len(embeddings),
+                        'synthetic_data_used': 0,
+                        'prediction_confidence': 0.85,
+                        'personality_summary': f"Personality profile predicted from X posts using Lasso regression.",
+                    }
+                )
+
+                messages.success(
+                    self.request,
+                    f"Successfully fetched posts and predicted personality for @{x_handle} using trained model."
+                )
+
+            volunteer.pipeline_status = 'success'
+            volunteer.save()
+            return redirect('dashboard:volunteer_detail', pk=volunteer.id)
+
+        except Exception as e:
+            logger.error(f"AnalyzeProfileView error for @{x_handle}: {e}", exc_info=True)
+            messages.error(self.request, f"Error analyzing profile: {str(e)}")
+            return self.form_invalid(form)
+

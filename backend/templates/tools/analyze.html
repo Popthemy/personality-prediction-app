@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Analyze X Profile — Big Five Personality Prediction{% endblock %}
+
+{% block extra_css %}
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+<style>
+    body {
+        font-family: 'Outfit', sans-serif;
+        background: radial-gradient(circle at top right, #3c2f2f 0%, #1c1917 100%) !important;
+        color: #f5f5f4;
+    }
+    
+    .glass-card {
+        background: rgba(44, 40, 38, 0.45);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    
+    .glow-input:focus {
+        border-color: rgba(217, 119, 6, 0.5);
+        box-shadow: 0 0 15px rgba(217, 119, 6, 0.25);
+    }
+    
+    /* Elegant amber button styling */
+    .btn-pulse {
+        background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 20px rgba(217, 119, 6, 0.3);
+    }
+    
+    .btn-pulse:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(217, 119, 6, 0.5);
+    }
+    
+    .btn-pulse:active {
+        transform: translateY(0);
+    }
+    
+    /* Core loading spinner styles */
+    .loader-ring {
+        display: inline-block;
+        position: relative;
+        width: 80px;
+        height: 80px;
+    }
+    .loader-ring div {
+        box-sizing: border-box;
+        display: block;
+        position: absolute;
+        width: 64px;
+        height: 64px;
+        margin: 8px;
+        border: 6px solid #d97706;
+        border-radius: 50%;
+        animation: loader-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+        border-color: #d97706 transparent transparent transparent;
+    }
+    .loader-ring div:nth-child(1) { animation-delay: -0.45s; }
+    .loader-ring div:nth-child(2) { animation-delay: -0.3s; }
+    .loader-ring div:nth-child(3) { animation-delay: -0.15s; }
+    
+    @keyframes loader-ring {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    .text-gradient {
+        background: linear-gradient(to right, #fbbf24, #f59e0b, #d97706);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex flex-col items-center justify-center min-h-[75vh] px-4 md:px-0">
+    <div class="w-full max-w-xl glass-card rounded-2xl p-8 md:p-12 relative overflow-hidden">
+        <!-- Background accents -->
+        <div class="absolute -top-32 -left-32 w-64 h-64 bg-amber-600 rounded-full filter blur-[120px] opacity-15 pointer-events-none"></div>
+        <div class="absolute -bottom-32 -right-32 w-64 h-64 bg-amber-800 rounded-full filter blur-[120px] opacity-15 pointer-events-none"></div>
+        
+        <!-- Center form container -->
+        <div id="form-container" class="space-y-8">
+            <div class="text-center space-y-3">
+                <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight">
+                    Analyze <span class="text-gradient">X Profile</span>
+                </h1>
+                <p class="text-stone-400 text-sm md:text-base font-light">
+                    Predict Big Five personality traits from social media footprints using Lasso regression and BERT embeddings.
+                </p>
+            </div>
+            
+            <form method="POST" id="analyze-form" class="space-y-6">
+                {% csrf_token %}
+                
+                <!-- Form handle input -->
+                <div class="space-y-2">
+                    <label for="id_x_handle" class="block text-sm font-semibold tracking-wide text-amber-500 uppercase">
+                        X Handle / Username
+                    </label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-stone-500 font-semibold text-lg">
+                            @
+                        </div>
+                        <input type="text" name="x_handle" id="id_x_handle" required
+                               placeholder="21Century_Dev" 
+                               class="block w-full pl-10 pr-4 py-3 bg-stone-900/60 border border-stone-800 rounded-xl text-stone-100 placeholder-stone-600 focus:outline-none glow-input text-lg font-medium transition duration-200">
+                    </div>
+                    {% if form.x_handle.errors %}
+                        <div class="text-red-400 text-xs mt-1">
+                            {{ form.x_handle.errors.0 }}
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Additional limit settings -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                        <label for="id_limit" class="block text-xs font-semibold text-stone-400 uppercase">
+                            Posts Limit
+                        </label>
+                        <select name="limit" id="id_limit" class="block w-full bg-stone-900/60 border border-stone-800 rounded-lg px-3 py-2 text-stone-300 text-sm focus:outline-none">
+                            <option value="25">25 tweets</option>
+                            <option value="50" selected>50 tweets</option>
+                            <option value="100">100 tweets</option>
+                            <option value="200">200 tweets</option>
+                        </select>
+                    </div>
+                    
+                    <div class="flex items-center space-x-2 pt-6">
+                        <input type="checkbox" name="exclude_retweets" id="id_exclude_retweets" checked
+                               class="w-4 h-4 rounded bg-stone-900/60 border-stone-800 text-amber-600 focus:ring-amber-500">
+                        <label for="id_exclude_retweets" class="text-xs font-medium text-stone-400">
+                            Exclude retweets
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Action button -->
+                <button type="submit" class="btn-pulse w-full py-4 text-white font-bold rounded-xl text-lg hover:shadow-amber-500/20 tracking-wider">
+                    Analyze Footprint
+                </button>
+            </form>
+        </div>
+        
+        <!-- Loading overlay -->
+        <div id="loading-container" class="hidden flex-col items-center justify-center space-y-6 py-12">
+            <div class="loader-ring"><div></div><div></div><div></div><div></div></div>
+            <div class="text-center space-y-2 animate-pulse">
+                <h3 class="text-xl font-bold text-amber-500">Processing X Profile...</h3>
+                <p class="text-stone-400 text-sm px-4">
+                    Fetching timelines, sanitising text content, selecting active signal posts, and generating BERT contextual embeddings.
+                </p>
+                <p id="wait-message" class="text-xs text-stone-500 italic mt-2">This may take up to a minute depending on profile size...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const form = document.getElementById('analyze-form');
+    const formContainer = document.getElementById('form-container');
+    const loadingContainer = document.getElementById('loading-container');
+    const waitMessage = document.getElementById('wait-message');
+    
+    const statusMessages = [
+        "Connecting to Nitter instances...",
+        "Fetching timelines and resolving profiles...",
+        "Applying preprocessor rules (mentions and links removal)...",
+        "Running Q-Learning selection optimization...",
+        "Initializing Google BERT-base-uncased transformer...",
+        "Extracting 768-dimensional embedding vectors...",
+        "Computing Lasso regression prediction models...",
+        "Generating final OCEAN psychometric profile dashboard..."
+    ];
+    
+    form.addEventListener('submit', function() {
+        formContainer.classList.add('hidden');
+        loadingContainer.classList.remove('hidden');
+        
+        // Cycle status messages to keep the dashboard descriptive
+        let msgIndex = 0;
+        setInterval(() => {
+            if (msgIndex < statusMessages.length) {
+                waitMessage.textContent = statusMessages[msgIndex];
+                msgIndex++;
+            }
+        }, 5000);
+    });
+</script>
+{% endblock %}

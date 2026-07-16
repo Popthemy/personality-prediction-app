@@ -1,0 +1,27 @@
+=== xtf package directory ===
+['AllBackendsFailed', 'Article', 'BackendUnavailable', 'InvalidInput', 'NotFound', 'NotSupported', 'Profile', 'RateLimited', 'Reply', 'Router', 'Tweet', 'UpstreamDown', 'XtfError', '__all__', '__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__path__', '__spec__', '__version__', 'backends', 'config', 'exceptions', 'http', 'i18n', 'models', 'parsers', 'router']
+=== Router Functions ===
+Function: __init__(self, backend: 'str' = 'auto', nitter_instances: 'Optional[List[str]]' = None, browser_driver: 'Optional[str]' = None, browser_port: 'Optional[int]' = None, browser_nitter: 'Optional[str]' = None)
+Function: _chain(self) -> 'List[Backend]'
+Function: _run(self, op_name: 'str', call: 'Callable[[Backend], Any]', chain: 'Optional[List[Backend]]' = None) -> 'Any'
+Function: fetch_article(self, article_id: 'str')
+Function: fetch_list(self, list_id: 'str', limit: 'int' = 20)
+Function: fetch_replies(self, username: 'str', tweet_id: 'str')
+Function: fetch_timeline(self, username: 'str', limit: 'int' = 20)
+Function: fetch_tweet(self, username: 'str', tweet_id: 'str') -> 'Dict[str, Any]'
+Function: fetch_user_info(self, username: 'str') -> 'Dict[str, Any]'
+Function: search(self, query: 'str', limit: 'int' = 20)
+=== Module level members ===
+Class: AllBackendsFailed
+Class: Article
+Class: BackendUnavailable
+Class: InvalidInput
+Class: NotFound
+Class: NotSupported
+Class: Profile
+Class: RateLimited
+Class: Reply
+Class: Router
+Class: Tweet
+Class: UpstreamDown
+Class: XtfError

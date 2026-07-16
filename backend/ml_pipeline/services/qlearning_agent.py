@@ -197,11 +197,13 @@ def create_post_features(post_obj) -> Dict:
     from datetime import datetime, timezone
     
     recency_days = (datetime.now(timezone.utc) - post_obj.created_at_original).days
+    content_text = getattr(post_obj, 'cleaned_content', post_obj.content)
     
     return {
         'engagement_score': post_obj.engagement_score,
         'recency_days': recency_days,
-        'text_length': len(post_obj.content),
+        'text_length': len(content_text),
         'has_hashtags': '#' in post_obj.content,
         'has_urls': 'http' in post_obj.content.lower(),
     }
+

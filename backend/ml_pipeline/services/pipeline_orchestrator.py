@@ -103,17 +103,30 @@ class PipelineOrchestrator:
     
     def _step_1_input_data(self) -> List:
         """
-        Step 1: Retrieve input posts from database.
+        Step 1: Retrieve input posts from database and clean them.
         
         Returns:
-            List of POST objects
+            List of POST objects with cleaned_content attached
         """
-        self.logger.info("STEP 1: Input Data - retrieving posts from database")
-        
-        posts = POST.objects.filter(volunteer=self.volunteer).order_by('-created_at_original')
-        self.logger.info(f"Retrieved {posts.count()} posts")
-        
-        return list(posts)
+        self.logger.info("STEP 1: Input Data - retrieving and cleaning posts")
+        from backend.ml_pipeline.processors.text_preprocessor import TextPreprocessor
+
+        preprocessor = TextPreprocessor()
+        raw_posts = POST.objects.filter(volunteer=self.volunteer).order_by('-created_at_original')
+        self.logger.info(f"Retrieved {raw_posts.count()} raw posts from database")
+
+        posts = []
+        for post in raw_posts:
+            cleaned = preprocessor.clean(post.content)
+            if preprocessor.is_valid(cleaned):
+                post.cleaned_content = cleaned
+                posts.append(post)
+            else:
+                self.logger.debug(f"Filtered out invalid/short post: {post.content[:50]!r}")
+
+        self.logger.info(f"Filtered down to {len(posts)} valid posts after preprocessing")
+        return posts
+
     
     def _step_2_qlearning_selection(self, posts: List) -> List:
         """
@@ -137,7 +150,7 @@ class PipelineOrchestrator:
             features = create_post_features(post)
             post_features.append({
                 'id': post.id,
-                'content': post.content,
+                'content': getattr(post, 'cleaned_content', post.content),
                 **features,
             })
         
@@ -147,6 +160,7 @@ class PipelineOrchestrator:
         
         # Log decisions and mark posts
         selected_post_ids = {s['id'] for s in selected}
+        selected_posts = []
         
         for post in posts:
             if post.id in selected_post_ids:
@@ -157,13 +171,11 @@ class PipelineOrchestrator:
                     if s['id'] == post.id:
                         post.q_value = s.get('q_value', 0)
                         break
+                selected_posts.append(post)
             post.save()
         
-        # Retrieve updated objects
-        selected_posts = POST.objects.filter(volunteer=self.volunteer, selected_by_qlearning=True)
         self.logger.info(f"Q-Learning selected {len(selected_posts)} posts")
-        
-        return list(selected_posts)
+        return selected_posts
     
     def _step_3_bert_embedding(self, posts: List) -> List:
         """
@@ -186,8 +198,10 @@ class PipelineOrchestrator:
         for i, post in enumerate(posts):
             start_time = time.time()
             
-            # Encode post
-            result = encoder.encode_text(post.content)
+            # Encode post (using cleaned text)
+            cleaned_text = getattr(post, 'cleaned_content', post.content)
+            result = encoder.encode_text(cleaned_text)
+
             
             # Save to database
             embedding_obj = BERT_EMBEDDING.objects.create(

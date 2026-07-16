@@ -1,0 +1,28 @@
+=== Tweet Class Members ===
+Field: author
+Field: author_name
+Field: from_nitter_entry
+Field: from_snapshot_entry
+Field: likes
+Field: quoted_tweet
+Field: replies
+Field: retweeted_by
+Field: retweets
+Field: text
+Field: time_ago
+Field: to_dict
+Field: tweet_id
+Field: views
+=== Tweet Dataclass Fields ===
+author: str
+author_name: str
+text: str
+time_ago: str
+likes: int
+retweets: int
+replies: int
+views: int
+tweet_id: str
+media: List[str]
+retweeted_by: Optional[str]
+quoted_tweet: Optional['Tweet']

@@ -10,4 +10,5 @@ urlpatterns = [
     path('analyze/', views.AnalyzeProfileView.as_view(), name='analyze'),
     path('fetch-posts/<int:volunteer_id>/', views.FetchPostsView.as_view(), name='fetch_posts'),
     path('run-pipeline/<int:volunteer_id>/', views.RunPipelineView.as_view(), name='run_pipeline'),
+    path('pipeline/control/', views.PipelineControlView.as_view(), name='pipeline_control'),
 ]

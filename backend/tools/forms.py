@@ -8,6 +8,8 @@ from django.core.exceptions import ValidationError
 import csv
 import io
 
+from backend.core.models import VOLUNTEER
+
 
 class CSVUploadForm(forms.Form):
     """Form for uploading BFI-44 CSV data from Google Form exports."""
@@ -37,11 +39,15 @@ class CSVUploadForm(forms.Form):
             if not reader.fieldnames:
                 raise ValidationError("Invalid CSV: no headers found")
 
-            found_cols = set(fieldname.lower()
-                             for fieldname in reader.fieldnames)
+            def normalize_header(value):
+                return value.lstrip('\ufeff').strip().lower()
+
+            found_cols = {normalize_header(fieldname) for fieldname in reader.fieldnames}
 
             required_cols = {
-                'X / Twitter Profile handle (if you have one)'.lower(), 'timestamp'.lower()}
+                normalize_header('X / Twitter Profile handle (if you have one)'),
+                normalize_header('timestamp'),
+            }
             missing_cols = required_cols - found_cols
             if missing_cols:
                 raise ValidationError(
@@ -156,6 +162,45 @@ class PipelineExecutionForm(forms.Form):
         super().__init__(*args, **kwargs)
         if volunteer:
             self.fields['volunteer_id'].initial = volunteer.id
+
+
+class PipelineControlForm(forms.Form):
+    """Form for selecting a volunteer and running a specific pipeline phase."""
+
+    PIPELINE_ACTIONS = [
+        ('full', 'Run Full Pipeline'),
+        ('qlearning', 'Run Q-Learning'),
+        ('bert', 'Run BERT Embedding'),
+        ('gan', 'Run GAN Augmentation'),
+        ('lasso', 'Run Lasso Training'),
+    ]
+
+    volunteer_id = forms.ChoiceField(
+        label="Volunteer",
+        widget=forms.Select(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200',
+        })
+    )
+
+    action = forms.ChoiceField(
+        choices=PIPELINE_ACTIONS,
+        widget=forms.HiddenInput()
+    )
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        volunteers = VOLUNTEER.objects.filter(researcher=user).order_by('-created_at') if user and user.is_authenticated else VOLUNTEER.objects.none()
+        self.fields['volunteer_id'].choices = [
+            (str(volunteer.id), f"@{volunteer.x_handle} (#{volunteer.id})")
+            for volunteer in volunteers
+        ]
+
+        if self.fields['volunteer_id'].choices and not self.initial.get('volunteer_id'):
+            self.initial['volunteer_id'] = self.fields['volunteer_id'].choices[0][0]
+
+    def clean_volunteer_id(self):
+        return int(self.cleaned_data['volunteer_id'])
 
 
 class BFISurveyImportForm(forms.Form):

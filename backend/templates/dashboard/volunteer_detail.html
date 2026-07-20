@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% load static %}
 {% load mathfilters %}
 {% block title %}{{ volunteer.x_handle }} - Personality Profile{% endblock %}
@@ -22,7 +22,7 @@
 
   <div class="max-w-7xl mx-auto px-6 py-8">
     <!-- Status Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
       <div class="bg-white rounded-lg border border-stone-200 p-4">
         <p class="text-stone-600 text-sm font-medium">Ground Truth Status</p>
         {% if ground_truth %}
@@ -47,24 +47,40 @@
         <p class="text-stone-600 text-sm font-medium">Pipeline Progress</p>
         <div class="mt-2">
           <div class="w-full bg-stone-200 rounded-full h-2">
-            {% if volunteer.pipeline_status == 'success' %}
+            {% if volunteer.pipeline_status == 'completed' %}
             <div class="bg-blue-600 h-2 rounded-full" style="width: 100%"></div>
-            {% elif volunteer.pipeline_status == 'running' %}
+            {% elif volunteer.pipeline_status == 'processing' %}
             <div class="bg-blue-600 h-2 rounded-full" style="width: 60%"></div>
             {% else %}
             <div class="bg-blue-600 h-2 rounded-full" style="width: 25%"></div>
             {% endif %}
           </div>
           <p class="text-xs text-stone-500 mt-2">
-            {% if volunteer.pipeline_status == 'success' %}
+            {% if volunteer.pipeline_status == 'completed' %}
             100% Complete
-            {% elif volunteer.pipeline_status == 'running' %}
+            {% elif volunteer.pipeline_status == 'processing' %}
             60% Processing...
             {% else %}
             25% Connected
             {% endif %}
           </p>
         </div>
+      </div>
+
+      <div class="bg-white rounded-lg border border-stone-200 p-4">
+        <p class="text-stone-600 text-sm font-medium">Synthetic Training Data</p>
+        {% if prediction and pipeline_summary %}
+        <p class="text-2xl font-bold text-emerald-600 mt-2">{{ synthetic_samples_saved }}</p>
+        <p class="text-xs text-stone-500 mt-1">
+          saved this run, {{ synthetic_samples_reused }} reused from storage
+        </p>
+        <p class="text-xs text-stone-500 mt-1">
+          Mode: <span class="font-semibold text-stone-900">{{ training_mode|default:"unknown" }}</span>
+        </p>
+        {% else %}
+        <p class="text-2xl font-bold text-stone-600 mt-2">0</p>
+        <p class="text-xs text-stone-500 mt-1">No synthetic augmentation summary yet</p>
+        {% endif %}
       </div>
     </div>
 
@@ -230,18 +246,18 @@
         </div>
         <div class="border-l-4 border-green-600 pl-4">
           <p class="text-stone-600 text-sm font-medium">Correlation</p>
-          <p class="text-2xl font-bold text-stone-900 mt-1">{% if prediction.correlation %}{{ prediction.correlation|floatformat:3 }}{% else %}N/A{% endif %}</p>
-          <p class="text-xs text-stone-500 mt-1">Pearson r</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{% if prediction.correlation is not None %}{{ prediction.correlation|floatformat:3 }}{% else %}N/A{% endif %}</p>
+          <p class="text-xs text-stone-500 mt-1">Pearson r vs BFI ground truth</p>
         </div>
         <div class="border-l-4 border-purple-600 pl-4">
-          <p class="text-stone-600 text-sm font-medium">R² Score</p>
-          <p class="text-2xl font-bold text-stone-900 mt-1">{% if prediction.r2_score %}{{ prediction.r2_score|floatformat:3 }}{% else %}N/A{% endif %}</p>
-          <p class="text-xs text-stone-500 mt-1">Variance explained</p>
+          <p class="text-stone-600 text-sm font-medium">R2 Score</p>
+          <p class="text-2xl font-bold text-stone-900 mt-1">{% if prediction.r2_score is not None %}{{ prediction.r2_score|floatformat:3 }}{% else %}N/A{% endif %}</p>
+          <p class="text-xs text-stone-500 mt-1">Variance explained vs BFI ground truth</p>
         </div>
         <div class="border-l-4 border-orange-600 pl-4">
-          <p class="text-stone-600 text-sm font-medium">Confidence</p>
+          <p class="text-stone-600 text-sm font-medium">Confidence Score</p>
           <p class="text-2xl font-bold text-stone-900 mt-1">{{ prediction.prediction_confidence|mul:100|floatformat:0 }}%</p>
-          <p class="text-xs text-stone-500 mt-1">Model confidence</p>
+          <p class="text-xs text-stone-500 mt-1">Computed from error, agreement, and data coverage</p>
         </div>
       </div>
     </div>
@@ -256,63 +272,38 @@
       </div>
       
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
-        <!-- Education -->
-        <div>
-          <h3 class="font-bold text-stone-900 mb-2">Education</h3>
-          <p class="text-stone-600 text-sm">
-            {% if prediction %}
-              {% if prediction.predicted_conscientiousness > 3.5 %}
-                Highly structured learning environments, systematic course designs, and clear study objectives suit this individual's high conscientiousness trait.
-              {% else %}
-                Responsive to flexible, self-paced, and highly interactive learning mediums that allow room for creative navigation.
-              {% endif %}
-            {% else %}
-              Awaiting prediction analysis to map learning style recommendations.
-            {% endif %}
-          </p>
+        {% if domain_insights %}
+        {% for key, insight in domain_insights.items %}
+          {% if key != 'summary' %}
+          <div class="rounded-xl border border-stone-200 bg-stone-50/60 p-5">
+            <h3 class="font-bold text-stone-900 mb-2">{{ insight.title }}</h3>
+            <p class="text-stone-600 text-sm leading-6 mb-4">{{ insight.summary }}</p>
+            <div class="space-y-3">
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-2">Signals</p>
+                <ul class="space-y-1">
+                  {% for signal in insight.signals %}
+                  <li class="text-sm text-stone-700">- {{ signal }}</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-2">Recommended Actions</p>
+                <ul class="space-y-1">
+                  {% for recommendation in insight.recommendations %}
+                  <li class="text-sm text-stone-700">- {{ recommendation }}</li>
+                  {% endfor %}
+                </ul>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+        {% endfor %}
+        {% else %}
+        <div class="md:col-span-2">
+          <p class="text-stone-500 text-sm">Awaiting prediction analysis to surface personalized domain insights.</p>
         </div>
-
-        <!-- Health -->
-        <div>
-          <h3 class="font-bold text-stone-900 mb-2">Health & Wellbeing</h3>
-          <p class="text-stone-600 text-sm">
-            {% if prediction %}
-              {% if prediction.predicted_neuroticism > 3.0 %}
-                Personality traits point to elevated stress vulnerability. Recommend structured routine, mindfulness, and cognitive stress control strategies.
-              {% else %}
-                Traits suggest healthy resilience to daily stressors with low emotional volatility. Focus on standard physical vigor and wellness longevity.
-              {% endif %}
-            {% else %}
-              Awaiting prediction analysis to yield personalized wellness metrics.
-            {% endif %}
-          </p>
-        </div>
-
-        <!-- Employment -->
-        <div>
-          <h3 class="font-bold text-stone-900 mb-2">Employment</h3>
-          <p class="text-stone-600 text-sm">
-            {% if prediction %}
-              {% if prediction.predicted_extraversion > 3.5 %}
-                Excellent alignment with active customer-facing, public speaking, or team-centric collaboration roles that reward high social energy.
-              {% else %}
-                Best matched for independent, analytical, or research-oriented workspaces that reward deep focusing.
-              {% endif %}
-            {% else %}
-              Awaiting prediction analysis to formulate workplace compatibility insights.
-            {% endif %}
-          </p>
-        </div>
-
-        <!-- Responsible AI -->
-        <div>
-          <h3 class="font-bold text-stone-900 mb-2">Responsible AI</h3>
-          <p class="text-stone-600 text-sm">
-            This prediction was generated using an explainable Lasso linear regression model trained on 
-            {% if prediction %}{{ prediction.posts_analyzed }}{% else %}0{% endif %} post-level signal samples and BERT embeddings. 
-            No sensitive demographics were parsed.
-          </p>
-        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -386,3 +377,4 @@ new Chart(ctx, {
 });
 </script>
 {% endblock %}
+

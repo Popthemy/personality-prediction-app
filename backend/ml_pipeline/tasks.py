@@ -34,7 +34,10 @@ def run_full_pipeline_task(self, volunteer_id):
         logger.info(
             f"Pipeline completed for @{volunteer.x_handle}. "
             f"Steps: {result.get('steps_completed', [])}. "
-            f"Overall MAE: {result.get('metrics', {}).get('overall_mae', 'N/A')}"
+            f"Overall MAE: {result.get('metrics', {}).get('overall_mae', 'N/A')}. "
+            f"Synthetic saved: {result.get('metrics', {}).get('synthetic_samples_saved', 0)}. "
+            f"Synthetic reused: {result.get('metrics', {}).get('synthetic_samples_reused', 0)}. "
+            f"Training mode: {result.get('metrics', {}).get('training_mode', 'unknown')}"
         )
         return result
 
@@ -44,6 +47,37 @@ def run_full_pipeline_task(self, volunteer_id):
 
     except Exception as e:
         logger.error(f"Pipeline error for volunteer {volunteer_id}: {str(e)}")
+        raise self.retry(exc=e, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
+def run_pipeline_phase_task(self, volunteer_id, phase):
+    """Run a single pipeline phase asynchronously."""
+    try:
+        from backend.ml_pipeline.services.pipeline_orchestrator import PipelineOrchestrator
+
+        orchestrator = PipelineOrchestrator(volunteer_id)
+        phase_map = {
+            'qlearning': orchestrator.run_qlearning_phase,
+            'bert': orchestrator.run_bert_phase,
+            'gan': orchestrator.run_gan_phase,
+            'lasso': orchestrator.run_lasso_phase,
+        }
+
+        if phase == 'full':
+            result = orchestrator.run_full_pipeline()
+        elif phase in phase_map:
+            result = phase_map[phase]()
+        else:
+            raise ValueError(f"Unknown pipeline phase: {phase}")
+
+        if result.get('status') == 'error':
+            raise Exception(result.get('error', 'Unknown pipeline phase error'))
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Pipeline phase error for volunteer {volunteer_id} phase {phase}: {str(e)}")
         raise self.retry(exc=e, countdown=60)
 
 

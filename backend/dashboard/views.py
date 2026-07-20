@@ -7,6 +7,7 @@ from backend.core.models import (
     VOLUNTEER, PSYCHOMETRIC_PROFILE, BFI_SURVEY,
     LASSO_MODEL, Q_LEARNING_LOG
 )
+from backend.ml_pipeline.services.insight_engine import build_domain_insights
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,11 @@ class DashboardView(LoginRequiredMixin, TemplateView):
 
         context['total_volunteers'] = volunteers.count()
         context['volunteers_with_bfi'] = volunteers.filter(
-            bfi_surveys__isnull=False
-        ).distinct().count()
+            bfi_survey__isnull=False
+        ).count()
+        context['volunteers_with_bfi_ids'] = set(
+            volunteers.filter(bfi_survey__isnull=False).values_list('id', flat=True)
+        )
         context['volunteers_with_predictions'] = PSYCHOMETRIC_PROFILE.objects.filter(
             volunteer__researcher=self.request.user
         ).values('volunteer').distinct().count()
@@ -58,7 +62,10 @@ class VolunteerDetailView(LoginRequiredMixin, DetailView):
         volunteer = self.get_object()
 
         # Ground truth BFI
-        bfi_survey = volunteer.bfi_surveys.first()
+        try:
+            bfi_survey = volunteer.bfi_survey
+        except Exception:
+            bfi_survey = None
         context['ground_truth'] = bfi_survey
 
         # Prediction profile
@@ -66,6 +73,20 @@ class VolunteerDetailView(LoginRequiredMixin, DetailView):
             volunteer=volunteer
         ).first()
         context['prediction'] = profile
+        context['pipeline_summary'] = getattr(profile, 'pipeline_summary', {}) if profile else {}
+        context['domain_insights'] = build_domain_insights(
+            profile=profile,
+            ground_truth=bfi_survey,
+        ) if profile else {}
+
+        if profile and profile.pipeline_summary:
+            context['synthetic_samples_saved'] = profile.pipeline_summary.get('synthetic_samples_saved', 0)
+            context['synthetic_samples_reused'] = profile.pipeline_summary.get('synthetic_samples_reused', 0)
+            context['training_mode'] = profile.pipeline_summary.get('training_mode', 'unknown')
+        else:
+            context['synthetic_samples_saved'] = 0
+            context['synthetic_samples_reused'] = 0
+            context['training_mode'] = 'unknown'
 
         # Lasso model feature importance
         if profile:

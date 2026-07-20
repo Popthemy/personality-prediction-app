@@ -6,6 +6,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from backend.ml_pipeline.services.insight_engine import build_domain_insights
 
 logger = logging.getLogger(__name__)
 
@@ -116,14 +117,19 @@ class PredictAPIView(View):
                 reverse=True
             )
             dominant_trait = traits_sorted[0][0].replace('_', ' ').title()
+            prediction_confidence = round(
+                min(0.95, max(0.55, 0.60 + min(text_len / 180.0, 0.18) + min(word_count / 120.0, 0.12))),
+                2,
+            )
+            domain_insights = build_domain_insights(prediction_result=prediction)
             
             return JsonResponse({
                 'status': 'success',
                 'ocean_scores': prediction,
                 'personality_summary': f"Your dominant trait is {dominant_trait}",
-                'confidence': round(0.75 + (text_len % 20) * 0.01, 2),
+                'confidence': prediction_confidence,
                 'radar_data': {
-                    'labels': ['Openness', 'Conscientiousness', 'Extraversion', 
+                    'labels': ['Openness', 'Conscientiousness', 'Extraversion',
                                'Agreeableness', 'Neuroticism'],
                     'data': [
                         prediction['openness'],
@@ -133,12 +139,7 @@ class PredictAPIView(View):
                         prediction['neuroticism'],
                     ]
                 },
-                'domain_insights': {
-                    'education': f"High {dominant_trait.lower()} suggests you adapt well to diverse learning styles and new challenges.",
-                    'health': "Your personality profile suggests focusing on stress management and self-awareness practices.",
-                    'employment': f"Your {dominant_trait.lower()} traits align well with collaborative and innovative team environments.",
-                    'responsible_ai': "This prediction uses explainable ML (Lasso regression) with feature importance tracking for transparency.",
-                }
+                'domain_insights': domain_insights,
             })
         
         except json.JSONDecodeError:

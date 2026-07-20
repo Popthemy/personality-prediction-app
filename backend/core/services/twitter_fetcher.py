@@ -17,6 +17,8 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Tuple
 
+from xtf.exceptions import XtfError
+
 logger = logging.getLogger('ml_pipeline')
 
 
@@ -77,13 +79,38 @@ class TwitterFetcher:
 
         self._max_posts = getattr(settings, 'XTF_MAX_POSTS', 50)
 
-    def _get_router(self):
+    def _get_router(self, force_new: bool = False, nitter_instances=None):
         """Return (or create) the module-level shared Router."""
-        if TwitterFetcher._shared_router is None:
+        if force_new or TwitterFetcher._shared_router is None:
             from xtf import Router
-            TwitterFetcher._shared_router = Router(nitter_instances=self._nitter_list)
-            logger.info(f"[TwitterFetcher] Router created with {len(self._nitter_list)} Nitter instances")
+            instances = nitter_instances if nitter_instances is not None else self._nitter_list
+            TwitterFetcher._shared_router = Router(nitter_instances=instances)
+            logger.info(f"[TwitterFetcher] Router created with {len(instances)} Nitter instances")
         return TwitterFetcher._shared_router
+
+    def _fetch_profile_page_timeline(self, username: str, instance: str) -> List:
+        """
+        Fetch a timeline by reading the public Nitter profile page directly.
+
+        Some accounts return no search results even though the profile page still
+        renders posts. This path gives us a second chance without needing the
+        browser backend to be available.
+        """
+        from xtf import http
+        from xtf.models import Tweet
+        from xtf.parsers.nitter_html import _extract_tweets_from_events, _parse_html
+
+        base = instance.rstrip("/")
+        url = f"{base}/{username}"
+        html = http.get_text(url, timeout=15)
+        raw_tweets = _extract_tweets_from_events(_parse_html(html).events)
+        print(f"HTML tweets {html}")
+        print(f"Raw tweets {raw_tweets}")
+        tweets = [Tweet.from_nitter_entry(item) for item in raw_tweets]
+        logger.info(
+            f"[TwitterFetcher] direct profile fetch via {base} returned {len(tweets)} tweets for @{username}"
+        )
+        return tweets
 
 
     # ------------------------------------------------------------------ #
@@ -92,11 +119,65 @@ class TwitterFetcher:
 
     def fetch_timeline(self, x_handle: str) -> List:
         """Fetch recent tweets for *x_handle* and return raw xtf.Tweet list."""
-        router = self._get_router()
         username = x_handle.lstrip('@')
         logger.info(f"[TwitterFetcher] fetching timeline for @{username}")
         try:
+            router = self._get_router()
             tweets = router.fetch_timeline(username, limit=self._max_posts)
+
+            # If the shared router returns nothing, retry each instance separately.
+            if not tweets and len(self._nitter_list) > 1:
+                from xtf import Router
+
+                seen_ids = set()
+                fallback_tweets = []
+                for instance in self._nitter_list:
+                    try:
+                        alt_router = Router(nitter_instances=[instance])
+                        alt_tweets = alt_router.fetch_timeline(username, limit=self._max_posts)
+                        logger.info(
+                            f"[TwitterFetcher] fallback via {instance} returned {len(alt_tweets)} tweets for @{username}"
+                        )
+                        for tweet in alt_tweets:
+                            tweet_id = str(getattr(tweet, 'tweet_id', '') or '').strip()
+                            if tweet_id and tweet_id not in seen_ids:
+                                seen_ids.add(tweet_id)
+                                fallback_tweets.append(tweet)
+                    except Exception as instance_error:
+                        logger.warning(
+                            f"[TwitterFetcher] fallback instance {instance} failed for @{username}: {instance_error}"
+                        )
+
+                if fallback_tweets:
+                    tweets = fallback_tweets[: self._max_posts]
+
+            # Final fallback: read the public profile page directly.
+            if not tweets and len(self._nitter_list) > 0:
+                profile_tweets = []
+                seen_ids = set()
+                for instance in self._nitter_list:
+                    try:
+                        direct_tweets = self._fetch_profile_page_timeline(username, instance)
+                        for tweet in direct_tweets:
+                            tweet_id = str(getattr(tweet, 'tweet_id', '') or '').strip()
+                            if not tweet_id or tweet_id in seen_ids:
+                                continue
+                            seen_ids.add(tweet_id)
+                            profile_tweets.append(tweet)
+                            if len(profile_tweets) >= self._max_posts:
+                                break
+                        if profile_tweets:
+                            tweets = profile_tweets[: self._max_posts]
+                            break
+                    except XtfError as instance_error:
+                        logger.warning(
+                            f"[TwitterFetcher] direct profile fetch via {instance} failed for @{username}: {instance_error}"
+                        )
+                    except Exception as instance_error:
+                        logger.warning(
+                            f"[TwitterFetcher] direct profile fetch via {instance} errored for @{username}: {instance_error}"
+                        )
+
             logger.info(f"[TwitterFetcher] got {len(tweets)} tweets for @{username}")
             return tweets
         except Exception as e:

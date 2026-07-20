@@ -11,13 +11,35 @@ from django.shortcuts import redirect
 from django.urls import reverse_lazy
 from django.utils import timezone
 from django.contrib import messages
-from .forms import CSVUploadForm, XHandleFetchForm, PipelineExecutionForm
-from backend.core.models import VOLUNTEER, BFI_SURVEY, POST
+from .forms import CSVUploadForm, XHandleFetchForm, PipelineExecutionForm, PipelineControlForm
+from backend.core.models import VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING
 from backend.core.services.bfi_scorer import BFIScorer, score_bfi_survey
 from backend.ml_pipeline.services.pipeline_orchestrator import PipelineOrchestrator
-from backend.ml_pipeline.tasks import run_full_pipeline_task
+from backend.ml_pipeline.services.timeline_exporter import export_cleaned_posts_to_txt
+from backend.ml_pipeline.tasks import run_full_pipeline_task, run_pipeline_phase_task
 
 logger = logging.getLogger(__name__)
+
+
+def _export_cleaned_timeline_for_volunteer(volunteer, posts):
+    """Clean timeline posts and export them to a handle-named text file."""
+    from backend.ml_pipeline.processors.text_preprocessor import TextPreprocessor
+
+    preprocessor = TextPreprocessor()
+    cleaned_posts = []
+    for post in posts:
+        cleaned = preprocessor.clean(post.content)
+        if preprocessor.is_valid(cleaned):
+            cleaned_posts.append(cleaned)
+
+    export_path = export_cleaned_posts_to_txt(volunteer.x_handle, cleaned_posts)
+    logger.info(
+        "Exported cleaned timeline for @%s to %s (%s cleaned posts)",
+        volunteer.x_handle,
+        export_path,
+        len(cleaned_posts),
+    )
+    return export_path, len(cleaned_posts)
 
 
 class ToolsView(LoginRequiredMixin, TemplateView):
@@ -35,6 +57,7 @@ class ToolsView(LoginRequiredMixin, TemplateView):
         # volunteers id
         context['volunteer_ids'] = list(VOLUNTEER.objects.filter(
             researcher=self.request.user).values_list('id', flat=True))
+        context['pipeline_control_form'] = PipelineControlForm(user=self.request.user)
         return context
 
 
@@ -94,7 +117,7 @@ class CSVUploadView(LoginRequiredMixin, FormView):
                     scores = score_bfi_survey(responses)
 
                     # Upsert BFI survey — handles re-uploads without crashing
-                    bfi_survey, created = BFI_SURVEY.objects.update_or_create(
+                    BFI_SURVEY.objects.update_or_create(
                         volunteer=volunteer,
                         defaults={
                             'responses': responses,
@@ -106,8 +129,6 @@ class CSVUploadView(LoginRequiredMixin, FormView):
                             'completed_at': timezone.now(),
                         }
                     )
-                    if not volunteer.bfi_surveys.filter(id=bfi_survey.id).exists():
-                        volunteer.bfi_surveys.add(bfi_survey)
                     processed_count += 1
 
             messages.success(
@@ -142,16 +163,20 @@ class FetchPostsView(LoginRequiredMixin, FormView):
             from backend.core.services.twitter_fetcher import TwitterFetcher
             fetcher = TwitterFetcher()
             saved, skipped = fetcher.fetch_and_save(volunteer)
+            posts = POST.objects.filter(volunteer=volunteer).order_by('-created_at_original')
+            export_path, cleaned_count = _export_cleaned_timeline_for_volunteer(volunteer, posts)
 
             if saved > 0:
                 messages.success(
                     self.request,
-                    f'Fetched {saved} new posts for @{x_handle} ({skipped} already existed).'
+                    f'Fetched {saved} new posts for @{x_handle} ({skipped} already existed). '
+                    f'Cleaned timeline exported to {export_path.name} ({cleaned_count} posts).'
                 )
             elif skipped > 0:
                 messages.info(
                     self.request,
-                    f'No new posts found for @{x_handle} — {skipped} already in database.'
+                    f'No new posts found for @{x_handle} — {skipped} already in database. '
+                    f'Cleaned timeline exported to {export_path.name} ({cleaned_count} posts).'
                 )
             else:
                 messages.warning(
@@ -195,6 +220,9 @@ class RunPipelineView(LoginRequiredMixin, FormView):
                 )
                 return redirect('tools:csv_upload')
 
+            volunteer.pipeline_status = 'processing'
+            volunteer.save(update_fields=['pipeline_status'])
+
             # Queue the full pipeline task
             run_full_pipeline_task.delay(volunteer_id)
 
@@ -214,6 +242,86 @@ class RunPipelineView(LoginRequiredMixin, FormView):
         return super().form_valid(form)
 
 
+class PipelineControlView(LoginRequiredMixin, FormView):
+    """Unified control surface for full pipeline and manual phase execution."""
+    form_class = PipelineControlForm
+    success_url = reverse_lazy('tools:index')
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['user'] = self.request.user
+        return kwargs
+
+    def form_valid(self, form):
+        volunteer_id = form.cleaned_data['volunteer_id']
+        action = form.cleaned_data['action']
+
+        try:
+            volunteer = VOLUNTEER.objects.get(
+                id=volunteer_id,
+                researcher=self.request.user
+            )
+
+            if action == 'full':
+                if not BFI_SURVEY.objects.filter(volunteer=volunteer).exists():
+                    messages.warning(
+                        self.request,
+                        'Please import BFI-44 ground truth first'
+                    )
+                    return redirect('tools:csv_upload')
+
+                volunteer.pipeline_status = 'processing'
+                volunteer.save(update_fields=['pipeline_status'])
+                run_full_pipeline_task.delay(volunteer.id)
+                messages.success(
+                    self.request,
+                    f'Full pipeline queued for @{volunteer.x_handle}.'
+                )
+            else:
+                action_labels = {
+                    'qlearning': 'Q-Learning',
+                    'bert': 'BERT',
+                    'gan': 'GAN',
+                    'lasso': 'Lasso',
+                }
+
+                if action == 'qlearning':
+                    if not POST.objects.filter(volunteer=volunteer).exists():
+                        messages.warning(self.request, 'No posts found for Q-Learning.')
+                        return redirect('tools:index')
+                elif action == 'bert':
+                    if not POST.objects.filter(volunteer=volunteer, selected_by_qlearning=True).exists():
+                        messages.warning(self.request, 'Run Q-Learning before BERT.')
+                        return redirect('tools:index')
+                elif action == 'gan':
+                    if not BERT_EMBEDDING.objects.filter(post__volunteer=volunteer).exists():
+                        messages.warning(self.request, 'Run BERT before GAN augmentation.')
+                        return redirect('tools:index')
+                elif action == 'lasso':
+                    if not BFI_SURVEY.objects.filter(volunteer=volunteer).exists():
+                        messages.warning(self.request, 'Import BFI-44 ground truth before Lasso training.')
+                        return redirect('tools:index')
+
+                volunteer.pipeline_status = 'processing'
+                volunteer.save(update_fields=['pipeline_status'])
+                run_pipeline_phase_task.delay(volunteer.id, action)
+                messages.success(
+                    self.request,
+                    f"{action_labels.get(action, action.title())} phase queued for @{volunteer.x_handle}."
+                )
+
+            logger.info(
+                f"Pipeline control action={action} queued for volunteer {volunteer_id} by {self.request.user}"
+            )
+        except VOLUNTEER.DoesNotExist:
+            messages.error(self.request, 'Volunteer not found')
+        except Exception as e:
+            logger.error(f"Pipeline control error: {str(e)}")
+            messages.error(self.request, f'Error: {str(e)}')
+
+        return super().form_valid(form)
+
+
 class AnalyzeProfileView(LoginRequiredMixin, FormView):
     """
     Manages fetching X posts and running predictions for any X handle,
@@ -226,6 +334,7 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
         x_handle = form.cleaned_data['x_handle']
         limit = form.cleaned_data.get('limit', 50)
         exclude_retweets = form.cleaned_data.get('exclude_retweets', True)
+        volunteer = None
 
         try:
             from backend.core.models import BFI_SURVEY
@@ -276,7 +385,7 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
                     defaults={
                         'researcher': self.request.user,
                         'consent_given': True,
-                        'pipeline_status': 'idle'
+                        'pipeline_status': 'pending'
                     }
                 )
 
@@ -292,21 +401,22 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
                         'neuroticism': traits['neuroticism'],
                     }
                 )
-                if not volunteer.bfi_surveys.filter(id=bfi_survey.id).exists():
-                    volunteer.bfi_surveys.add(bfi_survey)
 
             # Ensure we have volunteer object instantiated at this stage
             if not volunteer:
                 volunteer, created = VOLUNTEER.objects.get_or_create(
                     x_handle=x_handle,
-                    defaults={
+                defaults={
                         'researcher': self.request.user,
                         'consent_given': True,
-                        'pipeline_status': 'idle'
+                        'pipeline_status': 'pending'
                     }
                 )
 
             # 2. Fetch posts
+            volunteer.pipeline_status = 'processing'
+            volunteer.save(update_fields=['pipeline_status'])
+
             from backend.core.services.twitter_fetcher import TwitterFetcher
             fetcher = TwitterFetcher()
             fetcher._max_posts = limit
@@ -328,10 +438,16 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
                     post.cleaned_content = cleaned
                     valid_posts.append(post)
 
+            export_path = export_cleaned_posts_to_txt(
+                volunteer.x_handle,
+                [post.cleaned_content for post in valid_posts],
+            )
+
             if len(valid_posts) == 0:
                 messages.error(
                     self.request,
-                    f"No valid posts found for @{x_handle} to analyze. Please try a different handle."
+                    f"No valid posts found for @{x_handle} to analyze. Please try a different handle. "
+                    f"Cleaned timeline exported to {export_path.name}."
                 )
                 return self.form_invalid(form)
 
@@ -414,9 +530,6 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
                     X_pred.append(embedding_list)
                 X_pred = np.array(X_pred)
 
-                # Normalize features on user's own selection
-                X_norm = (X_pred - X_pred.mean(axis=0)) / (X_pred.std(axis=0) + 1e-8)
-
                 predictions = {}
                 traits = ['openness', 'conscientiousness', 'extraversion', 'agreeableness', 'neuroticism']
 
@@ -425,15 +538,25 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
 
                     if not model_db:
                         # Cold start: bootstrap training on the first volunteer possessing a ground truth
-                        first_gt_vol = VOLUNTEER.objects.filter(bfi_surveys__isnull=False).first()
+                        first_gt_vol = VOLUNTEER.objects.filter(bfi_survey__isnull=False).first()
                         if first_gt_vol:
                             PipelineOrchestrator(first_gt_vol.id).run_full_pipeline()
                             model_db = LASSO_MODEL.objects.filter(trait=t).order_by('-id').first()
 
                     if model_db:
                         coefs_dict = json.loads(model_db.coefficients)
+                        feature_meta = coefs_dict.pop('_feature_metadata', {})
                         w = np.array([coefs_dict[str(i)] for i in range(768)])
                         b = model_db.intercept
+
+                        feature_mean = feature_meta.get('feature_mean')
+                        feature_scale = feature_meta.get('feature_scale')
+                        if feature_mean and feature_scale:
+                            feature_mean = np.array(feature_mean)
+                            feature_scale = np.array(feature_scale)
+                            X_norm = (X_pred - feature_mean) / (feature_scale + 1e-8)
+                        else:
+                            X_norm = (X_pred - X_pred.mean(axis=0)) / (X_pred.std(axis=0) + 1e-8)
 
                         preds_norm = np.dot(X_norm, w) + b
                         preds_norm = np.clip(preds_norm, 0, 1)
@@ -456,7 +579,18 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
                         'posts_analyzed': len(selected_posts),
                         'embeddings_used': len(embeddings),
                         'synthetic_data_used': 0,
-                        'prediction_confidence': 0.85,
+                        'prediction_confidence': round(
+                            min(
+                                0.95,
+                                max(
+                                    0.55,
+                                    0.60
+                                    + min(len(selected_posts) / 80.0, 0.18)
+                                    + min(len(embeddings) / 120.0, 0.12),
+                                ),
+                            ),
+                            2,
+                        ),
                         'personality_summary': f"Personality profile predicted from X posts using Lasso regression.",
                     }
                 )
@@ -466,12 +600,15 @@ class AnalyzeProfileView(LoginRequiredMixin, FormView):
                     f"Successfully fetched posts and predicted personality for @{x_handle} using trained model."
                 )
 
-            volunteer.pipeline_status = 'success'
-            volunteer.save()
+            volunteer.pipeline_status = 'completed'
+            volunteer.save(update_fields=['pipeline_status'])
             return redirect('dashboard:volunteer_detail', pk=volunteer.id)
 
         except Exception as e:
             logger.error(f"AnalyzeProfileView error for @{x_handle}: {e}", exc_info=True)
+            if volunteer:
+                volunteer.pipeline_status = 'error'
+                volunteer.save(update_fields=['pipeline_status'])
             messages.error(self.request, f"Error analyzing profile: {str(e)}")
             return self.form_invalid(form)
 

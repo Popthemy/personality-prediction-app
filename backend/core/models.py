@@ -18,6 +18,13 @@ import json
 
 User = get_user_model()
 
+PIPELINE_STATUS_CHOICES = [
+    ('pending', 'Pending'),
+    ('processing', 'Processing'),
+    ('completed', 'Completed'),
+    ('error', 'Error'),
+]
+
 
 class VOLUNTEER(models.Model):
     """Research participant."""
@@ -38,16 +45,10 @@ class VOLUNTEER(models.Model):
     posts_fetched_at = models.DateTimeField(null=True, blank=True)
     pipeline_status = models.CharField(
         max_length=20,
-        choices=[
-            ('pending', 'Pending'),
-            ('processing', 'Processing'),
-            ('completed', 'Completed'),
-            ('error', 'Error'),
-        ],
+        choices=PIPELINE_STATUS_CHOICES,
         default='pending',
         db_index=True
     )
-    bfi_surveys = models.ManyToManyField('BFI_SURVEY', related_name='volunteers', blank=True)
 
     # Consent & metadata
     consent_given = models.BooleanField(default=False)
@@ -351,6 +352,8 @@ class PSYCHOMETRIC_PROFILE(models.Model):
     mae_agreeableness = models.FloatField(null=True, blank=True)
     mae_neuroticism = models.FloatField(null=True, blank=True)
     overall_mae = models.FloatField(null=True, blank=True)
+    correlation = models.FloatField(null=True, blank=True)
+    r2_score = models.FloatField(null=True, blank=True)
     
     # Personality narrative (AI-generated)
     personality_summary = models.TextField(blank=True)
@@ -365,6 +368,7 @@ class PSYCHOMETRIC_PROFILE(models.Model):
     posts_analyzed = models.IntegerField(default=0)
     embeddings_used = models.IntegerField(default=0)
     synthetic_data_used = models.IntegerField(default=0)
+    pipeline_summary = models.JSONField(default=dict, blank=True)
     prediction_confidence = models.FloatField(
         null=True,
         blank=True,

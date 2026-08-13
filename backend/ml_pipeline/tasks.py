@@ -81,6 +81,76 @@ def run_pipeline_phase_task(self, volunteer_id, phase):
         raise self.retry(exc=e, countdown=60)
 
 
+@shared_task(bind=True, max_retries=3)
+def train_cohort_model_task(self, researcher_id, split_seed=42):
+    """Train and persist the shared cohort model artifact."""
+    try:
+        from backend.ml_pipeline.services.pipeline_orchestrator import PipelineOrchestrator
+
+        volunteer = VOLUNTEER.objects.filter(
+            researcher_id=researcher_id,
+            bfi_survey__isnull=False,
+        ).order_by('id').first()
+        if not volunteer:
+            raise ValueError("No labeled volunteer found for cohort training")
+
+        orchestrator = PipelineOrchestrator(volunteer.id)
+        result = orchestrator.train_cohort_model(split_seed=split_seed)
+
+        logger.info(
+            "Cohort model trained for researcher %s: train=%s validation=%s model=%s",
+            researcher_id,
+            result.get('train_count', 0),
+            result.get('validation_count', 0),
+            result.get('model_id'),
+        )
+        return result
+
+    except Exception as e:
+        logger.error(f"Cohort training error for researcher {researcher_id}: {str(e)}")
+        raise self.retry(exc=e, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
+def predict_with_saved_model_task(self, volunteer_id):
+    """Run prediction only using the saved cohort model."""
+    try:
+        from backend.ml_pipeline.services.pipeline_orchestrator import PipelineOrchestrator
+        from backend.core.models import PSYCHOMETRIC_PROFILE
+
+        volunteer = VOLUNTEER.objects.get(id=volunteer_id)
+        orchestrator = PipelineOrchestrator(volunteer_id)
+        result = orchestrator.predict_from_saved_model()
+        prediction_result = result['prediction_result']
+        orchestrator._save_psychometric_profile(
+            prediction_result,
+            pipeline_summary={
+                'mode': 'prediction_only',
+                'model_id': result.get('model_id'),
+                'model_version': result.get('model_version'),
+                'validation_handles': result.get('validation_handles', []),
+                'train_handles': result.get('train_handles', []),
+            }
+        )
+
+        profile = PSYCHOMETRIC_PROFILE.objects.filter(volunteer=volunteer).first()
+        logger.info(
+            "Prediction completed for @%s with model %s",
+            volunteer.x_handle,
+            result.get('model_version'),
+        )
+        return {
+            'status': 'success',
+            'volunteer_id': volunteer_id,
+            'profile_id': profile.id if profile else None,
+            'result': result,
+        }
+
+    except Exception as e:
+        logger.error(f"Prediction task error for volunteer {volunteer_id}: {str(e)}")
+        raise self.retry(exc=e, countdown=60)
+
+
 @shared_task
 def process_csv_batch(csv_file_path, researcher_id):
     """Process a batch of volunteers from CSV file."""

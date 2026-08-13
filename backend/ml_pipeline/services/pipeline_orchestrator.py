@@ -16,7 +16,7 @@ from datetime import datetime
 from django.db import transaction
 from backend.core.models import (
     VOLUNTEER, POST, BERT_EMBEDDING, Q_LEARNING_LOG,
-    SYNTHETIC_DATA, LASSO_MODEL, PSYCHOMETRIC_PROFILE, BFI_SURVEY
+    SYNTHETIC_DATA, LASSO_MODEL, COHORT_MODEL, PSYCHOMETRIC_PROFILE, BFI_SURVEY
 )
 from backend.ml_pipeline.services.timeline_exporter import export_cleaned_posts_to_txt
 
@@ -979,3 +979,383 @@ class PipelineOrchestrator:
         )
         
         self.logger.info(f"Psychometric profile {'created' if created else 'updated'}")
+
+    def _get_active_cohort_model(self) -> Optional[COHORT_MODEL]:
+        """Return the latest active cohort model artifact, if one exists."""
+        return COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
+
+    def _bootstrap_training_inputs(self, volunteers: List[VOLUNTEER]) -> List[Dict]:
+        """
+        Ensure each labeled volunteer has posts, selected posts, and embeddings
+        before cohort training starts.
+        """
+        prepared = []
+
+        for volunteer in volunteers:
+            volunteer_orchestrator = PipelineOrchestrator(volunteer.id)
+            try:
+                posts = volunteer_orchestrator._step_1_input_data()
+                if not posts:
+                    self.logger.warning(
+                        "Skipping @%s because no usable posts were available after fetch",
+                        volunteer.x_handle,
+                    )
+                    continue
+
+                selected_posts = volunteer_orchestrator._step_2_qlearning_selection(posts)
+                embeddings = volunteer_orchestrator._step_3_bert_embedding(selected_posts)
+                prepared.append({
+                    'volunteer_id': volunteer.id,
+                    'handle': volunteer.x_handle,
+                    'posts': len(posts),
+                    'selected_posts': len(selected_posts),
+                    'embeddings': len(embeddings),
+                })
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to bootstrap training inputs for @%s: %s",
+                    volunteer.x_handle,
+                    e,
+                )
+
+        return prepared
+
+    def _fit_trait_variant(
+        self,
+        trait_name: str,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        sample_weight: Optional[np.ndarray],
+        X_val_raw: Optional[np.ndarray],
+        y_val_raw: Optional[np.ndarray],
+        can_validate: bool,
+        variant_name: str,
+    ) -> Dict:
+        """Fit one trait model variant and return the trained artifact bundle."""
+        from backend.ml_pipeline.services.lasso_regressor import LassoTrainer, denormalize_predictions
+
+        variant_trainer = LassoTrainer(
+            alpha=0.001,
+            max_iter=10000,
+            regularization='elasticnet',
+            l1_ratio=0.5,
+        )
+        X_fit, y_fit_norm = variant_trainer.prepare_training_data(X_train, y_train)
+
+        X_val_norm = None
+        y_val_norm = None
+        if can_validate and X_val_raw is not None and y_val_raw is not None and len(y_val_raw) > 0:
+            X_val_norm = variant_trainer.transform_features(X_val_raw)
+            y_val_norm = (y_val_raw - 1.0) / 4.0
+
+        trait_metrics = variant_trainer.train_trait_model(
+            X_fit,
+            y_fit_norm,
+            trait_name,
+            validate_X=X_val_norm,
+            validate_y=y_val_norm,
+            sample_weight=sample_weight,
+        )
+
+        if len(X_train) == 0:
+            raise ValueError(f"No training data available for trait {trait_name}")
+
+        current_norm = variant_trainer.transform_features(X_train[:1])
+        train_pred_norm = variant_trainer.predict_trait(trait_name, current_norm)
+        train_pred = denormalize_predictions(train_pred_norm)
+
+        validation_mae = trait_metrics.get('validation_mae')
+        if validation_mae is None:
+            validation_mae = trait_metrics.get('train_mae', float('inf'))
+
+        return {
+            'trainer': variant_trainer,
+            'metrics': trait_metrics,
+            'variant': variant_name,
+            'validation_mae': float(validation_mae),
+            'training_samples_used': int(X_train.shape[0]),
+            'sample_weight_used': bool(sample_weight is not None),
+            'preview_prediction': float(np.mean(train_pred)),
+        }
+
+    def train_cohort_model(self, split_seed: int = 42) -> Dict:
+        """
+        Train the shared cohort model on 80% of the labeled volunteers and
+        reserve the remaining 20% for validation and future prediction runs.
+        """
+        from sklearn.model_selection import train_test_split
+
+        labeled_volunteers = list(
+            VOLUNTEER.objects.filter(
+                researcher=self.volunteer.researcher,
+                bfi_survey__isnull=False,
+            ).order_by('id')
+        )
+        if len(labeled_volunteers) < 2:
+            raise ValueError("Need at least 2 labeled volunteers to train a cohort model")
+
+        bootstrap_stats = self._bootstrap_training_inputs(labeled_volunteers)
+        labeled_records = self._build_labeled_volunteer_records()
+        if len(labeled_records) < 2:
+            raise ValueError(
+                "No usable training samples were found after auto-fetching posts. "
+                "At least two labeled volunteers need fetched posts and embeddings."
+            )
+
+        if len(labeled_records) >= 3:
+            val_size = max(1, int(round(len(labeled_records) * 0.2)))
+            if val_size >= len(labeled_records):
+                val_size = 1
+            train_records, val_records = train_test_split(
+                labeled_records,
+                test_size=val_size,
+                random_state=split_seed,
+                shuffle=True,
+            )
+        else:
+            train_records = list(labeled_records)
+            val_records = []
+
+        real_X_train, real_y_train_dict, _, _ = self._augment_training_fold(
+            train_records,
+            include_synthetic=False,
+        )
+        augmented_X_train, augmented_y_train_dict, synthetic_train_count, augmented_weights = self._augment_training_fold(
+            train_records,
+            include_synthetic=True,
+        )
+
+        if len(real_X_train) == 0:
+            raise ValueError("No usable training samples were found")
+
+        X_val_raw = None
+        y_val_dict = {}
+        if val_records:
+            X_val_raw = np.vstack([record['vector'] for record in val_records])
+            y_val_dict = {
+                trait: np.array([record['labels'][trait] for record in val_records], dtype=float)
+                for trait in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']
+            }
+
+        can_validate = bool(val_records and X_val_raw is not None and len(X_val_raw) > 0)
+        trait_artifacts = {}
+        predictions = {}
+        metrics = {}
+        any_augmented_selected = False
+
+        self.logger.info(
+            "Training cohort model with %s train volunteers and %s validation volunteers",
+            len(train_records),
+            len(val_records),
+        )
+
+        for trait, y_values in real_y_train_dict.items():
+            if len(y_values) == 0:
+                predictions[f'predicted_{trait.lower()}'] = None
+                predictions[f'mae_{trait.lower()}'] = None
+                continue
+
+            baseline_result = self._fit_trait_variant(
+                trait,
+                real_X_train,
+                y_values,
+                np.ones(len(real_X_train), dtype=float),
+                X_val_raw,
+                y_val_dict.get(trait),
+                can_validate,
+                'real_only',
+            )
+            chosen_result = baseline_result
+
+            if can_validate:
+                augmented_result = self._fit_trait_variant(
+                    trait,
+                    augmented_X_train,
+                    augmented_y_train_dict[trait],
+                    augmented_weights,
+                    X_val_raw,
+                    y_val_dict.get(trait),
+                    can_validate,
+                    'augmented',
+                )
+                if augmented_result['validation_mae'] <= baseline_result['validation_mae']:
+                    chosen_result = augmented_result
+                    any_augmented_selected = True
+
+            trait_artifacts[trait] = chosen_result
+            metrics[trait] = chosen_result['metrics']
+            predictions[f'predicted_{trait.lower()}'] = chosen_result['preview_prediction']
+
+        for trait, artifact in trait_artifacts.items():
+            trainer = artifact['trainer']
+            model_obj, _ = LASSO_MODEL.objects.update_or_create(
+                volunteer=self.volunteer,
+                trait=trait.lower(),
+                defaults={
+                    'alpha': trainer.alpha,
+                    'coefficients': trainer.get_all_coefficients(trait),
+                    'intercept': float(trainer.models[trait].intercept_),
+                    'training_samples_used': int(artifact['training_samples_used']),
+                    'synthetic_samples_used': int(synthetic_train_count if artifact['variant'] == 'augmented' else 0),
+                },
+            )
+
+            trait_metrics = artifact['metrics']
+            for key in ['train_mae', 'train_rmse', 'train_r2', 'validation_mae', 'validation_rmse', 'validation_r2']:
+                if key in trait_metrics:
+                    setattr(model_obj, key, trait_metrics[key])
+            model_obj.save()
+
+        mae_values = [
+            float(artifact['metrics'].get('validation_mae'))
+            for artifact in trait_artifacts.values()
+            if artifact['metrics'].get('validation_mae') is not None
+        ]
+        predictions['overall_mae'] = float(np.mean(mae_values)) if mae_values else None
+        predictions['training_mode'] = 'cohort_augmented' if any_augmented_selected else 'cohort_only'
+        predictions['cohort_train_volunteers'] = len(train_records)
+        predictions['cohort_validation_volunteers'] = len(val_records)
+        predictions['synthetic_data_used'] = int(synthetic_train_count if any_augmented_selected else 0)
+        predictions['synthetic_data_generated'] = int(synthetic_train_count)
+        predictions['ground_truth_available'] = bool(val_records)
+
+        train_handles = [record['handle'] for record in train_records]
+        val_handles = [record['handle'] for record in val_records]
+        train_ids = [record['volunteer_id'] for record in train_records]
+        val_ids = [record['volunteer_id'] for record in val_records]
+
+        from backend.ml_pipeline.services.lasso_regressor import LassoTrainer
+        trainer_state = {}
+        if trait_artifacts:
+            first_artifact = next(iter(trait_artifacts.values()))
+            cohort_trainer = LassoTrainer(
+                alpha=first_artifact['trainer'].alpha,
+                max_iter=first_artifact['trainer'].max_iter,
+                regularization=first_artifact['trainer'].regularization,
+                l1_ratio=first_artifact['trainer'].l1_ratio,
+            )
+            cohort_trainer.feature_mean = first_artifact['trainer'].feature_mean
+            cohort_trainer.feature_scale = first_artifact['trainer'].feature_scale
+            for trait, artifact in trait_artifacts.items():
+                cohort_trainer.models[trait] = artifact['trainer'].models[trait]
+                cohort_trainer.model_metadata[trait] = artifact['trainer'].model_metadata.get(trait, {})
+            trainer_state = cohort_trainer.save_state()
+
+        model_artifact, _ = COHORT_MODEL.objects.update_or_create(
+            name='default-cohort-model',
+            defaults={
+                'version': f"split-{split_seed}",
+                'is_active': True,
+                'split_seed': split_seed,
+                'train_ratio': 0.8,
+                'validation_ratio': 0.2,
+                'train_volunteer_ids': train_ids,
+                'validation_volunteer_ids': val_ids,
+                'train_handles': train_handles,
+                'validation_handles': val_handles,
+                'trainer_state': trainer_state,
+                'metrics': {
+                    **metrics,
+                    **predictions,
+                },
+            },
+        )
+
+        return {
+            'status': 'success',
+            'train_volunteers': train_handles,
+            'validation_volunteers': val_handles,
+            'train_count': len(train_records),
+            'validation_count': len(val_records),
+            'bootstrap_stats': bootstrap_stats,
+            'model_id': model_artifact.id,
+            'model_name': model_artifact.name,
+            'model_version': model_artifact.version,
+            'metrics': model_artifact.metrics,
+        }
+
+    def predict_from_saved_model(self, embeddings: Optional[List] = None) -> Dict:
+        """
+        Run prediction only using the latest saved cohort model.
+        No training or model fitting happens here.
+        """
+        from backend.ml_pipeline.services.lasso_regressor import LassoTrainer, denormalize_predictions
+
+        cohort_model = self._get_active_cohort_model()
+        if not cohort_model:
+            raise ValueError("No saved cohort model is available. Train a model first.")
+
+        trainer = LassoTrainer()
+        trainer.load_state(cohort_model.trainer_state)
+
+        current_vector = self._volunteer_feature_vector(self.volunteer, include_synthetic=False)
+        embeddings_used_count = 0
+        if current_vector is None and embeddings:
+            current_vector = self._pool_embeddings([
+                self._embedding_to_array(emb.embedding_vector) for emb in embeddings
+            ])
+            embeddings_used_count = len(embeddings)
+        elif embeddings:
+            embeddings_used_count = len(embeddings)
+        else:
+            real_embeddings = BERT_EMBEDDING.objects.filter(volunteer=self.volunteer)
+            selected_embeddings = real_embeddings.filter(post__selected_by_qlearning=True)
+            embeddings_used_count = selected_embeddings.count() if selected_embeddings.exists() else real_embeddings.count()
+
+        if current_vector is None:
+            raise ValueError("Unable to build a prediction vector for this volunteer")
+
+        current_vector = current_vector.reshape(1, -1)
+        current_norm = trainer.transform_features(current_vector)
+        raw_predictions = trainer.predict_all_traits(current_norm)
+
+        predictions = {}
+        for trait, normalized in raw_predictions.items():
+            denorm = denormalize_predictions(normalized)
+            predictions[f'predicted_{trait.lower()}'] = float(np.mean(denorm))
+
+        ground_truth = None
+        try:
+            survey = self.volunteer.bfi_survey
+            ground_truth = survey.get_ocean_dict()
+        except Exception:
+            ground_truth = None
+
+        if ground_truth:
+            for trait in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']:
+                predicted_value = predictions.get(f'predicted_{trait.lower()}')
+                truth_value = ground_truth.get(trait)
+                if predicted_value is None or truth_value is None:
+                    predictions[f'mae_{trait.lower()}'] = None
+                else:
+                    predictions[f'mae_{trait.lower()}'] = float(abs(predicted_value - truth_value))
+
+            mae_values = [v for k, v in predictions.items() if k.startswith('mae_') and v is not None]
+            predictions['overall_mae'] = float(np.mean(mae_values)) if mae_values else None
+            predictions['ground_truth_available'] = True
+            predictions['ground_truth'] = ground_truth
+        else:
+            predictions['overall_mae'] = None
+            predictions['ground_truth_available'] = False
+
+        prediction_confidence, confidence_components = self._compute_prediction_confidence(predictions)
+        predictions['prediction_confidence'] = prediction_confidence
+        predictions['confidence_components'] = confidence_components
+
+        predictions['posts_analyzed'] = int(embeddings_used_count)
+        predictions['embeddings_used'] = int(embeddings_used_count)
+        predictions['synthetic_data_used'] = 0
+        predictions['synthetic_data_generated'] = 0
+        predictions['training_fallback_used'] = False
+        predictions['training_mode'] = 'prediction_only'
+        predictions['cohort_train_volunteers'] = len(cohort_model.train_volunteer_ids)
+        predictions['cohort_validation_volunteers'] = len(cohort_model.validation_volunteer_ids)
+
+        return {
+            'status': 'success',
+            'prediction_result': predictions,
+            'model_id': cohort_model.id,
+            'model_version': cohort_model.version,
+            'validation_handles': cohort_model.validation_handles,
+            'train_handles': cohort_model.train_handles,
+        }

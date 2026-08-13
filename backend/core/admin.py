@@ -5,7 +5,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from .models import (
     VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING,
-    Q_LEARNING_LOG, SYNTHETIC_DATA, LASSO_MODEL, PSYCHOMETRIC_PROFILE
+    Q_LEARNING_LOG, SYNTHETIC_DATA, LASSO_MODEL, COHORT_MODEL, PSYCHOMETRIC_PROFILE
 )
 from django.utils.html import format_html
 
@@ -221,6 +221,40 @@ class LassoModelAdmin(admin.ModelAdmin):
         }),
         ('Metadata', {
             'fields': ('trained_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(COHORT_MODEL)
+class CohortModelAdmin(admin.ModelAdmin):
+    list_display = ('name', 'version', 'is_active', 'created_at', 'updated_at')
+    list_filter = ('is_active', 'version', 'created_at')
+    search_fields = ('name', 'version')
+    readonly_fields = ('created_at', 'updated_at')
+
+    fieldsets = (
+        ('Identity', {
+            'fields': ('name', 'version', 'is_active')
+        }),
+        ('Split Metadata', {
+            'fields': (
+                'split_seed',
+                'train_ratio',
+                'validation_ratio',
+                'train_volunteer_ids',
+                'validation_volunteer_ids',
+                'train_handles',
+                'validation_handles',
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Model Artifact', {
+            'fields': ('trainer_state', 'metrics'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )

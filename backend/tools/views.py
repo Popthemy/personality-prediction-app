@@ -11,8 +11,15 @@ from django.shortcuts import redirect
 from django.urls import reverse_lazy
 from django.utils import timezone
 from django.contrib import messages
-from .forms import CSVUploadForm, XHandleFetchForm, PipelineExecutionForm, PipelineControlForm
-from backend.core.models import VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING
+from .forms import (
+    CSVUploadForm,
+    XHandleFetchForm,
+    PipelineExecutionForm,
+    PipelineControlForm,
+    CohortTrainingForm,
+    PredictionSelectionForm,
+)
+from backend.core.models import VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING, COHORT_MODEL, PSYCHOMETRIC_PROFILE
 from backend.core.services.bfi_scorer import BFIScorer, score_bfi_survey
 from backend.ml_pipeline.services.pipeline_orchestrator import PipelineOrchestrator
 from backend.ml_pipeline.services.timeline_exporter import export_cleaned_posts_to_txt
@@ -58,6 +65,7 @@ class ToolsView(LoginRequiredMixin, TemplateView):
         context['volunteer_ids'] = list(VOLUNTEER.objects.filter(
             researcher=self.request.user).values_list('id', flat=True))
         context['pipeline_control_form'] = PipelineControlForm(user=self.request.user)
+        context['active_cohort_model'] = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
         return context
 
 
@@ -320,6 +328,167 @@ class PipelineControlView(LoginRequiredMixin, FormView):
             messages.error(self.request, f'Error: {str(e)}')
 
         return super().form_valid(form)
+
+
+class CohortTrainingView(LoginRequiredMixin, FormView):
+    """Dedicated page for training and validating the shared cohort model."""
+    form_class = CohortTrainingForm
+    template_name = 'tools/train.html'
+    success_url = reverse_lazy('tools:train')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        labeled_volunteers = VOLUNTEER.objects.filter(
+            researcher=self.request.user,
+            bfi_survey__isnull=False,
+        ).order_by('id')
+        labeled_with_posts = labeled_volunteers.filter(posts__isnull=False).distinct()
+        labeled_with_embeddings = labeled_volunteers.filter(bert_embeddings__isnull=False).distinct()
+        active_model = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
+
+        context['labeled_volunteers_count'] = labeled_volunteers.count()
+        context['labeled_with_posts_count'] = labeled_with_posts.count()
+        context['labeled_with_embeddings_count'] = labeled_with_embeddings.count()
+        context['active_model'] = active_model
+        context['saved_train_count'] = len(active_model.train_volunteer_ids) if active_model else 0
+        context['saved_validation_count'] = len(active_model.validation_volunteer_ids) if active_model else 0
+        context['train_volunteers'] = []
+        context['validation_volunteers'] = []
+
+        if active_model:
+            context['train_volunteers'] = labeled_volunteers.filter(
+                id__in=active_model.train_volunteer_ids
+            )
+            context['validation_volunteers'] = labeled_volunteers.filter(
+                id__in=active_model.validation_volunteer_ids
+            )
+
+        return context
+
+    def form_valid(self, form):
+        try:
+            anchor_volunteer = VOLUNTEER.objects.filter(
+                researcher=self.request.user,
+                bfi_survey__isnull=False,
+            ).order_by('id').first()
+            if not anchor_volunteer:
+                messages.error(self.request, 'No labeled volunteers are available for training.')
+                return self.form_invalid(form)
+
+            orchestrator = PipelineOrchestrator(anchor_volunteer.id)
+            result = orchestrator.train_cohort_model()
+
+            messages.success(
+                self.request,
+                f"Cohort model trained successfully with {result.get('train_count', 0)} training volunteers "
+                f"and {result.get('validation_count', 0)} validation volunteers."
+            )
+            logger.info(
+                "Cohort model trained by %s: model_id=%s version=%s",
+                self.request.user,
+                result.get('model_id'),
+                result.get('model_version'),
+            )
+        except Exception as e:
+            logger.error("Cohort training error: %s", e, exc_info=True)
+            if 'No usable training samples' in str(e) or 'Need at least 2 labeled volunteers' in str(e):
+                messages.error(
+                    self.request,
+                    'Your 13 BFI-labeled volunteers are imported, but they still need fetched posts and embeddings before training can start.'
+                )
+            messages.error(self.request, f'Error training cohort model: {str(e)}')
+            return self.form_invalid(form)
+
+        return super().form_valid(form)
+
+
+class CohortPredictionView(LoginRequiredMixin, FormView):
+    """Prediction-only page that uses the saved cohort model artifact."""
+    form_class = PredictionSelectionForm
+    template_name = 'tools/predict.html'
+    success_url = reverse_lazy('tools:predict')
+
+    def _get_prediction_volunteers(self):
+        active_model = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
+        if not active_model:
+            return VOLUNTEER.objects.none()
+
+        return VOLUNTEER.objects.filter(
+            researcher=self.request.user,
+            id__in=active_model.validation_volunteer_ids,
+        ).order_by('x_handle')
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['volunteers'] = self._get_prediction_volunteers()
+        return kwargs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        active_model = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
+        prediction_volunteers = self._get_prediction_volunteers()
+
+        context['active_model'] = active_model
+        context['prediction_volunteers'] = prediction_volunteers
+        context['prediction_result'] = kwargs.get('prediction_result')
+        context['prediction_profile'] = kwargs.get('prediction_profile')
+        context['available_count'] = prediction_volunteers.count()
+        return context
+
+    def form_valid(self, form):
+        volunteer_id = form.cleaned_data['volunteer_id']
+        try:
+            volunteer = VOLUNTEER.objects.get(
+                id=volunteer_id,
+                researcher=self.request.user,
+            )
+
+            active_model = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
+            if not active_model:
+                messages.warning(self.request, 'Train a cohort model before running prediction.')
+                return self.form_invalid(form)
+
+            if volunteer_id not in set(active_model.validation_volunteer_ids):
+                messages.warning(self.request, 'Select a volunteer from the held-out prediction split.')
+                return self.form_invalid(form)
+
+            orchestrator = PipelineOrchestrator(volunteer.id)
+            result = orchestrator.predict_from_saved_model()
+            prediction_result = result['prediction_result']
+
+            pipeline_summary = {
+                'mode': 'prediction_only',
+                'model_id': result.get('model_id'),
+                'model_version': result.get('model_version'),
+                'validation_handles': result.get('validation_handles', []),
+                'train_handles': result.get('train_handles', []),
+            }
+            orchestrator._save_psychometric_profile(prediction_result, pipeline_summary=pipeline_summary)
+            profile = PSYCHOMETRIC_PROFILE.objects.filter(volunteer=volunteer).first()
+
+            messages.success(
+                self.request,
+                f"Prediction completed for @{volunteer.x_handle} using the saved cohort model."
+            )
+            logger.info(
+                "Prediction-only run completed for @%s by %s with model %s",
+                volunteer.x_handle,
+                self.request.user,
+                result.get('model_version'),
+            )
+            return self.render_to_response(
+                self.get_context_data(
+                    form=form,
+                    prediction_result=prediction_result,
+                    prediction_profile=profile,
+                )
+            )
+        except VOLUNTEER.DoesNotExist:
+            messages.error(self.request, 'Volunteer not found')
+        except Exception as e:
+            logger.error("Prediction-only error: %s", e, exc_info=True)
+            messages.error(self.request, f'Error running prediction: {str(e)}')
+        return self.form_invalid(form)
 
 
 class AnalyzeProfileView(LoginRequiredMixin, FormView):

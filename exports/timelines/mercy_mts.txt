@@ -1,31 +1,37 @@
-1. There's a lot you'll need to do. Think, know, and plan before you do. Nothing more? start doing. Some more things? Think, know, plan, do. Repeat. Count the cost before doing
+1. What is Multimodality? It s an AI's ability to process and connect different data-like text, audio, and video-using a single model, mimicking how humans use senses to understand the world. History: 2024: Advanced models launch, letting users converse with AI via video rt
 
-2. Looks more engaging and clear. The floating button was nicely changed for easy user understanding. They must have made it float to always have it appear on all screens.
+2. What is Agentic AI?! It moves beyond chatting to actually doing. These systems are given a goal, and they autonomously plan, use tools, and execute tasks to finish the job for you. History: 2025: AI agents begin managing complex, multi-step workflows. AISimplified
 
-3. An investment in knowledge pays the best interest! If you do what you've learned.
+3. What is "Thinking" AI? Unlike models that just predict words, these use internal reasoning to break down problems, verify their own logic, and plan before responding. History: 2025: Models like OpenAI s o1 launch, showing advanced reasoning for math and coding. AI wydt
 
-4. I write Python, Let's connect.
+4. Wrote my first-final-year paper today It was a two and a half hour Engineering Systems Analysis. Think of it has finding the best values of x and y to maximize what you want or minimize what you're losing.
 
-5. signout-live-up8o.onrender.c
+5. Quantum Intelligence
 
-6. Congrats. I wish you purposeful productivity and usefulness
+6. What are SLMs? While LLMs need massive servers, these models are compact enough to run on your laptop. They offer lower costs and better privacy by keeping your data on-device. History: 2026: Efficiency booms; models like Gemma 2 allow high performance on local devices. AI
 
-7. I use VSCod. Let's connect.
+7. Your best result may not make you as happy as your first result. Do not despise little beginnings. wydt
 
-8. Keep pushing, purposefuly.
+8. Wrote my second final semester paper today! Production Engineering. This stood out for me. "Critical Path" the longest continuous sequence of dependent tasks required to complete a project. It dictates the absolute shortest time possible to finish the entire project. wydt
 
-9. I learnt to not shy away from trying. Start building what you're thinking... that's the easiest way to know how things work.
+9. What is RAG? It s a technique that lets AI look up your private documents before answering. Instead of static training data, the AI "reads" your files for accurate, context-aware info. History: 2026: RAG becomes the standard for enterprise, cutting "hallucinations". AI
 
-10. Almost every modern discipline has a mathematical aspect supporting it.
+10. My Week in 4 Pictures. Highlights...
 
-11. Yes, in engineering "Thinking is Premium."
+11. RAG - Retrieval Augmented Generation AISimplified wydt
 
-12. Becoming useful every day. I write Python programs to solve problems through software development, machine learning, and robotics.
+12. What is AI Governance? It s the set of laws and checks like the EU AI Act ensuring AI is transparent and secure, turning experimental tech into reliable infrastructure. History: 2026: Global standards mature, forcing labs to implement strict safety audits. AISimplified
 
-13. You're welcome.
+13. My first time building 18650 battery config with a technician. 6s3p We explained the positioning to ourselves several times. Started yesteday, and ginally got 22.8 volt(not charged) today. Adding a 6s40A bms tomorrow. (... spatial reasoning go choke) embeddedsystems wydt
 
-14. My Week in 4 Pictures. Highlights...
+14. Here is the bms added... It was easier than expected
 
-15. What is GraphRAG?! It links data via "knowledge graphs" Instead of just keywords, the AI maps relationships between concepts, providing much deeper context. History: 2026: Microsoft s GraphRAG leads, helping AI understand complex connections that standard search misses.
+15. You know where you are going? Just start, and be prepared to do what it takes along the way.
 
-16. Data analysis with Python?
+16. What is Observability? In AI, it s not just logs it s "Tracing." You must track every step an agent takes to identify where logic drifts or fails in real-time. 2026: Tools like LangSmith become essential to debug decision paths and stop "hallucinations" before they reach user
+
+17. What are Evals? They are automated tests for AI. Instead of "vibes," you grade model outputs against "golden datasets" to measure accuracy and consistency before shipping code. History: 2026: Companies now treat AI models like software; platforms like Promptfoo do this.
+
+18. What is GraphRAG?! It links data via "knowledge graphs" Instead of just keywords, the AI maps relationships between concepts, providing much deeper context. History: 2026: Microsoft s GraphRAG leads, helping AI understand complex connections that standard search misses.
+
+19. What is man?! "I have called you gods, and you are the children of the most high" - God wydt grad sunday

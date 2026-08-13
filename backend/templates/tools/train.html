@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Cohort Training Lab{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-stone-50 via-emerald-50 to-stone-100">
+  <div class="max-w-7xl mx-auto px-6 py-10">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div class="lg:col-span-7 bg-white rounded-3xl border border-stone-200 shadow-sm p-8">
+        <p class="text-xs font-semibold uppercase tracking-[0.25em] text-emerald-700">Training workspace</p>
+        <h1 class="mt-3 text-4xl font-black text-stone-900">Cohort Training Lab</h1>
+        <p class="mt-4 text-stone-600 leading-7">
+          Train one reusable cohort model on 80% of the labeled volunteers, validate it on the 20% holdout,
+          and save the frozen artifact for prediction-only runs.
+        </p>
+
+        <form method="post" class="mt-8 space-y-5">
+          {% csrf_token %}
+          <label class="flex items-start gap-3 rounded-2xl border border-stone-200 bg-stone-50 p-4">
+            <div class="pt-1">
+              {{ form.confirm }}
+            </div>
+            <div>
+              <div class="font-semibold text-stone-900">{{ form.confirm.label }}</div>
+              <p class="text-sm text-stone-600 mt-1">
+                This will use the current labeled volunteer pool, create the 80/20 split, and persist the best model for later prediction.
+              </p>
+            </div>
+          </label>
+
+          <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-emerald-700">
+            Train Cohort Model
+          </button>
+        </form>
+      </div>
+
+      <div class="lg:col-span-5 space-y-6">
+        <div class="grid grid-cols-2 gap-4">
+          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">Labeled volunteers</div>
+            <div class="mt-2 text-3xl font-bold text-stone-900">{{ labeled_volunteers_count }}</div>
+          </div>
+          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">With posts</div>
+            <div class="mt-2 text-3xl font-bold text-stone-900">{{ labeled_with_posts_count }}</div>
+          </div>
+          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">Train split</div>
+            <div class="mt-2 text-3xl font-bold text-stone-900">{{ saved_train_count }}</div>
+          </div>
+          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">Validation split</div>
+            <div class="mt-2 text-3xl font-bold text-stone-900">{{ saved_validation_count }}</div>
+          </div>
+          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">Model status</div>
+            <div class="mt-2 text-2xl font-bold text-emerald-700">{% if active_model %}Saved{% else %}Not trained{% endif %}</div>
+          </div>
+          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">With embeddings</div>
+            <div class="mt-2 text-3xl font-bold text-stone-900">{{ labeled_with_embeddings_count }}</div>
+          </div>
+        </div>
+
+        <div class="rounded-3xl bg-stone-900 text-stone-100 p-6 shadow-lg">
+          <div class="text-xs uppercase tracking-[0.25em] text-emerald-300">Current model</div>
+          {% if active_model %}
+            <h2 class="mt-3 text-xl font-bold">{{ active_model.name }} / {{ active_model.version }}</h2>
+            <p class="mt-3 text-sm text-stone-300">Split seed: {{ active_model.split_seed }} | Train ratio: {{ active_model.train_ratio }} | Validation ratio: {{ active_model.validation_ratio }}</p>
+            <div class="mt-5 grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div class="text-stone-400">Train handles</div>
+                <div class="mt-2 space-y-1 max-h-40 overflow-auto pr-2">
+                  {% for handle in active_model.train_handles %}
+                    <div class="rounded-lg bg-white/5 px-3 py-2">@{{ handle }}</div>
+                  {% empty %}
+                    <div class="text-stone-400">No saved train split yet.</div>
+                  {% endfor %}
+                </div>
+              </div>
+              <div>
+                <div class="text-stone-400">Validation handles</div>
+                <div class="mt-2 space-y-1 max-h-40 overflow-auto pr-2">
+                  {% for handle in active_model.validation_handles %}
+                    <div class="rounded-lg bg-white/5 px-3 py-2">@{{ handle }}</div>
+                  {% empty %}
+                    <div class="text-stone-400">No saved validation split yet.</div>
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+          {% else %}
+            <h2 class="mt-3 text-xl font-bold">No cohort model saved yet</h2>
+            <p class="mt-3 text-sm text-stone-300">
+              Fetch posts for your labeled volunteers first, then run training to create the shared model artifact and lock in the prediction split.
+            </p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

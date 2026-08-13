@@ -203,6 +203,40 @@ class PipelineControlForm(forms.Form):
         return int(self.cleaned_data['volunteer_id'])
 
 
+class CohortTrainingForm(forms.Form):
+    """Form for training the shared cohort model."""
+
+    confirm = forms.BooleanField(
+        label="I understand this will train the shared cohort model on the selected 80% split",
+        required=True,
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
+    )
+
+
+class PredictionSelectionForm(forms.Form):
+    """Select a volunteer from the held-out prediction split."""
+
+    volunteer_id = forms.ChoiceField(
+        label="Volunteer",
+        widget=forms.Select(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200',
+        })
+    )
+
+    def __init__(self, *args, volunteers=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        volunteers = volunteers or []
+        self.fields['volunteer_id'].choices = [
+            (str(volunteer.id), f"@{volunteer.x_handle} (#{volunteer.id})")
+            for volunteer in volunteers
+        ]
+        if self.fields['volunteer_id'].choices and not self.initial.get('volunteer_id'):
+            self.initial['volunteer_id'] = self.fields['volunteer_id'].choices[0][0]
+
+    def clean_volunteer_id(self):
+        return int(self.cleaned_data['volunteer_id'])
+
+
 class BFISurveyImportForm(forms.Form):
     """Form for manually entering BFI-44 scores."""
 

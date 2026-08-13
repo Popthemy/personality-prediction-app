@@ -11,7 +11,7 @@ whitenoise==6.6.0
 gunicorn==21.2.0
 
 # Database
-psycopg2-binary==2.9.9
+
 
 # Task Queue
 celery==5.3.4
@@ -23,7 +23,7 @@ requests==2.31.0
 python-decouple==3.8
 
 # Image handling
-pillow==10.1.0
+# pillow==10.1.0
 numpy==2.4.5
 django-mathfilters==1.0.0
 

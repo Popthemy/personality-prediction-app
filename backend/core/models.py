@@ -312,6 +312,38 @@ class LASSO_MODEL(models.Model):
         return f"Lasso {self.trait.title()} Model for {self.volunteer.x_handle}"
 
 
+class COHORT_MODEL(models.Model):
+    """Saved cohort-level model artifact used for prediction-only runs."""
+
+    id = models.BigAutoField(primary_key=True)
+    name = models.CharField(max_length=120, unique=True)
+    version = models.CharField(max_length=40, default='v1')
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    # Reproducible split metadata
+    split_seed = models.IntegerField(default=42)
+    train_ratio = models.FloatField(default=0.8)
+    validation_ratio = models.FloatField(default=0.2)
+    train_volunteer_ids = models.JSONField(default=list)
+    validation_volunteer_ids = models.JSONField(default=list)
+    train_handles = models.JSONField(default=list)
+    validation_handles = models.JSONField(default=list)
+
+    # Serialized trainer state from LassoTrainer.save_state()
+    trainer_state = models.JSONField(default=dict)
+    metrics = models.JSONField(default=dict)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'cohort_model'
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"Cohort model {self.name} ({self.version})"
+
+
 class PSYCHOMETRIC_PROFILE(models.Model):
     """Final predicted personality profile."""
     

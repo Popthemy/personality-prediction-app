@@ -294,6 +294,12 @@ class LASSO_MODEL(models.Model):
     validation_rmse = models.FloatField(null=True, blank=True)
     validation_r2 = models.FloatField(null=True, blank=True)
     
+    # Classification metrics & 5-threshold sweep data
+    classification_accuracy = models.FloatField(null=True, blank=True)
+    classification_precision = models.FloatField(null=True, blank=True)
+    classification_f1_score = models.FloatField(null=True, blank=True)
+    classification_specificity = models.FloatField(null=True, blank=True)
+    
     # Training data stats
     training_samples_used = models.IntegerField(default=0)
     synthetic_samples_used = models.IntegerField(default=0)
@@ -386,6 +392,15 @@ class PSYCHOMETRIC_PROFILE(models.Model):
     overall_mae = models.FloatField(null=True, blank=True)
     correlation = models.FloatField(null=True, blank=True)
     r2_score = models.FloatField(null=True, blank=True)
+    
+    # Classification Performance Metrics & Threshold Optimization
+    accuracy = models.FloatField(null=True, blank=True)
+    precision = models.FloatField(null=True, blank=True)
+    f1_score = models.FloatField(null=True, blank=True)
+    specificity = models.FloatField(null=True, blank=True)
+    optimal_threshold = models.FloatField(default=0.50)
+    threshold_sweep_data = models.JSONField(default=dict, blank=True)
+    model_metrics_taxonomy = models.JSONField(default=dict, blank=True)
     
     # Personality narrative (AI-generated)
     personality_summary = models.TextField(blank=True)

@@ -9,7 +9,7 @@ Strict execution order:
 5. Lasso Regression → Final Prediction
 """
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 from datetime import datetime
 
@@ -676,314 +676,6 @@ class PipelineOrchestrator:
             np.array(sample_weights, dtype=float),
         )
 
-    def _step_5_lasso_prediction(self, embeddings: List, synthetic_data: List) -> Dict:
-        """
-        Step 5: Lasso regression training and personality prediction.
-        
-        Args:
-            embeddings: List of BERT_EMBEDDING objects
-            synthetic_data: List of SYNTHETIC_DATA objects
-        
-        Returns:
-            Dict with predictions and metrics
-        """
-        self.logger.info("STEP 5: Lasso Regression Training & Personality Prediction")
-        
-        from backend.ml_pipeline.services.lasso_regressor import LassoTrainer, denormalize_predictions
-        from sklearn.model_selection import train_test_split
-
-        # Get ground truth BFI scores
-        bfi_survey = BFI_SURVEY.objects.filter(volunteer=self.volunteer).first()
-        if not bfi_survey:
-            raise ValueError("No BFI survey found for this volunteer")
-
-        ground_truth = bfi_survey.get_ocean_dict()
-        self.logger.info(
-            "BFI ground truth found for @%s: O=%.2f C=%.2f E=%.2f A=%.2f N=%.2f",
-            self.volunteer.x_handle,
-            ground_truth.get('Openness') or 0.0,
-            ground_truth.get('Conscientiousness') or 0.0,
-            ground_truth.get('Extraversion') or 0.0,
-            ground_truth.get('Agreeableness') or 0.0,
-            ground_truth.get('Neuroticism') or 0.0,
-        )
-
-        # Build a volunteer-level cohort from other labeled volunteers only.
-        labeled_records = self._build_labeled_volunteer_records(
-            exclude_volunteer_ids=[self.volunteer.id]
-        )
-        if not labeled_records:
-            raise ValueError("No cohort volunteers with BFI survey found for training")
-
-        if len(labeled_records) >= 3:
-            val_size = max(1, int(round(len(labeled_records) * 0.2)))
-            if val_size >= len(labeled_records):
-                val_size = 1
-            train_records, val_records = train_test_split(
-                labeled_records,
-                test_size=val_size,
-                random_state=42,
-            )
-        else:
-            train_records = list(labeled_records)
-            val_records = []
-
-        real_X_train, real_y_train_dict, _, _ = self._augment_training_fold(
-            train_records,
-            include_synthetic=False,
-        )
-        augmented_X_train, augmented_y_train_dict, synthetic_train_count, augmented_weights = self._augment_training_fold(
-            train_records,
-            include_synthetic=True,
-        )
-
-        if len(real_X_train) == 0:
-            raise ValueError("No training samples available after cohort assembly")
-
-        X_val_raw = None
-        y_val_dict = {}
-        if val_records:
-            X_val_raw = np.vstack([record['vector'] for record in val_records])
-            y_val_dict = {
-                trait: np.array([record['labels'][trait] for record in val_records], dtype=float)
-                for trait in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']
-            }
-
-        fallback_used = False
-        self.logger.info(
-            "Cohort training assembled with %s train volunteers and %s validation volunteers",
-            len(train_records),
-            len(val_records),
-        )
-
-        predictions = {}
-        metrics = {}
-
-        current_vector = self._volunteer_feature_vector(self.volunteer, include_synthetic=True)
-        if current_vector is None and embeddings:
-            current_vector = self._pool_embeddings(
-                [self._embedding_to_array(emb.embedding_vector) for emb in embeddings]
-            )
-
-        if current_vector is None:
-            raise ValueError("Unable to build a feature vector for the current volunteer")
-
-        current_vector = current_vector.reshape(1, -1)
-
-        trait_artifacts = {}
-        selected_synthetic_count = 0
-        chosen_variants = {}
-        can_validate = bool(val_records and X_val_raw is not None and len(X_val_raw) > 0)
-
-        def _fit_variant(trait_name: str, X_train: np.ndarray, y_train: np.ndarray,
-                         sample_weight: Optional[np.ndarray], variant_name: str):
-            variant_trainer = LassoTrainer(
-                alpha=0.001,
-                max_iter=10000,
-                regularization='elasticnet',
-                l1_ratio=0.5,
-            )
-            X_fit, y_fit_norm = variant_trainer.prepare_training_data(X_train, y_train)
-            X_val_norm, y_val_norm = None, None
-            if can_validate and trait_name in y_val_dict and len(y_val_dict[trait_name]) > 0:
-                X_val_norm = variant_trainer.transform_features(X_val_raw)
-                y_val_norm = (y_val_dict[trait_name] - 1.0) / 4.0
-
-            trait_metrics = variant_trainer.train_trait_model(
-                X_fit,
-                y_fit_norm,
-                trait_name,
-                validate_X=X_val_norm,
-                validate_y=y_val_norm,
-                sample_weight=sample_weight,
-            )
-
-            current_norm = variant_trainer.transform_features(current_vector)
-            y_pred_norm = variant_trainer.predict_trait(trait_name, current_norm)
-            y_pred = denormalize_predictions(y_pred_norm)
-            avg_pred = float(np.mean(y_pred))
-            val_mae = trait_metrics.get('validation_mae')
-            if val_mae is None:
-                val_mae = trait_metrics.get('train_mae', float('inf'))
-
-            return {
-                'trainer': variant_trainer,
-                'metrics': trait_metrics,
-                'prediction': avg_pred,
-                'validation_mae': float(val_mae),
-                'variant': variant_name,
-                'training_samples_used': int(X_train.shape[0]),
-            }
-
-        any_augmented_selected = False
-        for trait, y_values in real_y_train_dict.items():
-            if len(real_X_train) == 0 or len(y_values) == 0:
-                predictions[f'predicted_{trait.lower()}'] = None
-                predictions[f'mae_{trait.lower()}'] = None
-                continue
-
-            try:
-                baseline_result = _fit_variant(
-                    trait,
-                    real_X_train,
-                    y_values,
-                    np.ones(len(real_X_train), dtype=float),
-                    'real_only',
-                )
-
-                chosen_result = baseline_result
-                if can_validate:
-                    augmented_result = _fit_variant(
-                        trait,
-                        augmented_X_train,
-                        augmented_y_train_dict[trait],
-                        augmented_weights,
-                        'augmented',
-                    )
-                    if augmented_result['validation_mae'] <= baseline_result['validation_mae']:
-                        chosen_result = augmented_result
-
-                trait_artifacts[trait] = chosen_result
-                metrics[trait] = chosen_result['metrics']
-                if chosen_result['variant'] == 'augmented':
-                    any_augmented_selected = True
-                chosen_variants[trait] = chosen_result['variant']
-
-                avg_pred = chosen_result['prediction']
-                predictions[f'predicted_{trait.lower()}'] = avg_pred
-
-                if ground_truth.get(trait) is not None:
-                    mae = abs(avg_pred - ground_truth[trait])
-                    predictions[f'mae_{trait.lower()}'] = float(mae)
-                    self.logger.info(
-                        f"{trait}: Pred={avg_pred:.2f}, Ground Truth={ground_truth[trait]:.2f}, MAE={mae:.4f}"
-                    )
-                else:
-                    predictions[f'mae_{trait.lower()}'] = None
-
-            except Exception as e:
-                self.logger.error(f"Error training {trait} model: {e}")
-                predictions[f'predicted_{trait.lower()}'] = None
-                predictions[f'mae_{trait.lower()}'] = None
-
-        for trait, artifact in trait_artifacts.items():
-            trainer = artifact['trainer']
-            coeff_json = trainer.get_all_coefficients(trait)
-            model_obj, _ = LASSO_MODEL.objects.update_or_create(
-                volunteer=self.volunteer,
-                trait=trait.lower(),
-                defaults={
-                    'alpha': trainer.alpha,
-                    'coefficients': coeff_json,
-                    'intercept': float(trainer.models[trait].intercept_),
-                    'training_samples_used': int(artifact['training_samples_used']),
-                    'synthetic_samples_used': int(synthetic_train_count if artifact['variant'] == 'augmented' else 0),
-                }
-            )
-
-            # Persist validation metrics when available.
-            trait_metrics = artifact['metrics']
-            if trait_metrics:
-                for key in ['train_mae', 'train_rmse', 'train_r2', 'validation_mae', 'validation_rmse', 'validation_r2']:
-                    if key in trait_metrics:
-                        setattr(model_obj, key, trait_metrics[key])
-                model_obj.save()
-
-        selected_synthetic_count = synthetic_train_count if any_augmented_selected else 0
-
-        mae_values = [v for k, v in predictions.items() if k.startswith('mae_') and v is not None]
-        if mae_values:
-            predictions['overall_mae'] = float(np.mean(mae_values))
-        else:
-            predictions['overall_mae'] = None
-
-        predictions['posts_analyzed'] = len(embeddings)
-        predictions['embeddings_used'] = len(embeddings)
-        predictions['synthetic_data_used'] = selected_synthetic_count
-        predictions['synthetic_data_generated'] = len(synthetic_data)
-        predictions['training_fallback_used'] = fallback_used
-        predictions['training_mode'] = 'cohort_augmented' if any_augmented_selected else 'cohort_only'
-        predictions['cohort_train_volunteers'] = len(train_records)
-        predictions['cohort_validation_volunteers'] = len(val_records)
-        predictions['ground_truth_available'] = True
-        predictions['ground_truth'] = ground_truth
-
-        paired_ground_truth = []
-        paired_predictions = []
-        for trait in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']:
-            predicted_value = predictions.get(f'predicted_{trait.lower()}')
-            ground_truth_value = ground_truth.get(trait)
-            if predicted_value is None or ground_truth_value is None:
-                continue
-            paired_predictions.append(float(predicted_value))
-            paired_ground_truth.append(float(ground_truth_value))
-
-        if len(paired_ground_truth) >= 2:
-            try:
-                from scipy.stats import pearsonr
-                from sklearn.metrics import r2_score
-
-                predictions['correlation'] = float(pearsonr(paired_ground_truth, paired_predictions)[0])
-                predictions['r2_score'] = float(r2_score(paired_ground_truth, paired_predictions))
-            except Exception as metric_error:
-                self.logger.warning(f"Unable to compute correlation/R2: {metric_error}")
-                predictions['correlation'] = None
-                predictions['r2_score'] = None
-        else:
-            predictions['correlation'] = None
-            predictions['r2_score'] = None
-
-        self.logger.info(
-            f"Lasso training complete. Overall MAE: {predictions.get('overall_mae', 'N/A')}"
-        )
-
-        return predictions
-    
-    def _save_psychometric_profile(self, prediction_result: Dict, pipeline_summary: Optional[Dict] = None):
-        """
-        Save final psychometric profile to database.
-        
-        Args:
-            prediction_result: Dict from _step_5_lasso_prediction
-            pipeline_summary: Dict of pipeline run metadata
-        """
-        self.logger.info("Saving psychometric profile...")
-
-        prediction_confidence, confidence_components = self._compute_prediction_confidence(prediction_result)
-        pipeline_summary = dict(pipeline_summary or {})
-        pipeline_summary['confidence_components'] = confidence_components
-        pipeline_summary['prediction_confidence'] = prediction_confidence
-        
-        profile, created = PSYCHOMETRIC_PROFILE.objects.update_or_create(
-            volunteer=self.volunteer,
-            defaults={
-                'predicted_openness': prediction_result.get('predicted_openness'),
-                'predicted_conscientiousness': prediction_result.get('predicted_conscientiousness'),
-                'predicted_extraversion': prediction_result.get('predicted_extraversion'),
-                'predicted_agreeableness': prediction_result.get('predicted_agreeableness'),
-                'predicted_neuroticism': prediction_result.get('predicted_neuroticism'),
-                'mae_openness': prediction_result.get('mae_openness'),
-                'mae_conscientiousness': prediction_result.get('mae_conscientiousness'),
-                'mae_extraversion': prediction_result.get('mae_extraversion'),
-                'mae_agreeableness': prediction_result.get('mae_agreeableness'),
-                'mae_neuroticism': prediction_result.get('mae_neuroticism'),
-                'overall_mae': prediction_result.get('overall_mae'),
-                'correlation': prediction_result.get('correlation'),
-                'r2_score': prediction_result.get('r2_score'),
-                'posts_analyzed': prediction_result.get('posts_analyzed', 0),
-                'embeddings_used': prediction_result.get('embeddings_used', 0),
-                'synthetic_data_used': prediction_result.get('synthetic_data_used', 0),
-                'pipeline_summary': pipeline_summary or {},
-                'prediction_confidence': prediction_confidence,
-            }
-        )
-        
-        self.logger.info(f"Psychometric profile {'created' if created else 'updated'}")
-
-    def _get_active_cohort_model(self) -> Optional[COHORT_MODEL]:
-        """Return the latest active cohort model artifact, if one exists."""
-        return COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
-
     def _bootstrap_training_inputs(self, volunteers: List[VOLUNTEER]) -> List[Dict]:
         """
         Ensure each labeled volunteer has posts, selected posts, and embeddings
@@ -1274,6 +966,10 @@ class PipelineOrchestrator:
             'metrics': model_artifact.metrics,
         }
 
+    def _get_active_cohort_model(self) -> Optional[COHORT_MODEL]:
+        """Return the latest active cohort model artifact, if one exists."""
+        return COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
+
     def predict_from_saved_model(self, embeddings: Optional[List] = None) -> Dict:
         """
         Run prediction only using the latest saved cohort model.
@@ -1322,16 +1018,46 @@ class PipelineOrchestrator:
             ground_truth = None
 
         if ground_truth:
-            for trait in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']:
-                predicted_value = predictions.get(f'predicted_{trait.lower()}')
-                truth_value = ground_truth.get(trait)
-                if predicted_value is None or truth_value is None:
-                    predictions[f'mae_{trait.lower()}'] = None
-                else:
-                    predictions[f'mae_{trait.lower()}'] = float(abs(predicted_value - truth_value))
+            y_true = np.array([ground_truth.get(t, np.nan) for t in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']])
+            y_pred = np.array([predictions.get(f'predicted_{t.lower()}', np.nan) for t in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']])
+
+            for i, trait in enumerate(['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']):
+                pv = y_pred[i]; tv = y_true[i]
+                predictions[f'mae_{trait.lower()}'] = float(abs(pv - tv)) if not np.isnan(pv) and not np.isnan(tv) else None
 
             mae_values = [v for k, v in predictions.items() if k.startswith('mae_') and v is not None]
             predictions['overall_mae'] = float(np.mean(mae_values)) if mae_values else None
+
+            # Lasso metrics: correlation & R²
+            valid_mask = ~np.isnan(y_true) & ~np.isnan(y_pred)
+            if valid_mask.sum() > 1:
+                from scipy import stats as sp_stats
+                corr, _ = sp_stats.pearsonr(y_true[valid_mask], y_pred[valid_mask])
+                ss_res = np.sum((y_true[valid_mask] - y_pred[valid_mask]) ** 2)
+                ss_tot = np.sum((y_true[valid_mask] - np.mean(y_true[valid_mask])) ** 2)
+                r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+                predictions['correlation'] = round(float(corr), 4)
+                predictions['r2_score'] = round(float(r2), 4)
+
+            # LSTM classification metrics via threshold sweep on continuous predictions
+            from backend.ml_pipeline.services.metrics_engine import evaluate_hybrid_metrics, CANDIDATE_THRESHOLDS
+            cutoff = float(np.nanmean(y_true))  # median trait score as binary cutoff
+            probs_lstm = np.clip((y_pred - 1.0) / 4.0, 0.0, 1.0)  # scale [1,5] → [0,1]
+            hybrid_metrics = evaluate_hybrid_metrics(
+                y_true=y_true[valid_mask],
+                y_pred_lasso=y_pred[valid_mask],
+                y_pred_lstm_continuous=y_pred[valid_mask],
+                probabilities_lstm=probs_lstm[valid_mask],
+                ground_truth_cutoff=cutoff,
+                candidate_thresholds=CANDIDATE_THRESHOLDS
+            )
+            predictions['accuracy'] = hybrid_metrics.get('lstm_accuracy')
+            predictions['precision'] = hybrid_metrics.get('lstm_precision')
+            predictions['f1_score'] = hybrid_metrics.get('lstm_f1_score')
+            predictions['specificity'] = hybrid_metrics.get('lstm_specificity')
+            predictions['optimal_threshold'] = hybrid_metrics.get('optimal_threshold', 0.50)
+            predictions['threshold_sweep_data'] = hybrid_metrics.get('threshold_sweep', {})
+            predictions['model_metrics_taxonomy'] = hybrid_metrics
             predictions['ground_truth_available'] = True
             predictions['ground_truth'] = ground_truth
         else:
@@ -1359,3 +1085,68 @@ class PipelineOrchestrator:
             'validation_handles': cohort_model.validation_handles,
             'train_handles': cohort_model.train_handles,
         }
+
+    def _compute_prediction_confidence(self, prediction_result: Dict) -> Tuple[float, Dict]:
+        """
+        Compute overall prediction confidence score based on error, correlation, and sample count.
+        """
+        mae = prediction_result.get('overall_mae')
+        if mae is not None:
+            mae_comp = max(0.0, 1.0 - (mae / 4.0))
+        else:
+            mae_comp = 0.75
+
+        posts_analyzed = prediction_result.get('posts_analyzed', 0)
+        data_comp = min(1.0, 0.5 + (posts_analyzed / 20.0) * 0.5)
+
+        base_confidence = 0.6 * mae_comp + 0.4 * data_comp
+
+        components = {
+            'mae_component': round(mae_comp, 4),
+            'data_component': round(data_comp, 4),
+            'final_confidence': round(base_confidence, 4),
+        }
+        return round(base_confidence, 4), components
+
+    def _save_psychometric_profile(self, prediction_result: Dict, pipeline_summary: Optional[Dict] = None):
+        """
+        Save final psychometric profile with 8-metric taxonomy to database.
+        """
+        self.logger.info("Saving psychometric profile with 8-metric framework...")
+
+        prediction_confidence = prediction_result.get('prediction_confidence') or 0.85
+        pipeline_summary = dict(pipeline_summary or {})
+        pipeline_summary['prediction_confidence'] = prediction_confidence
+        
+        profile, created = PSYCHOMETRIC_PROFILE.objects.update_or_create(
+            volunteer=self.volunteer,
+            defaults={
+                'predicted_openness': prediction_result.get('predicted_openness'),
+                'predicted_conscientiousness': prediction_result.get('predicted_conscientiousness'),
+                'predicted_extraversion': prediction_result.get('predicted_extraversion'),
+                'predicted_agreeableness': prediction_result.get('predicted_agreeableness'),
+                'predicted_neuroticism': prediction_result.get('predicted_neuroticism'),
+                'mae_openness': prediction_result.get('mae_openness'),
+                'mae_conscientiousness': prediction_result.get('mae_conscientiousness'),
+                'mae_extraversion': prediction_result.get('mae_extraversion'),
+                'mae_agreeableness': prediction_result.get('mae_agreeableness'),
+                'mae_neuroticism': prediction_result.get('mae_neuroticism'),
+                'overall_mae': prediction_result.get('overall_mae'),
+                'correlation': prediction_result.get('correlation'),
+                'r2_score': prediction_result.get('r2_score'),
+                'accuracy': prediction_result.get('accuracy'),
+                'precision': prediction_result.get('precision'),
+                'f1_score': prediction_result.get('f1_score'),
+                'specificity': prediction_result.get('specificity'),
+                'optimal_threshold': prediction_result.get('optimal_threshold', 0.50),
+                'threshold_sweep_data': prediction_result.get('threshold_sweep_data', {}),
+                'model_metrics_taxonomy': prediction_result.get('model_metrics_taxonomy', {}),
+                'posts_analyzed': prediction_result.get('posts_analyzed', 0),
+                'embeddings_used': prediction_result.get('embeddings_used', 0),
+                'synthetic_data_used': prediction_result.get('synthetic_data_used', 0),
+                'pipeline_summary': pipeline_summary or {},
+                'prediction_confidence': prediction_confidence,
+            }
+        )
+        
+        self.logger.info(f"Psychometric profile {'created' if created else 'updated'} with 8 metrics.")

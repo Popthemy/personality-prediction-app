@@ -228,8 +228,7 @@ def _bin_selected_engagement(selected: List[Dict]) -> str:
     """
     if not selected:
         return "none"
-    mean_eng = sum(p.get("engagement_score", 0)
-                   for p in selected) / len(selected)
+    mean_eng = sum(p.get("engagement_score", 0) for p in selected) / len(selected)
     return _bin_engagement(mean_eng)
 
 
@@ -408,18 +407,18 @@ class PostSelectionEnvironment:
                          Recommended range: 0.01 – 0.10.
         max_selected   : Hard limit on selections per episode.
         """
-        self._posts = list(posts)
-        self._predictor_fn = predictor_fn
+        self._posts          = list(posts)
+        self._predictor_fn   = predictor_fn
         self._selection_cost = selection_cost
-        self._max_selected = max_selected
+        self._max_selected   = max_selected
 
         # Episode state — reset() initialises these properly
-        self._cursor:         int = 0
-        self._selected:       List[Dict] = []
+        self._cursor:         int             = 0
+        self._selected:       List[Dict]      = []
         self._baseline_mae:   Optional[float] = None   # predictor_fn([])
         self._current_mae:    Optional[float] = None
-        self._step_count:     int = 0
-        self._done:           bool = False
+        self._step_count:     int             = 0
+        self._done:           bool            = False
 
     # ------------------------------------------------------------------
     # Public MDP interface (Sutton & Barto §3.6 finite MDPs)
@@ -455,15 +454,15 @@ class PostSelectionEnvironment:
         -------
         state_key : str — JSON-serialised initial state (Q-table key)
         """
-        self._cursor = 0
-        self._selected = []
-        self._step_count = 0
-        self._done = False
+        self._cursor      = 0
+        self._selected    = []
+        self._step_count  = 0
+        self._done        = False
 
         # Establish baseline: MAE with zero posts selected.
         # This is the "no-information" error the agent must beat.
-        self._baseline_mae = self._call_predictor_on([])
-        self._current_mae = self._baseline_mae
+        self._baseline_mae  = self._call_predictor_on([])
+        self._current_mae   = self._baseline_mae
 
         logger.debug(
             "Environment reset: %d candidate posts | baseline_mae=%.4f",
@@ -493,18 +492,18 @@ class PostSelectionEnvironment:
             raise RuntimeError("Episode is finished.  Call reset() first.")
 
         current_post = self._posts[self._cursor]
-        mae_before = self._current_mae
+        mae_before   = self._current_mae
 
         if action == "select":
             self._selected.append(current_post)
-            mae_after = self._call_predictor_on(self._selected)
-            reward = self._compute_reward(mae_before, mae_after)
+            mae_after         = self._call_predictor_on(self._selected)
+            reward            = self._compute_reward(mae_before, mae_after)
             self._current_mae = mae_after
         else:
             # skip: zero reward — no cost, no benefit
             reward = 0.0
 
-        self._cursor += 1
+        self._cursor     += 1
         self._step_count += 1
 
         self._done = (
@@ -561,10 +560,10 @@ class PostSelectionEnvironment:
         the last step uses this as next_state; its Q-values remain 0 by
         convention (no future reward after termination).
         """
-        n_selected = len(self._selected)
+        n_selected  = len(self._selected)
         n_remaining = max(len(self._posts) - self._cursor, 0)
-        total = n_selected + n_remaining
-        ratio = n_selected / total if total > 0 else 0.0
+        total       = n_selected + n_remaining
+        ratio       = n_selected / total if total > 0 else 0.0
 
         # Selected-set summary (for Markov approximation)
         sel_eng_bin = _bin_selected_engagement(self._selected)
@@ -574,32 +573,32 @@ class PostSelectionEnvironment:
             # Terminal state: no current post.  Use neutral/zero bins for
             # current-post fields; keep selected-set summary accurate.
             return PostSelectionState(
-                engagement_bin="low",
-                recency_bin="old",
-                length_bin="short",
-                has_hashtags=False,
-                has_urls=False,
-                n_selected_bin=_bin_count(n_selected),
-                n_remaining_bin="few",
-                selection_ratio_bin=_bin_ratio(ratio),
-                mae_bin=_bin_mae(self._current_mae),
-                selected_engagement_bin=sel_eng_bin,
-                selected_length_bin=sel_len_bin,
+                engagement_bin          = "low",
+                recency_bin             = "old",
+                length_bin              = "short",
+                has_hashtags            = False,
+                has_urls                = False,
+                n_selected_bin          = _bin_count(n_selected),
+                n_remaining_bin         = "few",
+                selection_ratio_bin     = _bin_ratio(ratio),
+                mae_bin                 = _bin_mae(self._current_mae),
+                selected_engagement_bin = sel_eng_bin,
+                selected_length_bin     = sel_len_bin,
             ).to_key()
 
         post = self._posts[self._cursor]
         return PostSelectionState(
-            engagement_bin=_bin_engagement(post.get("engagement_score", 0)),
-            recency_bin=_bin_recency(post.get("recency_days", 0)),
-            length_bin=_bin_length(post.get("text_length", 0)),
-            has_hashtags=bool(post.get("has_hashtags", False)),
-            has_urls=bool(post.get("has_urls", False)),
-            n_selected_bin=_bin_count(n_selected),
-            n_remaining_bin=_bin_count(n_remaining),
-            selection_ratio_bin=_bin_ratio(ratio),
-            mae_bin=_bin_mae(self._current_mae),
-            selected_engagement_bin=sel_eng_bin,
-            selected_length_bin=sel_len_bin,
+            engagement_bin          = _bin_engagement(post.get("engagement_score", 0)),
+            recency_bin             = _bin_recency(post.get("recency_days", 0)),
+            length_bin              = _bin_length(post.get("text_length", 0)),
+            has_hashtags            = bool(post.get("has_hashtags", False)),
+            has_urls                = bool(post.get("has_urls", False)),
+            n_selected_bin          = _bin_count(n_selected),
+            n_remaining_bin         = _bin_count(n_remaining),
+            selection_ratio_bin     = _bin_ratio(ratio),
+            mae_bin                 = _bin_mae(self._current_mae),
+            selected_engagement_bin = sel_eng_bin,
+            selected_length_bin     = sel_len_bin,
         ).to_key()
 
     def _call_predictor_on(self, posts: List[Dict]) -> float:
@@ -750,15 +749,14 @@ class QLearningAgent:
                   Probability of choosing a random action rather than the
                   greedy best.  Set to 0 at evaluation time.
         """
-        self.alpha = alpha
-        self.gamma = gamma
+        self.alpha   = alpha
+        self.gamma   = gamma
         self.epsilon = epsilon
 
         # Q-table: state_key (str) → {action (str) → Q-value (float)}
         # Initialised to 0 (optimistic initialisation can be added later).
         self.q_table: Dict[str, Dict[str, float]] = {}
-        # ['select', 'skip']
-        self.actions = list(PostSelectionEnvironment.ACTIONS)
+        self.actions = list(PostSelectionEnvironment.ACTIONS)  # ['select', 'skip']
 
         logger.info(
             "QLearningAgent initialised | α=%.3f | γ=%.3f | ε=%.3f",
@@ -806,18 +804,17 @@ class QLearningAgent:
         JSON string — Q-table key (same schema as PostSelectionState.to_key())
         """
         return PostSelectionState(
-            engagement_bin=_bin_engagement(
-                post_data.get("engagement_score", 0)),
-            recency_bin=_bin_recency(post_data.get("recency_days", 0)),
-            length_bin=_bin_length(post_data.get("text_length", 0)),
-            has_hashtags=bool(post_data.get("has_hashtags", False)),
-            has_urls=bool(post_data.get("has_urls", False)),
-            n_selected_bin="few",
-            n_remaining_bin="some",
-            selection_ratio_bin="low",
-            mae_bin="none",
-            selected_engagement_bin="none",
-            selected_length_bin="none",
+            engagement_bin          = _bin_engagement(post_data.get("engagement_score", 0)),
+            recency_bin             = _bin_recency(post_data.get("recency_days", 0)),
+            length_bin              = _bin_length(post_data.get("text_length", 0)),
+            has_hashtags            = bool(post_data.get("has_hashtags", False)),
+            has_urls                = bool(post_data.get("has_urls", False)),
+            n_selected_bin          = "few",
+            n_remaining_bin         = "some",
+            selection_ratio_bin     = "low",
+            mae_bin                 = "none",
+            selected_engagement_bin = "none",
+            selected_length_bin     = "none",
         ).to_key()
 
     # ------------------------------------------------------------------
@@ -869,11 +866,11 @@ class QLearningAgent:
 
         # Exploitation: argmax_a Q(state, a)
         self._ensure_state(state)
-        q_vals = self.q_table[state]
-        max_q = max(q_vals.values())
+        q_vals  = self.q_table[state]
+        max_q   = max(q_vals.values())
         # Break ties randomly for unbiased greedy selection
-        best = [a for a, v in q_vals.items() if v == max_q]
-        chosen = np.random.choice(best)
+        best    = [a for a, v in q_vals.items() if v == max_q]
+        chosen  = np.random.choice(best)
         logger.debug("ε-greedy EXPLOIT → %s (Q=%.4f)", chosen, max_q)
         return chosen
 
@@ -913,12 +910,12 @@ class QLearningAgent:
         self._ensure_state(state)
         self._ensure_state(next_state)
 
-        old_q = self.q_table[state][action]
+        old_q      = self.q_table[state][action]
         max_next_q = max(self.q_table[next_state].values())  # max_a Q(S', a)
 
         # Bellman update (off-policy TD target)
         td_error = reward + self.gamma * max_next_q - old_q
-        new_q = old_q + self.alpha * td_error
+        new_q    = old_q + self.alpha * td_error
 
         self.q_table[state][action] = new_q
 
@@ -994,18 +991,18 @@ class QLearningAgent:
         selection and Q-values are not directly comparable across steps.
         """
         env = PostSelectionEnvironment(
-            posts=posts,
-            predictor_fn=predictor_fn,
-            selection_cost=selection_cost,
-            max_selected=top_k,
+            posts          = posts,
+            predictor_fn   = predictor_fn,
+            selection_cost = selection_cost,
+            max_selected   = top_k,
         )
 
-        state = env.reset()
+        state    = env.reset()
         selected: List[Dict] = []
 
         while not env.is_done:
-            action = self.choose_action(state, training=training)
-            q_val = self.get_q_value(state, "select")
+            action  = self.choose_action(state, training=training)
+            q_val   = self.get_q_value(state, "select")
 
             # Step the environment (advances cursor, updates selected set & state)
             next_state, _reward, done = env.step(action)
@@ -1056,11 +1053,10 @@ class QLearningAgent:
 
         Compatible with original load_state() schema.
         """
-        self.q_table = {k: dict(v)
-                        for k, v in state_dict.get("q_table", {}).items()}
-        self.alpha = state_dict.get("alpha",   self.alpha)
-        self.gamma = state_dict.get("gamma",   self.gamma)
-        self.epsilon = state_dict.get("epsilon", self.epsilon)
+        self.q_table  = {k: dict(v) for k, v in state_dict.get("q_table", {}).items()}
+        self.alpha    = state_dict.get("alpha",   self.alpha)
+        self.gamma    = state_dict.get("gamma",   self.gamma)
+        self.epsilon  = state_dict.get("epsilon", self.epsilon)
         logger.info(
             "QLearningAgent state loaded | Q-table size=%d states",
             len(self.q_table),
@@ -1133,13 +1129,13 @@ def run_training_episode(
         state = next_state
 
     stats = EpisodeStats(
-        episode=episode,
-        total_reward=total_reward,
-        n_selected=len(env.selected_posts),
-        n_candidates=len(env._posts),
-        final_mae=env.current_mae,
-        n_q_updates=len(td_errors),
-        mean_td_error=float(np.mean(td_errors)) if td_errors else 0.0,
+        episode      = episode,
+        total_reward = total_reward,
+        n_selected   = len(env.selected_posts),
+        n_candidates = len(env._posts),
+        final_mae    = env.current_mae,
+        n_q_updates  = len(td_errors),
+        mean_td_error = float(np.mean(td_errors)) if td_errors else 0.0,
     )
 
     logger.info(
@@ -1162,9 +1158,9 @@ def run_training_loop(
     agent:              QLearningAgent,
     user_post_batches:  List[List[Dict]],
     predictor_fn=None,
-    n_epochs:           int = 5,
+    n_epochs:           int   = 5,
     selection_cost:     float = 0.05,
-    max_selected:       int = 20,
+    max_selected:       int   = 20,
     epsilon_start:      float = 1.0,
     epsilon_end:        float = 0.05,
     epsilon_decay:      float = 0.995,
@@ -1217,16 +1213,16 @@ def run_training_loop(
 
         for user_posts in user_post_batches:
             env = PostSelectionEnvironment(
-                posts=user_posts,
-                predictor_fn=predictor_fn,
-                selection_cost=selection_cost,
-                max_selected=max_selected,
+                posts           = user_posts,
+                predictor_fn    = predictor_fn,
+                selection_cost  = selection_cost,
+                max_selected    = max_selected,
             )
 
             stats = run_training_episode(agent, env, episode=episode_idx)
             all_stats.append(stats)
             epoch_reward += stats.total_reward
-            episode_idx += 1
+            episode_idx  += 1
 
             # ε-decay: less exploration as training progresses
             agent.epsilon = max(epsilon_end, agent.epsilon * epsilon_decay)
@@ -1279,8 +1275,7 @@ def create_post_features(post_obj) -> Dict:
     """
     from datetime import datetime, timezone
 
-    recency_days = (datetime.now(timezone.utc) -
-                    post_obj.created_at_original).days
+    recency_days = (datetime.now(timezone.utc) - post_obj.created_at_original).days
     content_text = getattr(post_obj, "cleaned_content", post_obj.content)
 
     return {

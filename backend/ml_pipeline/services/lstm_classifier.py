@@ -34,6 +34,11 @@ Notes:
   BCE + SmoothL1 multi-task loss.
 - Handles sequence padding and dynamic sequence lengths via
   pack_padded_sequence / pad_packed_sequence.
+- Decision rule is plain argmax over the 3-class softmax output. No
+  probability-threshold sweep is implemented in this phase — that is
+  deferred until it's confirmed what the "5 thresholds" experiment
+  should mean for a 3-class model (see compute_classification_metrics
+  docstring).
 """
 
 import logging
@@ -88,30 +93,95 @@ def split_participants(
     (checklist §8: split at the participant level, so posts from one
     participant never appear in more than one split).
 
-    Args:
-        participant_ids: unique identifier per participant.
-        labels: optional class label per participant, used to stratify
-            the split so class proportions are preserved across splits.
-        test_size: fraction of participants held out for the final test set.
-        val_size: fraction of the *remaining* (non-test) participants held
-            out for validation.
-        random_state: fixed seed for reproducibility.
+    Deliberately makes NO assumption about how much data is available —
+    this project's dataset size will keep changing (13 -> ~40 -> whatever
+    the final count is), so this function must not hard-fail just because
+    a stratified 80/10/10-style split isn't exactly achievable. Behavior:
+
+    - test_size / val_size are treated as target proportions, not
+      guarantees. Actual counts are derived from whatever `participant_ids`
+      it's given, clamped so train/test never go to zero when avoidable.
+    - Stratification (by `labels`, e.g. Low/Medium/High) is attempted
+      first, since that's the ideal (checklist §6: same class-boundary
+      rule and comparable class balance across splits). If a class has
+      too few members to stratify (e.g. only 1 "Low" participant in a
+      40-person sample), it automatically falls back to a random split
+      for that step and logs a warning rather than raising.
+    - With very few participants (<=2), a full train/val/test split isn't
+      meaningful; this returns the best degenerate split possible
+      (documented per branch below) instead of erroring.
 
     Returns:
         (train_ids, val_ids, test_ids)
     """
-    stratify = labels if labels is not None else None
-    train_val_ids, test_ids, train_val_labels, _ = train_test_split(
-        participant_ids, labels if labels is not None else participant_ids,
-        test_size=test_size, random_state=random_state, stratify=stratify
-    )
+    ids = list(participant_ids)
+    n = len(ids)
 
-    stratify_2 = train_val_labels if labels is not None else None
-    train_ids, val_ids = train_test_split(
-        train_val_ids, test_size=val_size / (1.0 - test_size),
-        random_state=random_state, stratify=stratify_2
-    )
+    if n == 0:
+        raise ValueError("split_participants received zero participants.")
 
+    if n == 1:
+        logger.warning("Only 1 participant available — using it for training only; val/test are empty.")
+        return ids, [], []
+
+    if n == 2:
+        logger.warning("Only 2 participants available — 1 for training, 1 for test; val is empty.")
+        return [ids[0]], [], [ids[1]]
+
+    y = np.asarray(labels) if labels is not None else None
+
+    def _stratifiable(y_subset, min_per_class: int = 2) -> bool:
+        if y_subset is None:
+            return False
+        counts = Counter(y_subset.tolist() if isinstance(y_subset, np.ndarray) else y_subset)
+        return len(counts) > 0 and min(counts.values()) >= min_per_class
+
+    def _split_with_fallback(ids_in, y_in, size, rs):
+        stratify_arr = y_in if _stratifiable(y_in) else None
+        if y_in is not None and stratify_arr is None:
+            logger.warning(
+                "Not enough members in at least one class to stratify this split "
+                "— falling back to a random (non-stratified) split."
+            )
+        try:
+            return train_test_split(
+                ids_in, y_in if y_in is not None else ids_in,
+                test_size=size, random_state=rs, stratify=stratify_arr
+            )
+        except ValueError as e:
+            logger.warning(f"Split failed even for the fallback path ({e}); retrying fully unstratified.")
+            return train_test_split(
+                ids_in, y_in if y_in is not None else ids_in,
+                test_size=size, random_state=rs, stratify=None
+            )
+
+    # --- carve off the test set -----------------------------------------
+    test_count = max(1, round(n * test_size))
+    test_count = min(test_count, n - 2)  # always leave >=2 for train (+val)
+    test_count = max(test_count, 1)
+
+    train_val_ids, test_ids, train_val_y, _ = _split_with_fallback(ids, y, test_count, random_state)
+
+    # --- carve val out of what remains -----------------------------------
+    remaining_n = len(train_val_ids)
+    if remaining_n < 2 or val_size <= 0:
+        if remaining_n < 2:
+            logger.warning("Too few participants remain after the test split to also carve out a val set.")
+        return train_val_ids, [], test_ids
+
+    remaining_fraction = max(1e-8, 1.0 - test_size)
+    val_count = max(1, round(remaining_n * (val_size / remaining_fraction)))
+    val_count = min(val_count, remaining_n - 1)
+
+    if val_count <= 0:
+        return train_val_ids, [], test_ids
+
+    train_ids, val_ids, _, _ = _split_with_fallback(train_val_ids, train_val_y, val_count, random_state)
+
+    logger.info(
+        f"split_participants: n={n} -> train={len(train_ids)}, "
+        f"val={len(val_ids)}, test={len(test_ids)}"
+    )
     return train_ids, val_ids, test_ids
 
 
@@ -149,8 +219,17 @@ def compute_classification_metrics(
 ) -> Dict[str, Any]:
     """
     Compute the LSTM evaluation metrics required by checklist §9:
-    accuracy, macro precision/recall/F1, class-wise breakdown, and
-    a confusion matrix. Never report regression metrics here.
+    accuracy, macro precision/recall/F1, per-class specificity,
+    class-wise breakdown, and a confusion matrix. Never report
+    regression metrics here.
+
+    Decision rule: predictions are argmax over the 3-class softmax
+    output — no probability-threshold sweep is applied. A threshold
+    experiment (e.g. abstention on low-confidence predictions, or a
+    one-vs-rest sweep per class) is explicitly deferred to a later
+    phase once it's confirmed what the supervisor's "5 thresholds"
+    request should mean for a 3-class softmax model, rather than
+    reusing the old binary P(High) >= threshold logic as-is.
     """
     accuracy = accuracy_score(y_true, y_pred)
     macro_precision, macro_recall, macro_f1, _ = precision_recall_fscore_support(
@@ -161,11 +240,28 @@ def compute_classification_metrics(
     )
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2])
 
+    # Per-class specificity (one-vs-rest true-negative rate). There is no
+    # single "multiclass specificity" number — it's only well-defined per
+    # class, which is why it's reported inside class_wise rather than as
+    # a single macro figure (checklist §9: "Report specificity only where
+    # its multiclass definition is clearly specified").
+    total = cm.sum()
+    per_class_specificity = {}
+    for c in range(NUM_CLASSES):
+        tp = cm[c, c]
+        fn = cm[c, :].sum() - tp
+        fp = cm[:, c].sum() - tp
+        tn = total - tp - fn - fp
+        per_class_specificity[c] = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+
+    macro_specificity = float(np.mean(list(per_class_specificity.values())))
+
     class_wise = {
         CLASS_LABELS[c]: {
             'precision': float(per_class_precision[c]),
             'recall': float(per_class_recall[c]),
             'f1': float(per_class_f1[c]),
+            'specificity': per_class_specificity[c],
             'support': int(per_class_support[c]),
         }
         for c in range(NUM_CLASSES)
@@ -176,6 +272,7 @@ def compute_classification_metrics(
         'macro_precision': float(macro_precision),
         'macro_recall': float(macro_recall),
         'macro_f1': float(macro_f1),
+        'macro_specificity': macro_specificity,
         'class_wise': class_wise,
         'confusion_matrix': cm.tolist(),
         'confusion_matrix_labels': [CLASS_LABELS[c] for c in range(NUM_CLASSES)],

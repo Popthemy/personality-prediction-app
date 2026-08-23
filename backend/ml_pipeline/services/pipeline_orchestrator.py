@@ -276,6 +276,7 @@ class PipelineOrchestrator:
         Returns:
             List of POST objects with cleaned_content attached
         """
+        
         self.logger.info("STEP 1: Input Data - retrieving and cleaning posts")
         from backend.ml_pipeline.processors.text_preprocessor import TextPreprocessor
         from backend.core.services.twitter_fetcher import TwitterFetcher

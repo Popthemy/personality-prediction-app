@@ -1,4 +1,5 @@
 """
+\backend\ml_pipeline\cleaning\cleaner.py
 Phase 1: Data Cleaning Layer
 ============================
 Cleans raw X (Twitter) API data into normalized content objects
@@ -114,7 +115,8 @@ def _stable_id(content_type: str, raw_id: Any, text: str) -> str:
     """
     if raw_id:
         return f"{content_type}_{raw_id}"
-    digest = hashlib.sha1(text.encode("utf-8", errors="replace")).hexdigest()[:12]
+    digest = hashlib.sha1(text.encode(
+        "utf-8", errors="replace")).hexdigest()[:12]
     return f"{content_type}_{digest}"
 
 
@@ -186,7 +188,8 @@ def _safe_str(value: Any, field_name: str = "unknown") -> str:
         return ""
     if isinstance(value, str):
         return value
-    logger.debug("Field %r has unexpected type %s; coercing.", field_name, type(value).__name__)
+    logger.debug("Field %r has unexpected type %s; coercing.",
+                 field_name, type(value).__name__)
     return str(value)
 
 
@@ -290,7 +293,8 @@ class DataCleaner:
             logger.warning("Profile field is empty or missing.")
             return None
 
-        raw_bio = _safe_str(profile.get("description") or profile.get("bio"), "bio")
+        raw_bio = _safe_str(profile.get("description")
+                            or profile.get("bio"), "bio")
         signals, cleaned_bio = _extract_signals(raw_bio)
 
         # Build a clean metadata dict with all numeric / boolean profile fields
@@ -307,7 +311,8 @@ class DataCleaner:
         }
 
         return CleanedContent(
-            content_id=_stable_id("profile", profile.get("id_str") or profile.get("id"), raw_bio),
+            content_id=_stable_id("profile", profile.get(
+                "id_str") or profile.get("id"), raw_bio),
             content_type="profile",
             original_text=raw_bio,
             cleaned_text=cleaned_bio,
@@ -334,7 +339,8 @@ class DataCleaner:
 
         raw_id = post.get("id_str") or post.get("id") or fallback_idx
         timestamp = _parse_timestamp(
-            post.get("created_at") or post.get("timestamp") or post.get("timestamp_ms")
+            post.get("created_at") or post.get(
+                "timestamp") or post.get("timestamp_ms")
         )
 
         metadata = {

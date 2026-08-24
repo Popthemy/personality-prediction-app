@@ -290,8 +290,7 @@ class StackedLSTMClassifier(nn.Module):
     classification into Low / Medium / High.
 
     Processes sequences of pre-computed BERT embeddings
-    (Batch, Max_Seq_Len, 768) and outputs 3-class logits. Does not
-    implement or call BERT, and does not perform regression — this model's
+    (Batch, Max_Seq_Len, 768) and outputs 3-class logits. This model's
     only responsibility is: given a sequence of BERT embeddings, classify
     the trait into one of 3 classes.
     """

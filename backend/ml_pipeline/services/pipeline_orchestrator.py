@@ -316,7 +316,6 @@ class PipelineOrchestrator:
         )
         return posts
 
-    
     def _step_2_qlearning_selection(self, posts: List) -> List:
         """
         Step 2: Q-Learning active signal selection.
@@ -365,7 +364,7 @@ class PipelineOrchestrator:
         
         self.logger.info(f"Q-Learning selected {len(selected_posts)} posts")
         return selected_posts
-    
+
     def _step_3_bert_embedding(self, posts: List) -> List:
         """
         Step 3: BERT contextual embedding extraction.

@@ -27,16 +27,17 @@ SYNTHETIC_SAMPLE_WEIGHT = 0.35
 
 class PipelineOrchestrator:
     """Main pipeline orchestrator."""
-    
+
     def __init__(self, volunteer_id: int):
         """
         Initialize orchestrator for a volunteer.
-        
+
         Args:
             volunteer_id: Volunteer database ID
         """
         self.volunteer = VOLUNTEER.objects.get(id=volunteer_id)
-        self.logger = logging.getLogger(f'ml_pipeline.{self.volunteer.x_handle}')
+        self.logger = logging.getLogger(
+            f'ml_pipeline.{self.volunteer.x_handle}')
 
     def _set_pipeline_status(self, status: str):
         """Persist the volunteer pipeline status."""
@@ -61,13 +62,19 @@ class PipelineOrchestrator:
         correlation = prediction_result.get('correlation')
         r2_score_value = prediction_result.get('r2_score')
         posts_analyzed = int(prediction_result.get('posts_analyzed', 0) or 0)
-        synthetic_used = int(prediction_result.get('synthetic_data_used', 0) or 0)
-        fallback_used = bool(prediction_result.get('training_fallback_used', False))
+        synthetic_used = int(prediction_result.get(
+            'synthetic_data_used', 0) or 0)
+        fallback_used = bool(prediction_result.get(
+            'training_fallback_used', False))
 
-        mae_component = self._clamp(1.0 - (float(overall_mae) / 4.0)) if overall_mae is not None else 0.5
-        corr_component = self._clamp(((float(correlation) + 1.0) / 2.0)) if correlation is not None else 0.5
-        r2_component = self._clamp(((float(r2_score_value) + 1.0) / 2.0)) if r2_score_value is not None else 0.5
-        data_component = self._clamp((posts_analyzed / 10.0) * 0.7 + (synthetic_used / 10.0) * 0.3)
+        mae_component = self._clamp(
+            1.0 - (float(overall_mae) / 4.0)) if overall_mae is not None else 0.5
+        corr_component = self._clamp(
+            ((float(correlation) + 1.0) / 2.0)) if correlation is not None else 0.5
+        r2_component = self._clamp(
+            ((float(r2_score_value) + 1.0) / 2.0)) if r2_score_value is not None else 0.5
+        data_component = self._clamp(
+            (posts_analyzed / 10.0) * 0.7 + (synthetic_used / 10.0) * 0.3)
         fallback_multiplier = 0.85 if fallback_used else 1.0
 
         confidence = (
@@ -112,11 +119,13 @@ class PipelineOrchestrator:
         try:
             self._set_pipeline_status('processing')
             selected_posts = list(
-                POST.objects.filter(volunteer=self.volunteer, selected_by_qlearning=True)
+                POST.objects.filter(volunteer=self.volunteer,
+                                    selected_by_qlearning=True)
                 .order_by('-created_at_original')
             )
             if not selected_posts:
-                raise ValueError("Run Q-Learning first to select posts for embedding")
+                raise ValueError(
+                    "Run Q-Learning first to select posts for embedding")
 
             embeddings = self._step_3_bert_embedding(selected_posts)
             return {
@@ -138,16 +147,20 @@ class PipelineOrchestrator:
         try:
             self._set_pipeline_status('processing')
             selected_posts = list(
-                POST.objects.filter(volunteer=self.volunteer, selected_by_qlearning=True)
+                POST.objects.filter(volunteer=self.volunteer,
+                                    selected_by_qlearning=True)
                 .order_by('-created_at_original')
             )
             embeddings = list(
-                BERT_EMBEDDING.objects.filter(post__in=selected_posts).order_by('created_at')
+                BERT_EMBEDDING.objects.filter(
+                    post__in=selected_posts).order_by('created_at')
             )
             if not embeddings:
-                raise ValueError("Run BERT embedding first to create embeddings for augmentation")
+                raise ValueError(
+                    "Run BERT embedding first to create embeddings for augmentation")
 
-            synthetic_data = self._step_4_gan_augmentation(selected_posts, embeddings)
+            synthetic_data = self._step_4_gan_augmentation(
+                selected_posts, embeddings)
             return {
                 'status': 'success',
                 'phase': 'gan',
@@ -166,20 +179,25 @@ class PipelineOrchestrator:
         try:
             self._set_pipeline_status('processing')
             selected_posts = list(
-                POST.objects.filter(volunteer=self.volunteer, selected_by_qlearning=True)
+                POST.objects.filter(volunteer=self.volunteer,
+                                    selected_by_qlearning=True)
                 .order_by('-created_at_original')
             )
             embeddings = list(
-                BERT_EMBEDDING.objects.filter(post__in=selected_posts).order_by('created_at')
+                BERT_EMBEDDING.objects.filter(
+                    post__in=selected_posts).order_by('created_at')
             )
             synthetic_data = list(
-                SYNTHETIC_DATA.objects.filter(volunteer=self.volunteer, used_in_training=True).order_by('created_at')
+                SYNTHETIC_DATA.objects.filter(
+                    volunteer=self.volunteer, used_in_training=True).order_by('created_at')
             )
 
             if not embeddings:
-                raise ValueError("Run BERT embedding first before Lasso training")
+                raise ValueError(
+                    "Run BERT embedding first before Lasso training")
 
-            prediction_result = self._step_5_lasso_prediction(embeddings, synthetic_data)
+            prediction_result = self._step_5_lasso_prediction(
+                embeddings, synthetic_data)
             self._save_psychometric_profile(prediction_result)
             self._set_pipeline_status('completed')
 
@@ -195,18 +213,19 @@ class PipelineOrchestrator:
                 'phase': 'lasso',
                 'error': str(e),
             }
-    
+
     def run_full_pipeline(self) -> Dict:
         """
         Execute complete pipeline: Input → Q-Learn → BERT → GAN → Lasso.
-        
+
         Returns:
             Result dict with status and metrics
         """
         self.logger.info("=" * 80)
-        self.logger.info(f"STARTING FULL PIPELINE for {self.volunteer.x_handle}")
+        self.logger.info(
+            f"STARTING FULL PIPELINE for {self.volunteer.x_handle}")
         self.logger.info("=" * 80)
-        
+
         result = {
             'volunteer_id': self.volunteer.id,
             'volunteer_handle': self.volunteer.x_handle,
@@ -215,32 +234,33 @@ class PipelineOrchestrator:
             'metrics': {},
             'error': None,
         }
-        
+
         try:
             # Step 1: Input data (posts already fetched, stored in DB)
             posts = self._step_1_input_data()
             result['steps_completed'].append('input_data')
             result['metrics']['input_posts'] = len(posts)
-            
+
             if len(posts) == 0:
                 raise ValueError("No posts available for processing")
-            
+
             # Step 2: Q-Learning selection
             selected_posts = self._step_2_qlearning_selection(posts)
             result['steps_completed'].append('qlearning_selection')
             result['metrics']['selected_posts'] = len(selected_posts)
-            
+
             # Step 3: BERT embeddings
             embeddings = self._step_3_bert_embedding(selected_posts)
             result['steps_completed'].append('bert_embedding')
             result['metrics']['embeddings_created'] = len(embeddings)
-            
+
             # Step 4: GAN augmentation (if training)
             prior_synthetic_count = SYNTHETIC_DATA.objects.filter(
                 volunteer=self.volunteer,
                 used_in_training=True,
             ).count()
-            synthetic_data = self._step_4_gan_augmentation(selected_posts, embeddings)
+            synthetic_data = self._step_4_gan_augmentation(
+                selected_posts, embeddings)
             result['steps_completed'].append('gan_augmentation')
             result['metrics']['synthetic_samples'] = len(synthetic_data)
             result['metrics']['synthetic_samples_saved'] = len(synthetic_data)
@@ -248,52 +268,82 @@ class PipelineOrchestrator:
             result['metrics']['training_mode'] = (
                 'retrain' if prior_synthetic_count > 0 else 'fresh_train'
             )
-            
+
             # Step 5: Lasso training and prediction
-            prediction_result = self._step_5_lasso_prediction(embeddings, synthetic_data)
+            prediction_result = self._step_5_lasso_prediction(
+                embeddings, synthetic_data)
             result['steps_completed'].append('lasso_prediction')
             result['metrics'].update(prediction_result)
-            
+
             # Save psychometric profile
-            self._save_psychometric_profile(prediction_result, result['metrics'])
+            self._save_psychometric_profile(
+                prediction_result, result['metrics'])
             result['steps_completed'].append('saved_profile')
-            
+
             self._set_pipeline_status('completed')
-            
+
         except Exception as e:
             self.logger.error(f"Pipeline failed: {e}", exc_info=True)
             result['status'] = 'error'
             result['error'] = str(e)
             self._set_pipeline_status('error')
-        
+
         self.logger.info(f"Pipeline result: {result['status']}")
         return result
-    
+
+    def _step_6_lstm_prediction(self, embeddings: List) -> Dict:
+        """
+        Step 6: LSTM training and prediction.
+        """
+        self.logger.info("STEP 6: LSTM Prediction")
+
+        trainer = LSTMTrainer()
+        # This is a placeholder. You'll need to adapt this to your actual data.
+        # The trainer expects sequences and targets.
+        sequences = [np.array(emb.embedding_vector) for emb in embeddings]
+        targets = np.random.rand(len(sequences))  # Placeholder for targets
+
+        # For simplicity, I'm not splitting data into train/val here.
+        # In a real scenario, you would.
+        trainer.train_trait_model('Openness', sequences, targets)
+        predictions, probabilities = trainer.predict_trait(
+            'Openness', sequences)
+
+        return {
+            "predictions": predictions,
+            "probabilities": probabilities
+        }
+
     def _step_1_input_data(self) -> List:
         """
         Step 1: Retrieve input posts from database and clean them.
-        
+
         Returns:
             List of POST objects with cleaned_content attached
         """
-        
+
         self.logger.info("STEP 1: Input Data - retrieving and cleaning posts")
         from backend.ml_pipeline.processors.text_preprocessor import TextPreprocessor
         from backend.core.services.twitter_fetcher import TwitterFetcher
 
         preprocessor = TextPreprocessor()
-        raw_posts = POST.objects.filter(volunteer=self.volunteer).order_by('-created_at_original')
-        self.logger.info(f"Retrieved {raw_posts.count()} raw posts from database")
+        raw_posts = POST.objects.filter(
+            volunteer=self.volunteer).order_by('-created_at_original')
+        self.logger.info(
+            f"Retrieved {raw_posts.count()} raw posts from database")
 
         if raw_posts.count() == 0:
-            self.logger.info("No posts in database. Attempting live X fetch before aborting.")
+            self.logger.info(
+                "No posts in database. Attempting live X fetch before aborting.")
             fetcher = TwitterFetcher()
             saved, skipped = fetcher.fetch_and_save(self.volunteer)
             self.logger.info(
                 f"Live fetch attempt for @{self.volunteer.x_handle} returned saved={saved}, skipped={skipped}"
             )
-            raw_posts = POST.objects.filter(volunteer=self.volunteer).order_by('-created_at_original')
-            self.logger.info(f"Database now has {raw_posts.count()} posts after fetch attempt")
+            raw_posts = POST.objects.filter(
+                volunteer=self.volunteer).order_by('-created_at_original')
+            self.logger.info(
+                f"Database now has {raw_posts.count()} posts after fetch attempt")
 
         posts = []
         for post in raw_posts:
@@ -302,9 +352,11 @@ class PipelineOrchestrator:
                 post.cleaned_content = cleaned
                 posts.append(post)
             else:
-                self.logger.debug(f"Filtered out invalid/short post: {post.content[:50]!r}")
+                self.logger.debug(
+                    f"Filtered out invalid/short post: {post.content[:50]!r}")
 
-        self.logger.info(f"Filtered down to {len(posts)} valid posts after preprocessing")
+        self.logger.info(
+            f"Filtered down to {len(posts)} valid posts after preprocessing")
         export_path = export_cleaned_posts_to_txt(
             self.volunteer.x_handle,
             [getattr(post, 'cleaned_content', '') for post in posts],
@@ -370,7 +422,8 @@ class PipelineOrchestrator:
 
         # Select top comments (agent uses internal TF-IDF similarity)
         top_k = min(10, len(posts))
-        selected = agent.select_posts(comment_inputs, top_k=top_k, training=False)
+        selected = agent.select_posts(
+            comment_inputs, top_k=top_k, training=False)
 
         # Recover post identities from the "comment" payload returned by agent
         # selected[i] = {"comment": {"_post_id": ..., "text": ...}, "q_value": ..., ...}
@@ -397,24 +450,24 @@ class PipelineOrchestrator:
     def _step_3_bert_embedding(self, posts: List) -> List:
         """
         Step 3: BERT contextual embedding extraction.
-        
+
         Args:
             posts: List of selected POST objects
-        
+
         Returns:
             List of BERT_EMBEDDING objects
         """
         self.logger.info("STEP 3: BERT Contextual Embedding Extraction")
-        
+
         from backend.ml_pipeline.services.bert_encoder import BERTEncoder
         import time
-        
+
         encoder = BERTEncoder()
         embeddings = []
-        
+
         for i, post in enumerate(posts):
             start_time = time.time()
-            
+
             # Encode post (using cleaned text)
             cleaned_text = getattr(post, 'cleaned_content', post.content)
 
@@ -436,17 +489,17 @@ class PipelineOrchestrator:
                 model_name=result['model_name'],
                 processing_time_seconds=time.time() - start_time,
             )
-            
+
             embeddings.append(embedding_obj)
             post.embedding_processed = True
             post.save()
 
-            
             if (i + 1) % 5 == 0:
                 self.logger.debug(f"Processed {i+1}/{len(posts)} posts")
-        
+
         self.logger.info(f"Created {len(embeddings)} BERT embeddings")
-        verification = self._verify_bert_embedding_persistence(posts, embeddings)
+        verification = self._verify_bert_embedding_persistence(
+            posts, embeddings)
         self.logger.info(
             "BERT persistence verification passed: %s/%s embeddings persisted",
             verification['persisted_count'],
@@ -484,41 +537,41 @@ class PipelineOrchestrator:
             'created_count': len(embeddings),
             'persisted_count': persisted_count,
         }
-    
+
     def _step_4_gan_augmentation(self, posts: List, embeddings: List) -> List:
         """
         Step 4: GAN data augmentation for training.
-        
+
         Args:
             posts: List of POST objects
             embeddings: List of BERT_EMBEDDING objects
-        
+
         Returns:
             List of SYNTHETIC_DATA objects
         """
         self.logger.info("STEP 4: GAN Data Augmentation")
-        
+
         from backend.ml_pipeline.services.gan_augmenter import GANAugmenter
-        
+
         augmenter = GANAugmenter(augmentation_factor=0.8)
         synthetic_list = []
-        
+
         # Create 1x augmentation (double the training set)
         target_size = len(embeddings)
-        
+
         for i in range(target_size):
             original_embedding = embeddings[i % len(embeddings)]
             original_post = posts[i % len(posts)]
-            
+
             # Augment embedding
             embedding_list = original_embedding.embedding_vector
             if isinstance(embedding_list, str):
                 import json
                 embedding_list = json.loads(embedding_list)
-            
+
             augmented_embedding = augmenter.augment_embedding(embedding_list)
             synthetic_text = augmenter.generate_synthetic_text()
-            
+
             # Save to database
             synthetic_obj = SYNTHETIC_DATA.objects.create(
                 volunteer=self.volunteer,
@@ -530,10 +583,11 @@ class PipelineOrchestrator:
                 generation_confidence=0.85,
                 used_in_training=True,
             )
-            
+
             synthetic_list.append(synthetic_obj)
-        
-        self.logger.info(f"Generated {len(synthetic_list)} synthetic training samples")
+
+        self.logger.info(
+            f"Generated {len(synthetic_list)} synthetic training samples")
         return synthetic_list
 
     def _embedding_to_array(self, embedding_value):
@@ -553,7 +607,8 @@ class PipelineOrchestrator:
         if not embedding_values:
             return None
 
-        vectors = [self._embedding_to_array(value) for value in embedding_values]
+        vectors = [self._embedding_to_array(value)
+                   for value in embedding_values]
         return np.mean(np.vstack(vectors), axis=0)
 
     def _volunteer_feature_vector(self, volunteer: VOLUNTEER, include_synthetic: bool = True) -> Optional[np.ndarray]:
@@ -564,14 +619,17 @@ class PipelineOrchestrator:
         as additional samples when requested to stabilize the representation.
         """
         real_embeddings = BERT_EMBEDDING.objects.filter(volunteer=volunteer)
-        selected_embeddings = real_embeddings.filter(post__selected_by_qlearning=True)
+        selected_embeddings = real_embeddings.filter(
+            post__selected_by_qlearning=True)
         if selected_embeddings.exists():
             real_embeddings = selected_embeddings
 
-        vectors = [self._embedding_to_array(emb.embedding_vector) for emb in real_embeddings]
+        vectors = [self._embedding_to_array(
+            emb.embedding_vector) for emb in real_embeddings]
 
         if include_synthetic:
-            synthetic_rows = SYNTHETIC_DATA.objects.filter(volunteer=volunteer, used_in_training=True)
+            synthetic_rows = SYNTHETIC_DATA.objects.filter(
+                volunteer=volunteer, used_in_training=True)
             vectors.extend([
                 self._embedding_to_array(row.synthetic_embedding)
                 for row in synthetic_rows
@@ -603,7 +661,8 @@ class PipelineOrchestrator:
         }
 
         for volunteer in volunteers:
-            base_vector = self._volunteer_feature_vector(volunteer, include_synthetic=False)
+            base_vector = self._volunteer_feature_vector(
+                volunteer, include_synthetic=False)
             if base_vector is None:
                 continue
 
@@ -614,7 +673,8 @@ class PipelineOrchestrator:
             for trait, value in ocean.items():
                 trait_labels[trait].append(value)
 
-            synthetic_rows = SYNTHETIC_DATA.objects.filter(volunteer=volunteer, used_in_training=True)
+            synthetic_rows = SYNTHETIC_DATA.objects.filter(
+                volunteer=volunteer, used_in_training=True)
             for row in synthetic_rows:
                 syn_vector = self._embedding_to_array(row.synthetic_embedding)
                 samples.append(syn_vector)
@@ -643,7 +703,8 @@ class PipelineOrchestrator:
 
         records = []
         for volunteer in volunteers:
-            base_vector = self._volunteer_feature_vector(volunteer, include_synthetic=False)
+            base_vector = self._volunteer_feature_vector(
+                volunteer, include_synthetic=False)
             if base_vector is None:
                 continue
 
@@ -689,7 +750,8 @@ class PipelineOrchestrator:
                     used_in_training=True,
                 )
                 for row in synthetic_rows:
-                    samples.append(self._embedding_to_array(row.synthetic_embedding))
+                    samples.append(self._embedding_to_array(
+                        row.synthetic_embedding))
                     synthetic_count += 1
                     sample_weights.append(SYNTHETIC_SAMPLE_WEIGHT)
                     for trait, value in record['labels'].items():
@@ -723,8 +785,10 @@ class PipelineOrchestrator:
                     )
                     continue
 
-                selected_posts = volunteer_orchestrator._step_2_qlearning_selection(posts)
-                embeddings = volunteer_orchestrator._step_3_bert_embedding(selected_posts)
+                selected_posts = volunteer_orchestrator._step_2_qlearning_selection(
+                    posts)
+                embeddings = volunteer_orchestrator._step_3_bert_embedding(
+                    selected_posts)
                 prepared.append({
                     'volunteer_id': volunteer.id,
                     'handle': volunteer.x_handle,
@@ -761,7 +825,8 @@ class PipelineOrchestrator:
             regularization='elasticnet',
             l1_ratio=0.5,
         )
-        X_fit, y_fit_norm = variant_trainer.prepare_training_data(X_train, y_train)
+        X_fit, y_fit_norm = variant_trainer.prepare_training_data(
+            X_train, y_train)
 
         X_val_norm = None
         y_val_norm = None
@@ -779,10 +844,12 @@ class PipelineOrchestrator:
         )
 
         if len(X_train) == 0:
-            raise ValueError(f"No training data available for trait {trait_name}")
+            raise ValueError(
+                f"No training data available for trait {trait_name}")
 
         current_norm = variant_trainer.transform_features(X_train[:1])
-        train_pred_norm = variant_trainer.predict_trait(trait_name, current_norm)
+        train_pred_norm = variant_trainer.predict_trait(
+            trait_name, current_norm)
         train_pred = denormalize_predictions(train_pred_norm)
 
         validation_mae = trait_metrics.get('validation_mae')
@@ -813,7 +880,8 @@ class PipelineOrchestrator:
             ).order_by('id')
         )
         if len(labeled_volunteers) < 2:
-            raise ValueError("Need at least 2 labeled volunteers to train a cohort model")
+            raise ValueError(
+                "Need at least 2 labeled volunteers to train a cohort model")
 
         bootstrap_stats = self._bootstrap_training_inputs(labeled_volunteers)
         labeled_records = self._build_labeled_volunteer_records()
@@ -854,11 +922,13 @@ class PipelineOrchestrator:
         if val_records:
             X_val_raw = np.vstack([record['vector'] for record in val_records])
             y_val_dict = {
-                trait: np.array([record['labels'][trait] for record in val_records], dtype=float)
+                trait: np.array([record['labels'][trait]
+                                for record in val_records], dtype=float)
                 for trait in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']
             }
 
-        can_validate = bool(val_records and X_val_raw is not None and len(X_val_raw) > 0)
+        can_validate = bool(
+            val_records and X_val_raw is not None and len(X_val_raw) > 0)
         trait_artifacts = {}
         predictions = {}
         metrics = {}
@@ -932,11 +1002,13 @@ class PipelineOrchestrator:
             for artifact in trait_artifacts.values()
             if artifact['metrics'].get('validation_mae') is not None
         ]
-        predictions['overall_mae'] = float(np.mean(mae_values)) if mae_values else None
+        predictions['overall_mae'] = float(
+            np.mean(mae_values)) if mae_values else None
         predictions['training_mode'] = 'cohort_augmented' if any_augmented_selected else 'cohort_only'
         predictions['cohort_train_volunteers'] = len(train_records)
         predictions['cohort_validation_volunteers'] = len(val_records)
-        predictions['synthetic_data_used'] = int(synthetic_train_count if any_augmented_selected else 0)
+        predictions['synthetic_data_used'] = int(
+            synthetic_train_count if any_augmented_selected else 0)
         predictions['synthetic_data_generated'] = int(synthetic_train_count)
         predictions['ground_truth_available'] = bool(val_records)
 
@@ -959,7 +1031,8 @@ class PipelineOrchestrator:
             cohort_trainer.feature_scale = first_artifact['trainer'].feature_scale
             for trait, artifact in trait_artifacts.items():
                 cohort_trainer.models[trait] = artifact['trainer'].models[trait]
-                cohort_trainer.model_metadata[trait] = artifact['trainer'].model_metadata.get(trait, {})
+                cohort_trainer.model_metadata[trait] = artifact['trainer'].model_metadata.get(
+                    trait, {})
             trainer_state = cohort_trainer.save_state()
 
         model_artifact, _ = COHORT_MODEL.objects.update_or_create(
@@ -1008,12 +1081,14 @@ class PipelineOrchestrator:
 
         cohort_model = self._get_active_cohort_model()
         if not cohort_model:
-            raise ValueError("No saved cohort model is available. Train a model first.")
+            raise ValueError(
+                "No saved cohort model is available. Train a model first.")
 
         trainer = LassoTrainer()
         trainer.load_state(cohort_model.trainer_state)
 
-        current_vector = self._volunteer_feature_vector(self.volunteer, include_synthetic=False)
+        current_vector = self._volunteer_feature_vector(
+            self.volunteer, include_synthetic=False)
         embeddings_used_count = 0
         if current_vector is None and embeddings:
             current_vector = self._pool_embeddings([
@@ -1023,12 +1098,16 @@ class PipelineOrchestrator:
         elif embeddings:
             embeddings_used_count = len(embeddings)
         else:
-            real_embeddings = BERT_EMBEDDING.objects.filter(volunteer=self.volunteer)
-            selected_embeddings = real_embeddings.filter(post__selected_by_qlearning=True)
-            embeddings_used_count = selected_embeddings.count() if selected_embeddings.exists() else real_embeddings.count()
+            real_embeddings = BERT_EMBEDDING.objects.filter(
+                volunteer=self.volunteer)
+            selected_embeddings = real_embeddings.filter(
+                post__selected_by_qlearning=True)
+            embeddings_used_count = selected_embeddings.count(
+            ) if selected_embeddings.exists() else real_embeddings.count()
 
         if current_vector is None:
-            raise ValueError("Unable to build a prediction vector for this volunteer")
+            raise ValueError(
+                "Unable to build a prediction vector for this volunteer")
 
         current_vector = current_vector.reshape(1, -1)
         current_norm = trainer.transform_features(current_vector)
@@ -1047,31 +1126,41 @@ class PipelineOrchestrator:
             ground_truth = None
 
         if ground_truth:
-            y_true = np.array([ground_truth.get(t, np.nan) for t in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']])
-            y_pred = np.array([predictions.get(f'predicted_{t.lower()}', np.nan) for t in ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']])
+            y_true = np.array([ground_truth.get(t, np.nan) for t in [
+                              'Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']])
+            y_pred = np.array([predictions.get(f'predicted_{t.lower()}', np.nan) for t in [
+                              'Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']])
 
             for i, trait in enumerate(['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']):
-                pv = y_pred[i]; tv = y_true[i]
-                predictions[f'mae_{trait.lower()}'] = float(abs(pv - tv)) if not np.isnan(pv) and not np.isnan(tv) else None
+                pv = y_pred[i]
+                tv = y_true[i]
+                predictions[f'mae_{trait.lower()}'] = float(
+                    abs(pv - tv)) if not np.isnan(pv) and not np.isnan(tv) else None
 
-            mae_values = [v for k, v in predictions.items() if k.startswith('mae_') and v is not None]
-            predictions['overall_mae'] = float(np.mean(mae_values)) if mae_values else None
+            mae_values = [v for k, v in predictions.items(
+            ) if k.startswith('mae_') and v is not None]
+            predictions['overall_mae'] = float(
+                np.mean(mae_values)) if mae_values else None
 
             # Lasso metrics: correlation & R²
             valid_mask = ~np.isnan(y_true) & ~np.isnan(y_pred)
             if valid_mask.sum() > 1:
                 from scipy import stats as sp_stats
-                corr, _ = sp_stats.pearsonr(y_true[valid_mask], y_pred[valid_mask])
+                corr, _ = sp_stats.pearsonr(
+                    y_true[valid_mask], y_pred[valid_mask])
                 ss_res = np.sum((y_true[valid_mask] - y_pred[valid_mask]) ** 2)
-                ss_tot = np.sum((y_true[valid_mask] - np.mean(y_true[valid_mask])) ** 2)
+                ss_tot = np.sum(
+                    (y_true[valid_mask] - np.mean(y_true[valid_mask])) ** 2)
                 r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
                 predictions['correlation'] = round(float(corr), 4)
                 predictions['r2_score'] = round(float(r2), 4)
 
             # LSTM classification metrics via threshold sweep on continuous predictions
             from backend.ml_pipeline.services.metrics_engine import evaluate_hybrid_metrics, CANDIDATE_THRESHOLDS
-            cutoff = float(np.nanmean(y_true))  # median trait score as binary cutoff
-            probs_lstm = np.clip((y_pred - 1.0) / 4.0, 0.0, 1.0)  # scale [1,5] → [0,1]
+            # median trait score as binary cutoff
+            cutoff = float(np.nanmean(y_true))
+            probs_lstm = np.clip((y_pred - 1.0) / 4.0, 0.0,
+                                 1.0)  # scale [1,5] → [0,1]
             hybrid_metrics = evaluate_hybrid_metrics(
                 y_true=y_true[valid_mask],
                 y_pred_lasso=y_pred[valid_mask],
@@ -1084,8 +1173,10 @@ class PipelineOrchestrator:
             predictions['precision'] = hybrid_metrics.get('lstm_precision')
             predictions['f1_score'] = hybrid_metrics.get('lstm_f1_score')
             predictions['specificity'] = hybrid_metrics.get('lstm_specificity')
-            predictions['optimal_threshold'] = hybrid_metrics.get('optimal_threshold', 0.50)
-            predictions['threshold_sweep_data'] = hybrid_metrics.get('threshold_sweep', {})
+            predictions['optimal_threshold'] = hybrid_metrics.get(
+                'optimal_threshold', 0.50)
+            predictions['threshold_sweep_data'] = hybrid_metrics.get(
+                'threshold_sweep', {})
             predictions['model_metrics_taxonomy'] = hybrid_metrics
             predictions['ground_truth_available'] = True
             predictions['ground_truth'] = ground_truth
@@ -1093,7 +1184,8 @@ class PipelineOrchestrator:
             predictions['overall_mae'] = None
             predictions['ground_truth_available'] = False
 
-        prediction_confidence, confidence_components = self._compute_prediction_confidence(predictions)
+        prediction_confidence, confidence_components = self._compute_prediction_confidence(
+            predictions)
         predictions['prediction_confidence'] = prediction_confidence
         predictions['confidence_components'] = confidence_components
 
@@ -1103,8 +1195,10 @@ class PipelineOrchestrator:
         predictions['synthetic_data_generated'] = 0
         predictions['training_fallback_used'] = False
         predictions['training_mode'] = 'prediction_only'
-        predictions['cohort_train_volunteers'] = len(cohort_model.train_volunteer_ids)
-        predictions['cohort_validation_volunteers'] = len(cohort_model.validation_volunteer_ids)
+        predictions['cohort_train_volunteers'] = len(
+            cohort_model.train_volunteer_ids)
+        predictions['cohort_validation_volunteers'] = len(
+            cohort_model.validation_volunteer_ids)
 
         return {
             'status': 'success',
@@ -1141,12 +1235,14 @@ class PipelineOrchestrator:
         """
         Save final psychometric profile with 8-metric taxonomy to database.
         """
-        self.logger.info("Saving psychometric profile with 8-metric framework...")
+        self.logger.info(
+            "Saving psychometric profile with 8-metric framework...")
 
-        prediction_confidence = prediction_result.get('prediction_confidence') or 0.85
+        prediction_confidence = prediction_result.get(
+            'prediction_confidence') or 0.85
         pipeline_summary = dict(pipeline_summary or {})
         pipeline_summary['prediction_confidence'] = prediction_confidence
-        
+
         profile, created = PSYCHOMETRIC_PROFILE.objects.update_or_create(
             volunteer=self.volunteer,
             defaults={
@@ -1177,5 +1273,6 @@ class PipelineOrchestrator:
                 'prediction_confidence': prediction_confidence,
             }
         )
-        
-        self.logger.info(f"Psychometric profile {'created' if created else 'updated'} with 8 metrics.")
+
+        self.logger.info(
+            f"Psychometric profile {'created' if created else 'updated'} with 8 metrics.")

@@ -3,6 +3,7 @@ Dependecies: pip install pandas pyarrow
 \backend\ml_pipeline\services\data\pandora.py
 PANDORA Data Ingestion Pipeline
 ================================
+
 Loads the PANDORA Big Five parquet export (jingjietan/pandora-big5 schema:
 O, C, E, A, N, ptype, text, __index_level_0__), groups comments by user,
 and prepares cleaned comment data for downstream Q-learning selection.
@@ -309,3 +310,4 @@ def load_pandora_comments(
         sum(len(u.comments) for u in prepared),
     )
     return prepared
+  

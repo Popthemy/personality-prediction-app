@@ -318,51 +318,80 @@ class PipelineOrchestrator:
 
     def _step_2_qlearning_selection(self, posts: List) -> List:
         """
-        Step 2: Q-Learning active signal selection.
-        
+        Step 2: Q-Learning active signal selection (PANDORA Reddit / comment-text mode).
+
+        The redesigned QLearningAgent operates on already-cleaned comment text.
+        It no longer uses engagement_score / recency_days / hashtag features;
+        state is driven by lexical diversity, TF-IDF redundancy, and budget
+        context instead.
+
+        Input contract
+        --------------
+        Each item in *posts* is a Django POST ORM object that must carry a
+        ``cleaned_content`` attribute (set by Step 1's TextPreprocessor).
+        ``create_post_features()`` extracts the cleaned text string; the agent
+        then builds TF-IDF vectors internally for the full episode.
+
+        Return schema of agent.select_posts()
+        --------------------------------------
+        Each element of the returned list is:
+            {
+                "comment":  <original input item — the dict we passed in>,
+                "text":     <cleaned text string>,
+                "q_value":  <float>,
+                "state":    <str Q-table key>,
+                "action":   "select",
+            }
+        The original post identity is recovered via ``s["comment"]["_post_id"]``,
+        a sentinel key we inject into the input dict before passing to the agent.
+
         Args:
-            posts: List of POST objects
-        
+            posts: List of POST objects with ``cleaned_content`` set
+
         Returns:
             List of selected POST objects
         """
         self.logger.info("STEP 2: Q-Learning Active Signal Selection")
-        
+
         from backend.ml_pipeline.services.qlearning_agent import QLearningAgent, create_post_features
-        
+
         agent = QLearningAgent(alpha=0.1, gamma=0.99, epsilon=0.05)
-        
-        # Create feature dicts
-        post_features = []
+
+        # Build comment dicts accepted by the new agent.
+        # create_post_features() returns the cleaned text string; we wrap it in
+        # a dict so we can carry the post DB id through the episode.
+        comment_inputs = []
         for post in posts:
-            features = create_post_features(post)
-            post_features.append({
-                'id': post.id,
-                'content': getattr(post, 'cleaned_content', post.content),
-                **features,
+            cleaned_text = create_post_features(post)   # returns str
+            comment_inputs.append({
+                "_post_id": post.id,          # sentinel for id recovery below
+                "text": cleaned_text,         # primary field consumed by agent
             })
-        
-        # Select top posts
-        top_k = min(10, len(posts))  # Default: select top 10 posts
-        selected = agent.select_posts(post_features, top_k=top_k, training=False)
-        
-        # Log decisions and mark posts
-        selected_post_ids = {s['id'] for s in selected}
+
+        # Select top comments (agent uses internal TF-IDF similarity)
+        top_k = min(10, len(posts))
+        selected = agent.select_posts(comment_inputs, top_k=top_k, training=False)
+
+        # Recover post identities from the "comment" payload returned by agent
+        # selected[i] = {"comment": {"_post_id": ..., "text": ...}, "q_value": ..., ...}
+        selected_id_to_qval: Dict[int, float] = {
+            s["comment"]["_post_id"]: s.get("q_value", 0.0)
+            for s in selected
+        }
+
+        # Mark posts in DB and build return list
         selected_posts = []
-        
         for post in posts:
-            if post.id in selected_post_ids:
+            if post.id in selected_id_to_qval:
                 post.selected_by_qlearning = True
-                
-                # Find Q-value
-                for s in selected:
-                    if s['id'] == post.id:
-                        post.q_value = s.get('q_value', 0)
-                        break
+                post.q_value = selected_id_to_qval[post.id]
                 selected_posts.append(post)
             post.save()
-        
-        self.logger.info(f"Q-Learning selected {len(selected_posts)} posts")
+
+        self.logger.info(
+            "Q-Learning selected %d / %d posts",
+            len(selected_posts), len(posts),
+        )
         return selected_posts
 
     def _step_3_bert_embedding(self, posts: List) -> List:

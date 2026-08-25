@@ -20,9 +20,45 @@ from backend.core.models import (
 )
 from backend.ml_pipeline.services.timeline_exporter import export_cleaned_posts_to_txt
 
+# Experiment definitions
+EXPERIMENTS = {
+    'E1': {
+        'description': 'Baseline: Simple selection, no augmentation, Lasso regression',
+        'use_qlearning': False,
+        'use_gan': False,
+        'model': 'lasso'
+    },
+    'E2': {
+        'description': 'Q-Learning selection, no augmentation, Lasso regression',
+        'use_qlearning': True,
+        'use_gan': False,
+        'model': 'lasso'
+    },
+    'E3': {
+        'description': 'Q-Learning selection, GAN augmentation, Lasso regression',
+        'use_qlearning': True,
+        'use_gan': True,
+        'model': 'lasso'
+    },
+    'E4': {
+        'description': 'Q-Learning selection, no augmentation, LSTM classification',
+        'use_qlearning': True,
+        'use_gan': False,
+        'model': 'lstm'
+    }
+}
+
 logger = logging.getLogger('ml_pipeline')
 
 SYNTHETIC_SAMPLE_WEIGHT = 0.35
+
+
+class BaselineSelector:
+    """A simple selector that picks the most recent posts."""
+
+    def select_posts(self, posts: List, top_k: int) -> List:
+        """Selects the top_k most recent posts."""
+        return posts[:top_k]
 
 
 class PipelineOrchestrator:
@@ -48,271 +84,66 @@ class PipelineOrchestrator:
     def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
         return float(max(minimum, min(maximum, value)))
 
-    def _compute_prediction_confidence(self, prediction_result: Dict) -> tuple[float, Dict[str, float]]:
+    def run_full_pipeline(self, experiment_id: str) -> Dict:
         """
-        Derive a reproducible confidence score from the actual run metrics.
-
-        The score blends:
-        - prediction error (lower MAE increases confidence)
-        - agreement with ground truth (correlation / R²)
-        - data coverage (more analyzed posts and synthetic samples)
-        - a small penalty when we had to fall back to a tiny labeled cohort
+        Execute a full pipeline experiment.
         """
-        overall_mae = prediction_result.get('overall_mae')
-        correlation = prediction_result.get('correlation')
-        r2_score_value = prediction_result.get('r2_score')
-        posts_analyzed = int(prediction_result.get('posts_analyzed', 0) or 0)
-        synthetic_used = int(prediction_result.get(
-            'synthetic_data_used', 0) or 0)
-        fallback_used = bool(prediction_result.get(
-            'training_fallback_used', False))
+        if experiment_id not in EXPERIMENTS:
+            raise ValueError(f"Experiment '{experiment_id}' not found.")
 
-        mae_component = self._clamp(
-            1.0 - (float(overall_mae) / 4.0)) if overall_mae is not None else 0.5
-        corr_component = self._clamp(
-            ((float(correlation) + 1.0) / 2.0)) if correlation is not None else 0.5
-        r2_component = self._clamp(
-            ((float(r2_score_value) + 1.0) / 2.0)) if r2_score_value is not None else 0.5
-        data_component = self._clamp(
-            (posts_analyzed / 10.0) * 0.7 + (synthetic_used / 10.0) * 0.3)
-        fallback_multiplier = 0.85 if fallback_used else 1.0
+        config = EXPERIMENTS[experiment_id]
+        self.logger.info(
+            f"STARTING EXPERIMENT {experiment_id}: {config['description']}")
 
-        confidence = (
-            0.35 * mae_component
-            + 0.25 * corr_component
-            + 0.20 * r2_component
-            + 0.20 * data_component
-        ) * fallback_multiplier
-
-        confidence = self._clamp(confidence)
-        components = {
-            'mae_component': round(mae_component, 4),
-            'correlation_component': round(corr_component, 4),
-            'r2_component': round(r2_component, 4),
-            'data_component': round(data_component, 4),
-            'fallback_multiplier': round(fallback_multiplier, 4),
-        }
-        return confidence, components
-
-    def run_qlearning_phase(self) -> Dict:
-        """Run the Q-Learning selection phase only."""
         try:
-            self._set_pipeline_status('processing')
+            # 1. Input Data
             posts = self._step_1_input_data()
-            selected_posts = self._step_2_qlearning_selection(posts)
-            return {
-                'status': 'success',
-                'phase': 'qlearning',
-                'input_posts': len(posts),
-                'selected_posts': len(selected_posts),
-            }
-        except Exception as e:
-            self._set_pipeline_status('error')
-            return {
-                'status': 'error',
-                'phase': 'qlearning',
-                'error': str(e),
-            }
+            if not posts:
+                raise ValueError("No posts available for processing.")
 
-    def run_bert_phase(self) -> Dict:
-        """Run the BERT embedding phase only."""
-        try:
-            self._set_pipeline_status('processing')
-            selected_posts = list(
-                POST.objects.filter(volunteer=self.volunteer,
-                                    selected_by_qlearning=True)
-                .order_by('-created_at_original')
-            )
-            if not selected_posts:
-                raise ValueError(
-                    "Run Q-Learning first to select posts for embedding")
+            # 2. Selection
+            if config['use_qlearning']:
+                selected_posts = self._step_2_qlearning_selection(posts)
+            else:
+                selector = BaselineSelector()
+                selected_posts = selector.select_posts(posts, top_k=10)
 
+            # 3. BERT Embedding
             embeddings = self._step_3_bert_embedding(selected_posts)
-            return {
-                'status': 'success',
-                'phase': 'bert',
-                'selected_posts': len(selected_posts),
-                'embeddings_created': len(embeddings),
-            }
-        except Exception as e:
-            self._set_pipeline_status('error')
-            return {
-                'status': 'error',
-                'phase': 'bert',
-                'error': str(e),
-            }
 
-    def run_gan_phase(self) -> Dict:
-        """Run the GAN augmentation phase only."""
-        try:
-            self._set_pipeline_status('processing')
-            selected_posts = list(
-                POST.objects.filter(volunteer=self.volunteer,
-                                    selected_by_qlearning=True)
-                .order_by('-created_at_original')
-            )
-            embeddings = list(
-                BERT_EMBEDDING.objects.filter(
-                    post__in=selected_posts).order_by('created_at')
-            )
-            if not embeddings:
-                raise ValueError(
-                    "Run BERT embedding first to create embeddings for augmentation")
+            # 4. Augmentation (for training)
+            synthetic_data = []
+            if config['use_gan']:
+                synthetic_data = self._step_4_gan_augmentation(
+                    selected_posts, embeddings)
 
-            synthetic_data = self._step_4_gan_augmentation(
-                selected_posts, embeddings)
-            return {
-                'status': 'success',
-                'phase': 'gan',
-                'synthetic_samples': len(synthetic_data),
-            }
-        except Exception as e:
-            self._set_pipeline_status('error')
-            return {
-                'status': 'error',
-                'phase': 'gan',
-                'error': str(e),
-            }
+            # 5. Modeling
+            if config['model'] == 'lasso':
+                prediction_result = self._step_5_lasso_prediction(
+                    embeddings, synthetic_data)
+            elif config['model'] == 'lstm':
+                # Assuming LSTMTrainer is available and has a similar interface
+                from .lstm_classifier import LSTMTrainer
+                lstm_trainer = LSTMTrainer(self.volunteer.id)
+                prediction_result = lstm_trainer.train_and_evaluate()  # This might need adjustment
+            else:
+                raise ValueError(f"Unsupported model type: {config['model']}")
 
-    def run_lasso_phase(self) -> Dict:
-        """Run the Lasso training/prediction phase only."""
-        try:
-            self._set_pipeline_status('processing')
-            selected_posts = list(
-                POST.objects.filter(volunteer=self.volunteer,
-                                    selected_by_qlearning=True)
-                .order_by('-created_at_original')
-            )
-            embeddings = list(
-                BERT_EMBEDDING.objects.filter(
-                    post__in=selected_posts).order_by('created_at')
-            )
-            synthetic_data = list(
-                SYNTHETIC_DATA.objects.filter(
-                    volunteer=self.volunteer, used_in_training=True).order_by('created_at')
-            )
-
-            if not embeddings:
-                raise ValueError(
-                    "Run BERT embedding first before Lasso training")
-
-            prediction_result = self._step_5_lasso_prediction(
-                embeddings, synthetic_data)
+            # 6. Evaluation & Persistence
             self._save_psychometric_profile(prediction_result)
             self._set_pipeline_status('completed')
 
             return {
                 'status': 'success',
-                'phase': 'lasso',
+                'experiment_id': experiment_id,
                 **prediction_result,
             }
-        except Exception as e:
-            self._set_pipeline_status('error')
-            return {
-                'status': 'error',
-                'phase': 'lasso',
-                'error': str(e),
-            }
-
-    def run_full_pipeline(self) -> Dict:
-        """
-        Execute complete pipeline: Input → Q-Learn → BERT → GAN → Lasso.
-
-        Returns:
-            Result dict with status and metrics
-        """
-        self.logger.info("=" * 80)
-        self.logger.info(
-            f"STARTING FULL PIPELINE for {self.volunteer.x_handle}")
-        self.logger.info("=" * 80)
-
-        result = {
-            'volunteer_id': self.volunteer.id,
-            'volunteer_handle': self.volunteer.x_handle,
-            'status': 'success',
-            'steps_completed': [],
-            'metrics': {},
-            'error': None,
-        }
-
-        try:
-            # Step 1: Input data (posts already fetched, stored in DB)
-            posts = self._step_1_input_data()
-            result['steps_completed'].append('input_data')
-            result['metrics']['input_posts'] = len(posts)
-
-            if len(posts) == 0:
-                raise ValueError("No posts available for processing")
-
-            # Step 2: Q-Learning selection
-            selected_posts = self._step_2_qlearning_selection(posts)
-            result['steps_completed'].append('qlearning_selection')
-            result['metrics']['selected_posts'] = len(selected_posts)
-
-            # Step 3: BERT embeddings
-            embeddings = self._step_3_bert_embedding(selected_posts)
-            result['steps_completed'].append('bert_embedding')
-            result['metrics']['embeddings_created'] = len(embeddings)
-
-            # Step 4: GAN augmentation (if training)
-            prior_synthetic_count = SYNTHETIC_DATA.objects.filter(
-                volunteer=self.volunteer,
-                used_in_training=True,
-            ).count()
-            synthetic_data = self._step_4_gan_augmentation(
-                selected_posts, embeddings)
-            result['steps_completed'].append('gan_augmentation')
-            result['metrics']['synthetic_samples'] = len(synthetic_data)
-            result['metrics']['synthetic_samples_saved'] = len(synthetic_data)
-            result['metrics']['synthetic_samples_reused'] = prior_synthetic_count
-            result['metrics']['training_mode'] = (
-                'retrain' if prior_synthetic_count > 0 else 'fresh_train'
-            )
-
-            # Step 5: Lasso training and prediction
-            prediction_result = self._step_5_lasso_prediction(
-                embeddings, synthetic_data)
-            result['steps_completed'].append('lasso_prediction')
-            result['metrics'].update(prediction_result)
-
-            # Save psychometric profile
-            self._save_psychometric_profile(
-                prediction_result, result['metrics'])
-            result['steps_completed'].append('saved_profile')
-
-            self._set_pipeline_status('completed')
 
         except Exception as e:
-            self.logger.error(f"Pipeline failed: {e}", exc_info=True)
-            result['status'] = 'error'
-            result['error'] = str(e)
+            self.logger.error(
+                f"Pipeline failed for experiment {experiment_id}: {e}", exc_info=True)
             self._set_pipeline_status('error')
-
-        self.logger.info(f"Pipeline result: {result['status']}")
-        return result
-
-    def _step_6_lstm_prediction(self, embeddings: List) -> Dict:
-        """
-        Step 6: LSTM training and prediction.
-        """
-        self.logger.info("STEP 6: LSTM Prediction")
-
-        trainer = LSTMTrainer()
-        # This is a placeholder. You'll need to adapt this to your actual data.
-        # The trainer expects sequences and targets.
-        sequences = [np.array(emb.embedding_vector) for emb in embeddings]
-        targets = np.random.rand(len(sequences))  # Placeholder for targets
-
-        # For simplicity, I'm not splitting data into train/val here.
-        # In a real scenario, you would.
-        trainer.train_trait_model('Openness', sequences, targets)
-        predictions, probabilities = trainer.predict_trait(
-            'Openness', sequences)
-
-        return {
-            "predictions": predictions,
-            "probabilities": probabilities
-        }
+            return {'status': 'error', 'error': str(e)}
 
     def _step_1_input_data(self) -> List:
         """

@@ -1,35 +1,22 @@
 """
 Metrics Calculation Engine for Big Five Personality Prediction.
 
-Plug-and-play evaluation service. PipelineOrchestrator calls `evaluate()`
-after Lasso and LSTM produce predictions on the held-out test set; this
-module has no knowledge of models, training, data loading/cleaning,
-experiment identity (E1-E4), GAN, Q-learning, or BERT.
+Plug-and-play evaluation service. The PANDORA runner and PipelineOrchestrator
+call `evaluate()` after Lasso and LSTM produce continuous predictions on the
+same held-out participant-level test users. This module has no knowledge of
+training, data loading, splitting, experiment identity, GAN, Q-learning, or
+BERT.
 
-Responsibilities
-----------------
-- Lasso continuous OCEAN predictions : MAE, MSE, RMSE, R^2, Pearson r
-- LSTM 3-class predictions           : Accuracy, Precision, Recall, F1,
-                                        Specificity, confusion matrix
-- Threshold analysis                 : sweep a threshold over the
-                                        *continuous Lasso predictions*,
-                                        binarize, compare to ground-truth
-                                        class, report accuracy/precision/
-                                        recall/F1 per threshold + the best
-                                        by F1.
+Primary evaluation (both models are continuous 5-output OCEAN regression)
+-------------------------------------------------------------------------
+- Per-trait MAE, MSE, RMSE, R^2, Pearson r on normalized [0, 1] scores
+- Binary High/Low threshold sweep on continuous scores (no Medium class)
+- ROC and Precision-Recall from continuous scores (not binarized labels)
+- Trait-specific O/C/E/A/N plus aggregate means
 
-Scale assumption (see module-level docstring note below)
-----------------------------------------------------------
-The original CANDIDATE_THRESHOLDS = [0.30, ..., 0.70] assumed predictions
-already lived on a [0, 1] probability scale (true for the old LSTM-sigmoid
-threshold sweep, which is preserved below unchanged for backward
-compatibility). PANDORA's OCEAN scores are NOT on that scale: sample rows
-inspected in the pandora ingestion work show O/C/E/A/N as 0-100 percentile
-values (e.g. 74, 96, 17, 96, 47), so Lasso's raw continuous predictions
-will also be ~0-100. The new Lasso threshold sweep therefore derives its
-candidate thresholds and its ground-truth cutoff FROM THE ACTUAL DATA
-(percentiles of the observed values) rather than reusing the old fixed
-[0.3..0.7] list. Callers can still override both explicitly.
+There is no final Low/Medium/High LSTM classification stage. 3-class helpers
+below are retained only for leftover legacy callers; `evaluate()` does not
+use them.
 """
 
 import logging
@@ -38,13 +25,17 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    auc,
+    average_precision_score,
     confusion_matrix,
     f1_score,
     mean_absolute_error,
     mean_squared_error,
+    precision_recall_curve,
     precision_score,
     r2_score,
     recall_score,
+    roc_curve,
 )
 
 logger = logging.getLogger('ml_pipeline')
@@ -56,7 +47,17 @@ ArrayLike = Union[Sequence[float], np.ndarray]
 # do NOT reuse this constant for the new Lasso-on-raw-OCEAN-scale sweep.
 CANDIDATE_THRESHOLDS = [0.30, 0.40, 0.50, 0.60, 0.70]
 
+# Explicit High/Low cutoff on the normalized [0, 1] OCEAN scale. Not inferred
+# from the evaluation set (that would leak a test-set decision boundary).
+DEFAULT_GROUND_TRUTH_CUTOFF = 0.5
+
+# Fine grid for threshold-vs-metric graphs. Predictions are in [0, 1].
+DEFAULT_NORMALIZED_THRESHOLDS = [
+    round(float(t), 4) for t in np.linspace(0.0, 1.0, 101)
+]
+
 _DEFAULT_TRAIT_NAMES = ["O", "C", "E", "A", "N"]
+_EXPECTED_N_TRAITS = 5
 
 # ===========================================================================
 # Existing functionality -- preserved as-is for backward compatibility.
@@ -301,7 +302,7 @@ def compute_multiclass_metrics(
     y_pred_classes: np.ndarray,
     labels: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
-    """Accuracy, macro Precision/Recall/F1, macro Specificity, confusion matrix for LSTM's 3-class output."""
+    """[LEGACY] 3-class metrics. Not used by `evaluate()`."""
     if labels is None:
         labels = sorted(set(np.unique(y_true_classes)) | set(np.unique(y_pred_classes)))
 
@@ -325,13 +326,9 @@ def compute_multiclass_metrics(
 
 def default_threshold_candidates(values: np.ndarray, n: int = 5) -> List[float]:
     """
-    Data-driven candidate decision thresholds, replacing the old fixed
-    [0.30, ..., 0.70] list which assumed a [0,1] probability scale.
-
-    Returns `n` thresholds evenly spaced across the 30th-70th percentile
-    of the observed values, so the sweep always lands inside the actual
-    data range regardless of whether it's a 0-1 probability, a 1-5 Likert
-    score, or a 0-100 percentile trait score.
+    [LEGACY] Data-driven candidate thresholds from the 30th-70th percentile
+    of `values`. Not used by `evaluate()` -- that path sweeps the fixed
+    [0.00, 1.00] grid so the evaluation set cannot choose its own thresholds.
     """
     values = np.asarray(values, dtype=float)
     if values.size == 0:
@@ -342,26 +339,25 @@ def default_threshold_candidates(values: np.ndarray, n: int = 5) -> List[float]:
 
 def derive_binary_ground_truth(y_true: np.ndarray, cutoff: Optional[float] = None) -> tuple:
     """
-    Binarize continuous ground truth for the Lasso threshold sweep.
-    Defaults to the median of the observed values (scale-agnostic) if no
-    explicit cutoff is supplied, rather than a hardcoded value like the
-    legacy 4.0 (which assumed a 1-5 scale).
+    Binarize continuous ground truth for High/Low evaluation.
+
+    High (1) if y_true >= cutoff, else Low (0). No Medium class.
+
+    Default cutoff is DEFAULT_GROUND_TRUTH_CUTOFF (0.5), the midpoint of the
+    normalized [0, 1] OCEAN scale. The cutoff is never inferred from `y_true`
+    (that would leak a test-set decision boundary). Callers that learned a
+    cutoff on train/validation must pass it explicitly.
     """
     if cutoff is None:
-        cutoff = float(np.median(y_true)) if len(y_true) > 0 else 0.0
-    y_true_binary = (np.asarray(y_true, dtype=float) >= cutoff).astype(int)
-    return y_true_binary, cutoff
+        cutoff = DEFAULT_GROUND_TRUTH_CUTOFF
+    y_true_binary = (np.asarray(y_true, dtype=float) >= float(cutoff)).astype(int)
+    return y_true_binary, float(cutoff)
 
 
 def derive_three_class_ground_truth(y_true: np.ndarray, cutoffs: Optional[List[float]] = None) -> tuple:
     """
-    Bucket continuous ground truth into 3 classes (Low=0, Medium=1, High=2)
-    to compare against LSTM's 3-class predictions.
-
-    Defaults to tertile split (33rd/66th percentile of the observed values)
-    if `cutoffs` isn't supplied. This is an explicit, documented,
-    overridable assumption -- pass `cutoffs=[c1, c2]` to use the project's
-    actual class boundaries instead.
+    [LEGACY] Bucket continuous ground truth into 3 classes (Low=0, Medium=1,
+    High=2). Not used by `evaluate()`.
     """
     y_true = np.asarray(y_true, dtype=float)
     if cutoffs is None:
@@ -379,16 +375,18 @@ def sweep_thresholds_on_scores(
     candidate_thresholds: Optional[List[float]] = None,
 ) -> Dict[str, Any]:
     """
-    Sweep candidate thresholds over raw continuous `scores` (e.g. Lasso's
-    continuous OCEAN prediction), compare the resulting binary prediction
-    to `y_true_binary`, and report per-threshold accuracy/precision/
-    recall/F1 plus the best threshold by F1.
+    Sweep candidate thresholds over continuous `scores` (not pre-binarized
+    High/Low labels). prediction >= tau -> High (1), else Low (0).
 
-    Unlike `evaluate_threshold_sweep`, this does not blend in confidence
-    or MAE -- those are reported separately by the caller (evaluate()).
+    Reports the complete sweep plus the threshold with the highest F1.
+    This reports a post-hoc best-of-sweep; it does not learn or apply a
+    decision boundary. The runner must supply a train/validation-selected
+    cutoff via `derive_binary_ground_truth` / `evaluate(ground_truth_cutoff=...)`.
+
+    Default candidates are 0.00, 0.01, ..., 1.00 (normalized OCEAN scale).
     """
     if candidate_thresholds is None:
-        candidate_thresholds = default_threshold_candidates(scores)
+        candidate_thresholds = list(DEFAULT_NORMALIZED_THRESHOLDS)
 
     results = []
     best = None
@@ -409,14 +407,50 @@ def sweep_thresholds_on_scores(
     }
 
 
-def _as_2d(arr: ArrayLike, name: str) -> np.ndarray:
-    """Coerce input to a 2D (n_samples, n_traits) float array without silently reshaping ambiguous cases."""
+def compute_roc_curve_metrics(y_true_binary: np.ndarray, scores: np.ndarray) -> Dict[str, Any]:
+    """ROC curve points and ROC-AUC from continuous scores (not High/Low labels)."""
+    y_true_binary = np.asarray(y_true_binary).astype(int)
+    scores = np.asarray(scores, dtype=float)
+    if y_true_binary.size == 0 or len(np.unique(y_true_binary)) < 2:
+        return {'fpr': [], 'tpr': [], 'thresholds': [], 'auc': None}
+
+    fpr, tpr, thresholds = roc_curve(y_true_binary, scores)
+    return {
+        'fpr': [float(x) for x in fpr],
+        'tpr': [float(x) for x in tpr],
+        'thresholds': [float(x) for x in thresholds],
+        'auc': round(float(auc(fpr, tpr)), 4),
+    }
+
+
+def compute_precision_recall_curve_metrics(
+    y_true_binary: np.ndarray,
+    scores: np.ndarray,
+) -> Dict[str, Any]:
+    """Precision-Recall curve points and Average Precision from continuous scores."""
+    y_true_binary = np.asarray(y_true_binary).astype(int)
+    scores = np.asarray(scores, dtype=float)
+    if y_true_binary.size == 0 or len(np.unique(y_true_binary)) < 2:
+        return {'precision': [], 'recall': [], 'thresholds': [], 'average_precision': None}
+
+    precision, recall, thresholds = precision_recall_curve(y_true_binary, scores)
+    ap = float(average_precision_score(y_true_binary, scores))
+    return {
+        'precision': [float(x) for x in precision],
+        'recall': [float(x) for x in recall],
+        'thresholds': [float(x) for x in thresholds],
+        'average_precision': round(ap, 4),
+    }
+
+
+def _require_ocean_matrix(arr: ArrayLike, name: str) -> np.ndarray:
+    """Require a (N, 5) float matrix in O,C,E,A,N order. Never reshape, truncate, or pad."""
     a = np.asarray(arr, dtype=float)
-    if a.ndim == 1:
-        return a.reshape(-1, 1)
-    if a.ndim == 2:
-        return a
-    raise ValueError(f"{name} must be 1D (n_samples,) or 2D (n_samples, n_traits); got shape {a.shape}")
+    if a.ndim != 2 or a.shape[1] != _EXPECTED_N_TRAITS:
+        raise ValueError(
+            f"{name} must have shape (N, 5) in O,C,E,A,N order; got {a.shape}."
+        )
+    return a
 
 
 def _resolve_class_labels(arr: ArrayLike, y_true_2d_shape: tuple, name: str) -> np.ndarray:
@@ -466,169 +500,151 @@ def evaluate(
     candidate_thresholds: Optional[List[float]] = None,
 ) -> Dict[str, Any]:
     """
-    Single plug-and-play evaluation entry point for PipelineOrchestrator.
+    Plug-and-play evaluation of continuous (N, 5) Lasso and LSTM predictions.
 
-    Call this once per experiment (E1-E4) after Lasso and LSTM have
-    produced predictions on the HELD-OUT TEST SET. This function does not
-    know or care which experiment configuration produced the predictions.
+    Both models are treated as 5-output OCEAN regressors on the same held-out
+    participants. Predictions and ground truth are evaluated on the normalized
+    [0, 1] scale. This path does not require or derive Low/Medium/High classes.
 
     Parameters
     ----------
-    y_true
-        Continuous ground-truth OCEAN scores. Shape (n_samples,) for a
-        single trait, or (n_samples, n_traits) for multiple (e.g. 5 for
-        O/C/E/A/N).
-    lasso_predictions
-        Lasso's continuous predictions. Must match y_true's shape exactly
-        -- no reshaping is attempted; a mismatch raises ValueError.
-    lstm_predictions
-        LSTM's 3-class predictions. Accepts already-decided class labels
-        with shape matching y_true (1D or 2D), or a trailing probability/
-        logit axis (n_samples, n_traits, n_classes), in which case argmax
-        is taken. Any other shape raises ValueError.
-    lstm_probabilities
-        Optional. LSTM's raw probability output, used only to compute
-        `model_confidence` via the single existing implementation
-        (compute_model_confidence). Not required for the classification
-        metrics themselves.
-    lstm_true_classes
-        Optional. Ground-truth class labels for the LSTM comparison, same
-        shape as lstm_predictions. If omitted, ground-truth classes are
-        DERIVED from `y_true` via `derive_three_class_ground_truth`
-        (tertile split by default, or `class_cutoffs` if supplied) -- this
-        is a documented assumption, not a silent one. Pass this explicitly
-        to bypass the assumption entirely.
+    y_true, lasso_predictions, lstm_predictions
+        Continuous OCEAN arrays with shape (N, 5) in O,C,E,A,N order.
+        A mismatch raises ValueError; values are never reshaped, truncated,
+        or padded.
     trait_names
-        Optional labels for each trait column, e.g. ['O','C','E','A','N'].
-        Defaults to that list when n_traits == 5, else generic names.
-    class_cutoffs
-        Optional override for the 3-class ground-truth boundaries used
-        when `lstm_true_classes` is not supplied. Either a single [c1, c2]
-        list applied to every trait, or {trait_name: [c1, c2]}.
+        Optional column labels. Defaults to ['O', 'C', 'E', 'A', 'N'].
     ground_truth_cutoff
-        Optional override for the binary cutoff used in the Lasso
-        threshold sweep. Either a single float applied to every trait, or
-        {trait_name: cutoff}. Defaults to each trait's observed median.
+        Explicit High/Low rule: y >= cutoff -> High (1), else Low (0).
+        A single float applies to every trait, or {trait: cutoff}.
+        Defaults to 0.5 (midpoint of [0, 1]). Never inferred from the
+        evaluation set -- the runner must pass a train/validation-selected
+        boundary if one was learned.
     candidate_thresholds
-        Optional override for the threshold sweep values. Defaults to
-        `default_threshold_candidates()`, which is derived from the actual
-        scale of `lasso_predictions` for each trait (NOT the legacy
-        [0.30..0.70] list, which assumed a [0,1] probability scale).
+        Thresholds to sweep on continuous predictions. Defaults to
+        0.00, 0.01, ..., 1.00. The sweep reports every point plus the
+        highest-F1 threshold; that best-of-sweep is descriptive only.
+
+    lstm_probabilities, lstm_true_classes, class_cutoffs
+        Accepted for call-site compatibility. Ignored. 3-class evaluation
+        is not part of this path.
 
     Returns
     -------
-    dict with keys 'lasso', 'lstm', 'threshold'.
-    Single-trait input -> each key holds a flat metrics dict (matches the
-    project's requested example structure exactly).
-    Multi-trait input -> each key holds {'per_trait': {...}, 'aggregate': {...}}.
-
-    Raises
-    ------
-    ValueError
-        If any prediction array's shape is incompatible with y_true. This
-        function never reshapes, truncates, or fabricates data to force a
-        fit.
+    dict with keys 'lasso', 'lstm', 'threshold', 'roc', 'precision_recall'.
+    Each model block is {'per_trait': {O/C/E/A/N: ...}, 'aggregate': ...}.
     """
-    y_true_2d = _as_2d(y_true, "y_true")
-    lasso_2d = _as_2d(lasso_predictions, "lasso_predictions")
-    n_samples, n_traits = y_true_2d.shape
+    if lstm_probabilities is not None or lstm_true_classes is not None or class_cutoffs is not None:
+        logger.debug(
+            "evaluate() ignores lstm_probabilities/lstm_true_classes/class_cutoffs; "
+            "both models are scored as continuous (N, 5) OCEAN regressors."
+        )
+
+    y_true_2d = _require_ocean_matrix(y_true, "y_true")
+    lasso_2d = _require_ocean_matrix(lasso_predictions, "lasso_predictions")
+    lstm_2d = _require_ocean_matrix(lstm_predictions, "lstm_predictions")
 
     if lasso_2d.shape != y_true_2d.shape:
         raise ValueError(
             f"lasso_predictions has shape {lasso_2d.shape}, expected {y_true_2d.shape} to match y_true."
         )
+    if lstm_2d.shape != y_true_2d.shape:
+        raise ValueError(
+            f"lstm_predictions has shape {lstm_2d.shape}, expected {y_true_2d.shape} to match y_true."
+        )
 
-    lstm_2d = _resolve_class_labels(lstm_predictions, (n_samples, n_traits), "lstm_predictions")
-
-    if lstm_true_classes is not None:
-        lstm_true_2d = _resolve_class_labels(lstm_true_classes, (n_samples, n_traits), "lstm_true_classes")
-        derived_cutoffs_by_trait = None
-    else:
-        lstm_true_2d = np.zeros_like(lstm_2d)
-        derived_cutoffs_by_trait = {}
-
-    lstm_probs_2d = None
-    if lstm_probabilities is not None:
-        lstm_probs_2d = _as_2d(lstm_probabilities, "lstm_probabilities")
-        if lstm_probs_2d.shape != y_true_2d.shape:
-            raise ValueError(
-                f"lstm_probabilities has shape {lstm_probs_2d.shape}, expected {y_true_2d.shape} to match y_true."
-            )
-
+    n_traits = y_true_2d.shape[1]
     if trait_names is None:
-        trait_names = _DEFAULT_TRAIT_NAMES[:n_traits] if n_traits == 5 else [f"trait_{i}" for i in range(n_traits)]
+        trait_names = list(_DEFAULT_TRAIT_NAMES)
     if len(trait_names) != n_traits:
         raise ValueError(f"trait_names has {len(trait_names)} entries, expected {n_traits}.")
 
-    def _cutoff_for(trait: str, spec: Optional[Union[float, Dict[str, float]]]) -> Optional[float]:
-        if spec is None:
+    def _cutoff_for(trait: str) -> Optional[float]:
+        if ground_truth_cutoff is None:
             return None
-        if isinstance(spec, dict):
-            return spec.get(trait)
-        return spec
+        if isinstance(ground_truth_cutoff, dict):
+            return ground_truth_cutoff.get(trait)
+        return ground_truth_cutoff
 
-    def _class_cutoffs_for(trait: str) -> Optional[List[float]]:
-        if class_cutoffs is None:
-            return None
-        if isinstance(class_cutoffs, dict):
-            return class_cutoffs.get(trait)
-        return list(class_cutoffs)
+    def _mean_keys(per_trait: Dict[str, Dict[str, Any]], keys: List[str]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for key in keys:
+            values = [per_trait[t][key] for t in trait_names if per_trait[t].get(key) is not None]
+            out[key] = round(float(np.mean(values)), 4) if values else None
+        return out
 
     per_trait_lasso: Dict[str, Dict[str, float]] = {}
-    per_trait_lstm: Dict[str, Dict[str, Any]] = {}
-    per_trait_threshold: Dict[str, Dict[str, Any]] = {}
+    per_trait_lstm: Dict[str, Dict[str, float]] = {}
+    per_trait_thr_lasso: Dict[str, Dict[str, Any]] = {}
+    per_trait_thr_lstm: Dict[str, Dict[str, Any]] = {}
+    per_trait_roc_lasso: Dict[str, Dict[str, Any]] = {}
+    per_trait_roc_lstm: Dict[str, Dict[str, Any]] = {}
+    per_trait_pr_lasso: Dict[str, Dict[str, Any]] = {}
+    per_trait_pr_lstm: Dict[str, Dict[str, Any]] = {}
 
     for i, trait in enumerate(trait_names):
         yt = y_true_2d[:, i]
         lp = lasso_2d[:, i]
+        ls = lstm_2d[:, i]
 
-        # --- Lasso regression metrics ---
         per_trait_lasso[trait] = compute_regression_metrics(yt, lp)
+        per_trait_lstm[trait] = compute_regression_metrics(yt, ls)
 
-        # --- LSTM 3-class metrics ---
-        if lstm_true_classes is None:
-            trait_class_cutoffs = _class_cutoffs_for(trait)
-            classes, used_cutoffs = derive_three_class_ground_truth(yt, trait_class_cutoffs)
-            lstm_true_2d[:, i] = classes
-            derived_cutoffs_by_trait[trait] = used_cutoffs
-        per_trait_lstm[trait] = compute_multiclass_metrics(lstm_true_2d[:, i], lstm_2d[:, i])
-        if lstm_probs_2d is not None:
-            per_trait_lstm[trait]['model_confidence'] = compute_model_confidence(
-                lstm_probs_2d[:, i], np.abs(yt - lp)
-            )
+        y_true_binary, used_cutoff = derive_binary_ground_truth(yt, _cutoff_for(trait))
 
-        # --- Threshold sweep on Lasso's continuous predictions ---
-        cutoff = _cutoff_for(trait, ground_truth_cutoff)
-        y_true_binary, used_cutoff = derive_binary_ground_truth(yt, cutoff)
-        sweep = sweep_thresholds_on_scores(y_true_binary, lp, candidate_thresholds)
-        sweep['ground_truth_cutoff'] = used_cutoff
-        per_trait_threshold[trait] = sweep
+        lasso_sweep = sweep_thresholds_on_scores(y_true_binary, lp, candidate_thresholds)
+        lasso_sweep['ground_truth_cutoff'] = used_cutoff
+        per_trait_thr_lasso[trait] = lasso_sweep
 
-    def _aggregate(per_trait: Dict[str, Dict[str, Any]], keys: List[str]) -> Dict[str, float]:
-        return {k: round(float(np.mean([per_trait[t][k] for t in trait_names])), 4) for k in keys}
+        lstm_sweep = sweep_thresholds_on_scores(y_true_binary, ls, candidate_thresholds)
+        lstm_sweep['ground_truth_cutoff'] = used_cutoff
+        per_trait_thr_lstm[trait] = lstm_sweep
 
-    lasso_agg = _aggregate(per_trait_lasso, ['mae', 'mse', 'rmse', 'r2', 'correlation'])
-    lstm_agg = _aggregate(per_trait_lstm, ['accuracy', 'precision', 'recall', 'f1', 'specificity'])
-    threshold_agg = _aggregate(per_trait_threshold, ['best_f1', 'accuracy', 'precision', 'recall', 'f1'])
+        per_trait_roc_lasso[trait] = compute_roc_curve_metrics(y_true_binary, lp)
+        per_trait_roc_lstm[trait] = compute_roc_curve_metrics(y_true_binary, ls)
+        per_trait_pr_lasso[trait] = compute_precision_recall_curve_metrics(y_true_binary, lp)
+        per_trait_pr_lstm[trait] = compute_precision_recall_curve_metrics(y_true_binary, ls)
 
-    if n_traits == 1:
-        trait = trait_names[0]
-        result = {
-            'lasso': per_trait_lasso[trait],
-            'lstm': per_trait_lstm[trait],
-            'threshold': per_trait_threshold[trait],
-        }
-    else:
-        result = {
-            'lasso': {'per_trait': per_trait_lasso, 'aggregate': lasso_agg},
-            'lstm': {'per_trait': per_trait_lstm, 'aggregate': lstm_agg},
-            'threshold': {'per_trait': per_trait_threshold, 'aggregate': threshold_agg},
-        }
+    reg_keys = ['mae', 'mse', 'rmse', 'r2', 'correlation']
+    thr_keys = ['best_f1', 'accuracy', 'precision', 'recall', 'f1']
 
-    if derived_cutoffs_by_trait is not None:
-        result['assumptions'] = {
-            'lstm_ground_truth_classes': 'derived from y_true (tertile split unless class_cutoffs given)',
-            'class_cutoffs_used': derived_cutoffs_by_trait,
-        }
-
-    return result
+    return {
+        'lasso': {
+            'per_trait': per_trait_lasso,
+            'aggregate': _mean_keys(per_trait_lasso, reg_keys),
+        },
+        'lstm': {
+            'per_trait': per_trait_lstm,
+            'aggregate': _mean_keys(per_trait_lstm, reg_keys),
+        },
+        'threshold': {
+            'lasso': {
+                'per_trait': per_trait_thr_lasso,
+                'aggregate': _mean_keys(per_trait_thr_lasso, thr_keys),
+            },
+            'lstm': {
+                'per_trait': per_trait_thr_lstm,
+                'aggregate': _mean_keys(per_trait_thr_lstm, thr_keys),
+            },
+        },
+        'roc': {
+            'lasso': {
+                'per_trait': per_trait_roc_lasso,
+                'aggregate': _mean_keys(per_trait_roc_lasso, ['auc']),
+            },
+            'lstm': {
+                'per_trait': per_trait_roc_lstm,
+                'aggregate': _mean_keys(per_trait_roc_lstm, ['auc']),
+            },
+        },
+        'precision_recall': {
+            'lasso': {
+                'per_trait': per_trait_pr_lasso,
+                'aggregate': _mean_keys(per_trait_pr_lasso, ['average_precision']),
+            },
+            'lstm': {
+                'per_trait': per_trait_pr_lstm,
+                'aggregate': _mean_keys(per_trait_pr_lstm, ['average_precision']),
+            },
+        },
+    }

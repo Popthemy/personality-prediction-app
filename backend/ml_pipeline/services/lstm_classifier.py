@@ -414,6 +414,83 @@ class LSTMTrainer:
         self.learning_rate = learning_rate
         self.models: Dict[str, StackedLSTMClassifier] = {}
 
+    def train(
+        self,
+        sequences: List[np.ndarray],
+        targets: np.ndarray,
+        val_sequences: Optional[List[np.ndarray]] = None,
+        val_targets: Optional[np.ndarray] = None,
+        epochs: int = 35,
+        batch_size: int = 4,
+        sample_weights: Optional[np.ndarray] = None,
+        seed: int = 42,
+    ) -> Dict[str, Any]:
+        """
+        Train one classifier per OCEAN trait for the PANDORA runner.
+
+        The PANDORA experiment runner uses labels scaled to [0, 1], so the
+        Low/Medium/High class boundaries are thirds of that interval. The
+        trained classifiers are later converted back to continuous proxy scores
+        in predict() via the expected value of the three class probabilities.
+        """
+        y = np.asarray(targets, dtype=float)
+        if y.ndim != 2 or y.shape[1] != 5:
+            raise ValueError(f"LSTMTrainer.train expects targets with shape (N, 5); got {y.shape}")
+
+        y_val = None
+        if val_targets is not None:
+            y_val = np.asarray(val_targets, dtype=float)
+            if y_val.ndim != 2 or y_val.shape[1] != 5:
+                raise ValueError(
+                    f"LSTMTrainer.train expects val_targets with shape (N, 5); got {y_val.shape}"
+                )
+
+        trait_names = [
+            "Openness",
+            "Conscientiousness",
+            "Extraversion",
+            "Agreeableness",
+            "Neuroticism",
+        ]
+        history = {}
+        for idx, trait in enumerate(trait_names):
+            history[trait] = self.train_trait_model(
+                trait=trait,
+                sequences=sequences,
+                targets=y[:, idx],
+                val_sequences=val_sequences,
+                val_targets=y_val[:, idx] if y_val is not None else None,
+                low_threshold=1.0 / 3.0,
+                high_threshold=2.0 / 3.0,
+                epochs=epochs,
+                batch_size=batch_size,
+                sample_weights=sample_weights,
+                seed=seed,
+            )
+        return history
+
+    def predict(self, sequences: List[np.ndarray]) -> np.ndarray:
+        """
+        Return continuous [0, 1] OCEAN proxy predictions for the PANDORA runner.
+
+        Each per-trait classifier emits probabilities for Low, Medium, High.
+        Mapping those classes to 0.0, 0.5, and 1.0 and taking the expected value
+        gives the continuous matrix expected by pandora_runner's metrics code.
+        """
+        trait_names = [
+            "Openness",
+            "Conscientiousness",
+            "Extraversion",
+            "Agreeableness",
+            "Neuroticism",
+        ]
+        class_values = np.asarray([0.0, 0.5, 1.0], dtype=np.float32)
+        predictions = []
+        for trait in trait_names:
+            class_probabilities, _predicted_classes, _labels = self.predict_trait(trait, sequences)
+            predictions.append(class_probabilities @ class_values)
+        return np.stack(predictions, axis=1).astype(np.float32)
+
     def _prepare_sequences(
         self,
         sequence_list: List[np.ndarray]

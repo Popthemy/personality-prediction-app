@@ -1,9 +1,33 @@
 """Celery tasks for async ML pipeline execution."""
 import logging
 from celery import shared_task
-from backend.core.models import VOLUNTEER
+from django.utils import timezone
+from backend.core.models import VOLUNTEER, TRAINING_JOB
 
 logger = logging.getLogger(__name__)
+
+
+def _update_training_job(job: TRAINING_JOB, *, status=None, stage=None, progress=None, message=None, error=None, result=None):
+    if status is not None:
+        job.status = status
+    if stage is not None:
+        job.stage = stage
+    if progress is not None:
+        job.progress = int(progress)
+    if message is not None:
+        job.message = message
+    if error is not None:
+        job.error = error
+    if result is not None:
+        job.result = result
+    if job.started_at is None and job.status == 'running':
+        job.started_at = timezone.now()
+    if job.status in {'completed', 'failed'} and job.finished_at is None:
+        job.finished_at = timezone.now()
+    job.save(update_fields=[
+        'status', 'stage', 'progress', 'message', 'error', 'result',
+        'started_at', 'finished_at', 'updated_at'
+    ])
 
 
 @shared_task(bind=True, max_retries=3)
@@ -109,6 +133,66 @@ def train_cohort_model_task(self, researcher_id, split_seed=42):
     except Exception as e:
         logger.error(f"Cohort training error for researcher {researcher_id}: {str(e)}")
         raise self.retry(exc=e, countdown=60)
+
+
+@shared_task(bind=True, max_retries=0)
+def train_pandora_model_task(self, job_id, researcher_id, split_seed=42):
+    """Train the PANDORA-backed shared cohort model while updating a job row."""
+    job = None
+    try:
+        job = TRAINING_JOB.objects.get(id=job_id, researcher_id=researcher_id)
+        researcher = job.researcher
+
+        _update_training_job(
+            job,
+            status='running',
+            stage='queued',
+            progress=1,
+            message='Starting PANDORA training job...',
+        )
+
+        from backend.ml_pipeline.services.pandora_trainer import PandoraTrainingService
+
+        def callback(stage: str, progress: int, message: str):
+            _update_training_job(
+                job,
+                status='running',
+                stage=stage,
+                progress=progress,
+                message=message,
+            )
+
+        service = PandoraTrainingService(
+            researcher,
+            volunteer=None,
+            split_seed=split_seed,
+            use_gan=True,
+            status_callback=callback,
+        )
+        result = service.train()
+
+        _update_training_job(
+            job,
+            status='completed',
+            stage='completed',
+            progress=100,
+            message='Training finished successfully.',
+            result=result,
+        )
+        return result
+
+    except Exception as e:
+        logger.error("PANDORA training job %s failed: %s", job_id, e, exc_info=True)
+        if job is not None:
+            _update_training_job(
+                job,
+                status='failed',
+                stage='failed',
+                progress=100 if getattr(job, 'progress', 0) < 100 else job.progress,
+                message='Training failed.',
+                error=str(e),
+            )
+        raise
 
 
 @shared_task(bind=True, max_retries=3)

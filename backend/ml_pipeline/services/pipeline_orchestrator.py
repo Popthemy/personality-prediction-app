@@ -84,7 +84,7 @@ class PipelineOrchestrator:
     def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
         return float(max(minimum, min(maximum, value)))
 
-    def run_full_pipeline(self, experiment_id: str) -> Dict:
+    def run_full_pipeline(self, experiment_id: str = 'E3') -> Dict:
         """
         Execute a full pipeline experiment.
         """
@@ -702,6 +702,26 @@ class PipelineOrchestrator:
         Train the shared cohort model on 80% of the labeled volunteers and
         reserve the remaining 20% for validation and future prediction runs.
         """
+        from backend.ml_pipeline.services.data.pandora import discover_pandora_parquet_files
+
+        if discover_pandora_parquet_files():
+            from backend.ml_pipeline.services.pandora_trainer import PandoraTrainingService
+
+            self.logger.info(
+                "PANDORA shards detected in the repository; using PANDORA as the main training source."
+            )
+            service = PandoraTrainingService(
+                self.volunteer,
+                split_seed=split_seed,
+                use_gan=True,
+            )
+            result = service.train()
+            if result.get('status') == 'success':
+                self._set_pipeline_status('completed')
+            else:
+                self._set_pipeline_status('error')
+            return result
+
         from sklearn.model_selection import train_test_split
 
         labeled_volunteers = list(

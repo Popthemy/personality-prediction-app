@@ -19,11 +19,11 @@ from .forms import (
     CohortTrainingForm,
     PredictionSelectionForm,
 )
-from backend.core.models import VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING, COHORT_MODEL, PSYCHOMETRIC_PROFILE
+from backend.core.models import VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING, COHORT_MODEL, PSYCHOMETRIC_PROFILE, TRAINING_JOB
 from backend.core.services.bfi_scorer import BFIScorer, score_bfi_survey
 from backend.ml_pipeline.services.pipeline_orchestrator import PipelineOrchestrator
 from backend.ml_pipeline.services.timeline_exporter import export_cleaned_posts_to_txt
-from backend.ml_pipeline.tasks import run_full_pipeline_task, run_pipeline_phase_task
+from backend.ml_pipeline.tasks import run_full_pipeline_task, run_pipeline_phase_task, train_pandora_model_task
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +352,11 @@ class CohortTrainingView(LoginRequiredMixin, FormView):
         context['active_model'] = active_model
         context['saved_train_count'] = len(active_model.train_volunteer_ids) if active_model else 0
         context['saved_validation_count'] = len(active_model.validation_volunteer_ids) if active_model else 0
+        context['training_chart_payload'] = (active_model.metrics or {}).get('chart_payload', {}) if active_model else {}
+        context['active_job'] = kwargs.get('active_job') or TRAINING_JOB.objects.filter(
+            researcher=self.request.user,
+            job_type='pandora_training',
+        ).order_by('-created_at').first()
         context['train_volunteers'] = []
         context['validation_volunteers'] = []
 
@@ -367,27 +372,25 @@ class CohortTrainingView(LoginRequiredMixin, FormView):
 
     def form_valid(self, form):
         try:
-            anchor_volunteer = VOLUNTEER.objects.filter(
+            job = TRAINING_JOB.objects.create(
                 researcher=self.request.user,
-                bfi_survey__isnull=False,
-            ).order_by('id').first()
-            if not anchor_volunteer:
-                messages.error(self.request, 'No labeled volunteers are available for training.')
-                return self.form_invalid(form)
-
-            orchestrator = PipelineOrchestrator(anchor_volunteer.id)
-            result = orchestrator.train_cohort_model()
+                volunteer=None,
+                job_type='pandora_training',
+                status='queued',
+                stage='queued',
+                progress=0,
+                message='Queued for training.',
+            )
+            task_result = train_pandora_model_task.delay(job.id, self.request.user.id)
+            job.task_id = task_result.id or ''
+            job.save(update_fields=['task_id'])
 
             messages.success(
                 self.request,
-                f"Cohort model trained successfully with {result.get('train_count', 0)} training volunteers "
-                f"and {result.get('validation_count', 0)} validation volunteers."
+                'PANDORA training job started. The progress panel will update automatically.'
             )
-            logger.info(
-                "Cohort model trained by %s: model_id=%s version=%s",
-                self.request.user,
-                result.get('model_id'),
-                result.get('model_version'),
+            return self.render_to_response(
+                self.get_context_data(form=form, active_job=job)
             )
         except Exception as e:
             logger.error("Cohort training error: %s", e, exc_info=True)
@@ -402,6 +405,30 @@ class CohortTrainingView(LoginRequiredMixin, FormView):
         return super().form_valid(form)
 
 
+class TrainingJobStatusView(LoginRequiredMixin, View):
+    """Return JSON status for the current PANDORA training job."""
+
+    def get(self, request, job_id):
+        try:
+            job = TRAINING_JOB.objects.get(id=job_id, researcher=request.user)
+        except TRAINING_JOB.DoesNotExist:
+            return JsonResponse({'status': 'missing'}, status=404)
+
+        payload = {
+            'job_id': job.id,
+            'status': job.status,
+            'stage': job.stage,
+            'progress': job.progress,
+            'message': job.message,
+            'error': job.error,
+            'result': job.result,
+        }
+        if job.result:
+            payload['chart_payload'] = job.result.get('chart_payload', {})
+            payload['metrics'] = job.result.get('metrics', {})
+        return JsonResponse(payload)
+
+
 class CohortPredictionView(LoginRequiredMixin, FormView):
     """Prediction-only page that uses the saved cohort model artifact."""
     form_class = PredictionSelectionForm
@@ -409,14 +436,11 @@ class CohortPredictionView(LoginRequiredMixin, FormView):
     success_url = reverse_lazy('tools:predict')
 
     def _get_prediction_volunteers(self):
-        active_model = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
-        if not active_model:
-            return VOLUNTEER.objects.none()
-
         return VOLUNTEER.objects.filter(
             researcher=self.request.user,
-            id__in=active_model.validation_volunteer_ids,
-        ).order_by('x_handle')
+        ).filter(
+            posts__isnull=False,
+        ).distinct().order_by('x_handle')
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
@@ -446,10 +470,6 @@ class CohortPredictionView(LoginRequiredMixin, FormView):
             active_model = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
             if not active_model:
                 messages.warning(self.request, 'Train a cohort model before running prediction.')
-                return self.form_invalid(form)
-
-            if volunteer_id not in set(active_model.validation_volunteer_ids):
-                messages.warning(self.request, 'Select a volunteer from the held-out prediction split.')
                 return self.form_invalid(form)
 
             orchestrator = PipelineOrchestrator(volunteer.id)

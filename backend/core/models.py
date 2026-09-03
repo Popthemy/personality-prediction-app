@@ -25,6 +25,13 @@ PIPELINE_STATUS_CHOICES = [
     ('error', 'Error'),
 ]
 
+TRAINING_JOB_STATUS_CHOICES = [
+    ('queued', 'Queued'),
+    ('running', 'Running'),
+    ('completed', 'Completed'),
+    ('failed', 'Failed'),
+]
+
 
 class VOLUNTEER(models.Model):
     """Research participant."""
@@ -348,6 +355,37 @@ class COHORT_MODEL(models.Model):
 
     def __str__(self):
         return f"Cohort model {self.name} ({self.version})"
+
+
+class TRAINING_JOB(models.Model):
+    """Background training job tracker used by the PANDORA training page."""
+
+    id = models.BigAutoField(primary_key=True)
+    researcher = models.ForeignKey(User, on_delete=models.CASCADE, related_name='training_jobs')
+    volunteer = models.ForeignKey(VOLUNTEER, on_delete=models.SET_NULL, null=True, blank=True, related_name='training_jobs')
+
+    job_type = models.CharField(max_length=40, default='pandora_training')
+    task_id = models.CharField(max_length=255, blank=True, default='')
+
+    status = models.CharField(max_length=20, choices=TRAINING_JOB_STATUS_CHOICES, default='queued', db_index=True)
+    stage = models.CharField(max_length=80, default='queued')
+    progress = models.IntegerField(default=0)
+    message = models.TextField(blank=True, default='')
+    error = models.TextField(blank=True, default='')
+
+    result = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'training_job'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.job_type} #{self.id} ({self.status})"
 
 
 class PSYCHOMETRIC_PROFILE(models.Model):

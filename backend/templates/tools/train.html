@@ -9,10 +9,10 @@
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       <div class="lg:col-span-7 bg-white rounded-3xl border border-stone-200 shadow-sm p-8">
         <p class="text-xs font-semibold uppercase tracking-[0.25em] text-emerald-700">Training workspace</p>
-        <h1 class="mt-3 text-4xl font-black text-stone-900">Cohort Training Lab</h1>
+        <h1 class="mt-3 text-4xl font-black text-stone-900">PANDORA Training Lab</h1>
         <p class="mt-4 text-stone-600 leading-7">
-          Train one reusable cohort model on 80% of the labeled volunteers, validate it on the 20% holdout,
-          and save the frozen artifact for prediction-only runs.
+          Train one reusable cohort model on the cloned PANDORA parquet shards, validate it on a held-out
+          slice, and save the frozen artifact for prediction-only runs.
         </p>
 
         <form method="post" class="mt-8 space-y-5">
@@ -24,7 +24,7 @@
             <div>
               <div class="font-semibold text-stone-900">{{ form.confirm.label }}</div>
               <p class="text-sm text-stone-600 mt-1">
-                This will use the current labeled volunteer pool, create the 80/20 split, and persist the best model for later prediction.
+                This will load the PANDORA parquet files from the cloned repository, create the train / validation / test split, and persist the best model for later prediction.
               </p>
             </div>
           </label>
@@ -36,6 +36,28 @@
       </div>
 
       <div class="lg:col-span-5 space-y-6">
+        <div class="rounded-3xl border border-emerald-200 bg-emerald-50 p-6 shadow-sm" id="training-status-card">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <div class="text-xs uppercase tracking-[0.25em] text-emerald-700">Live status</div>
+              <h2 class="mt-2 text-xl font-bold text-stone-900">Training progress</h2>
+            </div>
+            <div class="rounded-full bg-white px-3 py-1 text-sm font-semibold text-emerald-700 border border-emerald-200" id="training-status-badge">
+              {% if active_job %}{{ active_job.status|title }}{% else %}Idle{% endif %}
+            </div>
+          </div>
+          <div class="mt-4 h-3 overflow-hidden rounded-full bg-emerald-100">
+            <div id="training-progress-bar" class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-400 transition-all duration-500" style="width: {% if active_job %}{{ active_job.progress }}{% else %}0{% endif %}%"></div>
+          </div>
+          <div class="mt-4 grid grid-cols-1 gap-2 text-sm text-stone-700">
+            <div><span class="font-semibold">Stage:</span> <span id="training-stage-text">{% if active_job %}{{ active_job.stage }}{% else %}Waiting{% endif %}</span></div>
+            <div><span class="font-semibold">Message:</span> <span id="training-message-text">{% if active_job %}{{ active_job.message }}{% else %}Submit the form to start training.{% endif %}</span></div>
+          </div>
+          <div class="mt-4 text-xs text-stone-500" id="training-progress-note">
+            {% if active_job and active_job.task_id %}Job ID {{ active_job.id }} is running in the background.{% else %}No active job yet.{% endif %}
+          </div>
+        </div>
+
         <div class="grid grid-cols-2 gap-4">
           <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
             <div class="text-sm text-stone-500">Labeled volunteers</div>
@@ -93,12 +115,208 @@
           {% else %}
             <h2 class="mt-3 text-xl font-bold">No cohort model saved yet</h2>
             <p class="mt-3 text-sm text-stone-300">
-              Fetch posts for your labeled volunteers first, then run training to create the shared model artifact and lock in the prediction split.
+              The model now trains from the PANDORA dataset. After training, you can still use the saved model to predict personality for X handles in the app.
             </p>
           {% endif %}
+        </div>
+
+        <div class="rounded-3xl bg-white border border-stone-200 p-6 shadow-sm" id="training-charts-card">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <div class="text-xs uppercase tracking-[0.25em] text-emerald-700">Chapter 4 figures</div>
+              <h2 class="mt-2 text-xl font-bold text-stone-900">Threshold, confusion, and regression charts</h2>
+            </div>
+            <select id="trait-selector" class="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700">
+              <option value="Openness">Openness</option>
+              <option value="Conscientiousness">Conscientiousness</option>
+              <option value="Extraversion">Extraversion</option>
+              <option value="Agreeableness">Agreeableness</option>
+              <option value="Neuroticism">Neuroticism</option>
+            </select>
+          </div>
+
+          <div class="mt-6 grid grid-cols-1 gap-6">
+            <div>
+              <div class="mb-2 text-sm font-semibold text-stone-700">Threshold sweep</div>
+              <canvas id="threshold-sweep-chart" height="220"></canvas>
+            </div>
+            <div>
+              <div class="mb-2 text-sm font-semibold text-stone-700">Regression scatter</div>
+              <canvas id="regression-scatter-chart" height="220"></canvas>
+            </div>
+            <div>
+              <div class="mb-2 text-sm font-semibold text-stone-700">Confusion matrix</div>
+              <canvas id="confusion-matrix-chart" height="220"></canvas>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 </div>
+
+{{ training_chart_payload|json_script:"training-chart-payload" }}
+{% if active_job and active_job.result %}
+{{ active_job.result.chart_payload|json_script:"active-job-chart-payload" }}
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+  const activeJobId = {% if active_job %}{{ active_job.id }}{% else %}null{% endif %};
+  const statusUrl = {% if active_job and active_job.id %}"{% url 'tools:train_status' active_job.id %}"{% else %}null{% endif %};
+  const initialPayloadEl = document.getElementById('training-chart-payload');
+  const activePayloadEl = document.getElementById('active-job-chart-payload');
+  const payload = activePayloadEl ? JSON.parse(activePayloadEl.textContent) : (initialPayloadEl ? JSON.parse(initialPayloadEl.textContent) : {});
+
+  const badge = document.getElementById('training-status-badge');
+  const stageText = document.getElementById('training-stage-text');
+  const messageText = document.getElementById('training-message-text');
+  const progressBar = document.getElementById('training-progress-bar');
+  const progressNote = document.getElementById('training-progress-note');
+  const traitSelector = document.getElementById('trait-selector');
+
+  let thresholdChart = null;
+  let scatterChart = null;
+  let confusionChart = null;
+
+  const chartState = { payload };
+
+  function setStatus(data) {
+    if (badge) badge.textContent = (data.status || 'idle').charAt(0).toUpperCase() + (data.status || 'idle').slice(1);
+    if (stageText) stageText.textContent = data.stage || 'waiting';
+    if (messageText) messageText.textContent = data.message || '';
+    if (progressBar) progressBar.style.width = `${data.progress || 0}%`;
+    if (progressNote) progressNote.textContent = data.error ? data.error : (data.result ? 'Training complete. Charts are ready below.' : `Job #${data.job_id || activeJobId || ''} is updating...`);
+  }
+
+  function destroyCharts() {
+    if (thresholdChart) thresholdChart.destroy();
+    if (scatterChart) scatterChart.destroy();
+    if (confusionChart) confusionChart.destroy();
+  }
+
+  function getTraitPayload(trait) {
+    return (chartState.payload && chartState.payload[trait]) ? chartState.payload[trait] : null;
+  }
+
+  function renderCharts(trait) {
+    const traitPayload = getTraitPayload(trait);
+    if (!traitPayload) return;
+
+    destroyCharts();
+
+    const threshold = traitPayload.threshold_sweep || {};
+    const regression = traitPayload.regression_scatter || { truth: [], prediction: [] };
+    const confusion = traitPayload.confusion_matrix || { labels: ['Low', 'Medium', 'High'], matrix: [] };
+
+    const thresholdCtx = document.getElementById('threshold-sweep-chart');
+    thresholdChart = new Chart(thresholdCtx, {
+      type: 'line',
+      data: {
+        labels: threshold.thresholds || [],
+        datasets: [
+          { label: 'Accuracy', data: threshold.accuracy || [], borderColor: '#059669', backgroundColor: 'rgba(5,150,105,0.12)', tension: 0.25 },
+          { label: 'Precision', data: threshold.precision || [], borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.12)', tension: 0.25 },
+          { label: 'F1', data: threshold.f1 || [], borderColor: '#7c3aed', backgroundColor: 'rgba(124,58,237,0.12)', tension: 0.25 },
+          { label: 'Specificity', data: threshold.specificity || [], borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,0.12)', tension: 0.25 },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'bottom' },
+          title: { display: true, text: `Best threshold: ${threshold.best_threshold ?? 'n/a'} | Best F1: ${threshold.best_f1 ?? 'n/a'}` }
+        },
+        scales: { y: { beginAtZero: true, max: 1 } }
+      }
+    });
+
+    const scatterCtx = document.getElementById('regression-scatter-chart');
+    scatterChart = new Chart(scatterCtx, {
+      type: 'scatter',
+      data: {
+        datasets: [{
+          label: 'Predicted vs actual',
+          data: (regression.truth || []).map((truth, index) => ({ x: truth, y: (regression.prediction || [])[index] })),
+          backgroundColor: 'rgba(13, 148, 136, 0.8)',
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          title: { display: true, text: 'Predicted vs actual OCEAN scores' }
+        },
+        scales: {
+          x: { title: { display: true, text: 'Actual score' } },
+          y: { title: { display: true, text: 'Predicted score' } },
+        }
+      }
+    });
+
+    const matrix = confusion.matrix || [];
+    const labels = confusion.labels || ['Low', 'Medium', 'High'];
+    const datasets = labels.map((predLabel, idx) => ({
+      label: `Predicted ${predLabel}`,
+      data: matrix.map(row => row[idx] || 0),
+      backgroundColor: ['#0f766e', '#d97706', '#7c3aed'][idx % 3],
+    }));
+    const confusionCtx = document.getElementById('confusion-matrix-chart');
+    confusionChart = new Chart(confusionCtx, {
+      type: 'bar',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'bottom' },
+          title: { display: true, text: 'Multiclass confusion matrix as grouped bars' }
+        },
+        scales: {
+          x: { stacked: false },
+          y: { beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  if (traitSelector) {
+    traitSelector.addEventListener('change', (event) => {
+      renderCharts(event.target.value);
+    });
+  }
+
+  if (Object.keys(chartState.payload || {}).length > 0) {
+    renderCharts(traitSelector ? traitSelector.value : 'Openness');
+  }
+
+  async function pollStatus() {
+    if (!statusUrl) return;
+
+    try {
+      const response = await fetch(statusUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      if (!response.ok) return;
+      const data = await response.json();
+      setStatus(data);
+      if (data.chart_payload && Object.keys(data.chart_payload).length > 0) {
+        chartState.payload = data.chart_payload;
+        renderCharts(traitSelector ? traitSelector.value : 'Openness');
+      }
+      if (data.status === 'completed' || data.status === 'failed') {
+        return;
+      }
+    } catch (error) {
+      console.debug('Training status polling paused:', error);
+    }
+
+    window.setTimeout(pollStatus, 5000);
+  }
+
+  if (activeJobId) {
+    pollStatus();
+  }
+})();
+</script>
 {% endblock %}

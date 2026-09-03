@@ -287,11 +287,40 @@ class StackedLSTMRegressor(nn.Module):
         batch_size, seq_len, _ = x.shape
 
         if seq_lengths is not None:
+            # --- FIX 2: validate seq_lengths before packing ---
+            if seq_lengths.dim() != 1:
+                raise ValueError(
+                    f"seq_lengths must be 1-D, got shape {tuple(seq_lengths.shape)}."
+                )
+            if seq_lengths.shape[0] != batch_size:
+                raise ValueError(
+                    f"seq_lengths batch size ({seq_lengths.shape[0]}) does not match "
+                    f"x.shape[0] ({batch_size})."
+                )
+            # Cast to CPU long (required by pack_padded_sequence)
+            seq_lengths_cpu = seq_lengths.cpu().to(torch.long)
+            if seq_lengths_cpu.min().item() < 1:
+                raise ValueError(
+                    f"All seq_lengths must be >= 1; got min = {seq_lengths_cpu.min().item()}."
+                )
+            if seq_lengths_cpu.max().item() > seq_len:
+                raise ValueError(
+                    f"seq_lengths max ({seq_lengths_cpu.max().item()}) exceeds "
+                    f"padded sequence length ({seq_len})."
+                )
+
             packed_input = nn.utils.rnn.pack_padded_sequence(
-                x, seq_lengths.cpu(), batch_first=True, enforce_sorted=False
+                x, seq_lengths_cpu, batch_first=True, enforce_sorted=False
             )
             packed_output, _ = self.lstm(packed_input)
-            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
+            # FIX 1: pass total_length=seq_len so lstm_out always matches
+            # the original padded length even when the longest actual sequence
+            # in the batch is shorter than seq_len.
+            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
+                packed_output,
+                batch_first=True,
+                total_length=seq_len,
+            )
         else:
             lstm_out, _ = self.lstm(x)
 
@@ -356,17 +385,48 @@ class LSTMTrainer:
         Pad a list of 2D embedding arrays (num_posts, 768) into a 3D batch tensor.
         Identical to the previous implementation.
         """
-        seq_lengths = [len(seq) for seq in sequence_list]
-        max_len = max(seq_lengths) if seq_lengths else 1
-        input_dim = sequence_list[0].shape[1] if (sequence_list and sequence_list[0].ndim > 1) else 768
-
-        padded_tensor = torch.zeros((len(sequence_list), max_len, input_dim), dtype=torch.float32)
+        # FIX 3 & 4: normalize and validate each sequence before computing lengths.
+        EXPECTED_EMBED_DIM = 768
+        normalized: List[np.ndarray] = []
         for i, seq in enumerate(sequence_list):
-            if seq.ndim == 1:
-                seq = seq.reshape(1, -1)
-            length = min(len(seq), max_len)
-            if length > 0:
-                padded_tensor[i, :length, :] = torch.tensor(seq[:length], dtype=torch.float32)
+            arr = np.asarray(seq, dtype=np.float32)
+            # Normalize 1-D embeddings: shape (768,) → (1, 768).
+            if arr.ndim == 1:
+                if arr.shape[0] != EXPECTED_EMBED_DIM:
+                    raise ValueError(
+                        f"Sequence {i}: 1-D array has {arr.shape[0]} elements; "
+                        f"expected {EXPECTED_EMBED_DIM} (one BERT embedding). "
+                        f"Refusing to interpret a feature dimension as a sequence length."
+                    )
+                arr = arr.reshape(1, EXPECTED_EMBED_DIM)
+            # After normalization every sequence must be 2-D.
+            if arr.ndim != 2:
+                raise ValueError(
+                    f"Sequence {i}: expected a 2-D array (num_posts, {EXPECTED_EMBED_DIM}) "
+                    f"after normalization, got shape {arr.shape}."
+                )
+            # Reject empty sequences.
+            if arr.shape[0] == 0:
+                raise ValueError(
+                    f"Sequence {i}: empty sequence (0 posts) is not allowed."
+                )
+            # Validate embedding dimension.
+            if arr.shape[1] != EXPECTED_EMBED_DIM:
+                raise ValueError(
+                    f"Sequence {i}: embedding dimension is {arr.shape[1]}; "
+                    f"expected {EXPECTED_EMBED_DIM}."
+                )
+            normalized.append(arr)
+
+        # Lengths are now derived from validated, normalized arrays.
+        seq_lengths = [arr.shape[0] for arr in normalized]
+        max_len = max(seq_lengths)
+        input_dim = EXPECTED_EMBED_DIM
+
+        padded_tensor = torch.zeros((len(normalized), max_len, input_dim), dtype=torch.float32)
+        for i, arr in enumerate(normalized):
+            length = arr.shape[0]  # already min-capped by construction
+            padded_tensor[i, :length, :] = torch.tensor(arr, dtype=torch.float32)
 
         return padded_tensor, torch.tensor(seq_lengths, dtype=torch.long)
 

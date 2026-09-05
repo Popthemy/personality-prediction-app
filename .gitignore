@@ -13,7 +13,7 @@ __pycache__/
 *.bin
 models/
 datasets/
-
+pandora_personality/*
 # Colab
 .ipynb_checkpoints/
 

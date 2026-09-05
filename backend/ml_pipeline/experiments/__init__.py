@@ -1,39 +1,33 @@
 """Django-free experiment engine for the ML pipeline.
 
-This package reproduces the E1-E4 experiment glue that normally lives in the
-Django-coupled ``pipeline_orchestrator`` (which reads/writes the ORM), but drives
-the *same* Django-free service classes directly on in-memory PANDORA data. It is
-what the Google Colab notebook imports and calls.
-
-Nothing here imports Django. See ``pandora_runner`` for the public API.
+This package exposes the PANDORA experiment runner without importing the heavy
+ML stack until one of the public objects is actually requested. That keeps
+``python -m backend.ml_pipeline.experiments.pandora_runner`` quiet and avoids
+surprising imports for tooling that only inspects the package.
 """
 
-from .pandora_runner import (
-    ExperimentConfig,
-    ExperimentRunner,
-    EXPERIMENTS,
-    OCEAN_TRAITS,
-    prepare_sample,
-    run_experiment,
-    run_all,
-    comparison_table,
-    model_comparison,
-    factor_effects,
-    hybrid_cell_evaluations,
-    summarize_findings,
-)
-
-__all__ = [
+_PANDORA_EXPORTS = {
     "ExperimentConfig",
     "ExperimentRunner",
     "EXPERIMENTS",
     "OCEAN_TRAITS",
+    "TRAIT_KEYS",
     "prepare_sample",
-    "run_experiment",
+    "load_prepared_cache",
+    "load_or_prepare_pandora",
+    "run_condition",
     "run_all",
     "comparison_table",
-    "model_comparison",
     "factor_effects",
-    "hybrid_cell_evaluations",
     "summarize_findings",
-]
+}
+
+__all__ = sorted(_PANDORA_EXPORTS)
+
+
+def __getattr__(name):
+    if name in _PANDORA_EXPORTS:
+        from . import pandora_runner
+
+        return getattr(pandora_runner, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

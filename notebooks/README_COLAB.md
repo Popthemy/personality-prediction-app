@@ -12,28 +12,29 @@ Django orchestrator (which is coupled to the ORM and is *not* used here).
 
 ## What it computes
 
-A full **2×2×2 factorial** — both models run in **every** cell, so the model comparison is fair:
+A full **2×2×2 factorial** across the supervisor-requested pipeline combinations:
 
 | factor | levels |
 |---|---|
 | comment selection | baseline-select · **Q-learning**-select |
 | augmentation | no-GAN · **GAN** (real adversarial GAN, train-fold only) |
-| model | **Lasso** (regressor) · **LSTM** (3-class sequence) |
+| final model | **Lasso** · **LSTM binary classifier** |
 
 → **8 conditions.** From them the notebook answers three questions with matched-pair analysis:
 
-1. **Which model is better — Lasso or LSTM?** → `model_comparison`
-2. **Does Q-learning comment selection help?** → `factor_effects['qlearning_effect']`
-3. **Does GAN augmentation help?** → `factor_effects['gan_effect']`
+1. **Does Q-learning comment selection help?** → `factor_effects['qlearning_effect']`
+2. **Does GAN augmentation help?** → `factor_effects['gan_effect']`
+3. **Which final model performs better, Lasso or LSTM?** → `factor_effects['model_comparison']`
 
-Every condition is scored on one **shared metric** — tertile Low/Med/High **accuracy + macro-F1** —
-so Lasso and LSTM are directly comparable. All metrics come from the project's own
-`metrics_engine`; `hybrid_cell_evaluations` additionally reports the canonical
-`metrics_engine.evaluate` per matched cell (Lasso regression MAE/R²/Pearson vs LSTM tertile
-accuracy/F1, plus a threshold-sweep baseline).
+Every condition is scored with the same binary Low/High metrics:
+**accuracy, precision, recall, F1, specificity, ROC-AUC, and PR-AUC**. Lasso emits five normalized
+continuous OCEAN scores; LSTM emits five probabilities, one P(High) for each OCEAN trait. The
+validation split chooses the best decision threshold per trait from `0.30, 0.40, 0.50, 0.60, 0.70`;
+the test split then applies those frozen validation-selected thresholds once.
 
 **Pipeline per proxy-user:** comments → (Q-learning *or* baseline) selection → BERT embedding →
-(optional GAN augmentation of the *train fold only*) → Lasso **or** LSTM → OCEAN prediction.
+(optional GAN augmentation of the *train fold only*) → Lasso or LSTM final model → Low/High OCEAN
+prediction.
 One PANDORA proxy-user (a unique `(O,C,E,A,N)` tuple) = one "volunteer".
 
 ---
@@ -62,8 +63,8 @@ Then **Runtime → Change runtime type → GPU**, and run top to bottom.
 7. **Load → clean → sample + configure** — groups comments per proxy-user, runs the project's
    cleaner, caches the cleaned result to Drive; builds `ExperimentConfig`.
 8. **Run the sweep** — `runner = ExperimentRunner(prepared, cfg); bundle = runner.run()`.
-9. **Claims + evidence** — findings sentences, `model_comparison`, `factor_effects`,
-   `hybrid_cell_evaluations`, and figures (colorblind-safe: Lasso = blue, LSTM = orange).
+9. **Claims + evidence** — findings sentences, `comparison`, `factor_effects`, prediction-level
+   evidence, metric audit, per-trait threshold sweeps, model comparison, and figures.
 10. **Artifacts on Drive** + reload demo.
 11. **Debugging & tips.**
 
@@ -79,19 +80,25 @@ one-line change in the config cell.
 MyDrive/pandora_personality/
 ├── data/                     # PANDORA parquet(s) from HuggingFace
 ├── cache/                    # BERT embedding cache (.npy by text hash)
-├── artifacts/                # metrics, tables, saved models  (= cfg.output_dir)
-│   ├── comparison.csv               # all 8 conditions × headline metrics
-│   ├── model_comparison.csv         # Lasso vs LSTM at each matched cell
-│   ├── qlearning_effect.csv         # Q-learning matched-pair deltas
-│   ├── gan_effect.csv               # GAN matched-pair deltas
-│   ├── findings.json                # ready-to-cite headline claims
-│   ├── hybrid_evaluation.json       # metrics_engine.evaluate per matched cell
-│   ├── run_summary.json             # config + sample + per-condition results
-│   ├── q_table.json                 # trained Q-learning policy
-│   └── <condition>/                 # e.g. lstm_qlearn_gan/
-│       ├── metrics.json             # full per-trait metrics
-│       ├── lasso_state.json         # (Lasso conditions)
-│       └── lstm_state.pt            # (LSTM conditions)
+├── artifacts/                # run archive parent (= cfg.output_dir)
+│   └── run_YYYYMMDD_HHMMSS/         # one timestamped folder per full run
+│       ├── comparison.csv           # all 8 conditions × headline metrics
+│       ├── presentation_metrics_long.csv # long-form metric table for charts/BI tools
+│       ├── threshold_sweeps_long.csv # all 5 thresholds × traits × conditions
+│       ├── prediction_evidence.csv  # per-user truth, score, threshold, predicted label, outcome
+│       ├── classification_audit.json # recomputes metrics from evidence; must PASS
+│       ├── artifact_manifest.json   # presentation order, threshold policy, graph policy
+│       ├── qlearning_effect.csv     # Q-learning matched-pair deltas
+│       ├── gan_effect.csv           # GAN matched-pair deltas
+│       ├── model_comparison.csv     # LSTM-vs-Lasso matched-pair deltas
+│       ├── findings.json            # ready-to-cite headline claims
+│       ├── run_summary.json         # config + sample + per-condition results
+│       ├── q_table.json             # trained Q-learning policy
+│       ├── plots/                   # presentation-ready PNG metric + threshold graphs
+│       └── <condition>/             # e.g. lstm_qlearn_gan/
+│           ├── metrics.json         # full per-trait metrics
+│           ├── lasso_state.json     # trained Lasso state for Lasso conditions
+│           └── lstm_state.pt        # trained LSTM state for LSTM conditions
 └── pandora_prepared.json     # cleaned + grouped users (cached)
 ```
 
@@ -116,7 +123,7 @@ or re-clean — just re-run top to bottom and the caches make it quick.
 **Reproducibility**
 - `seed` in `ExperimentConfig` drives the sample, the split, Q-learning exploration, and LSTM init
   (the runner calls `set_seed` internally). Same seed + same cache ⇒ same numbers.
-- One shared train/val split and one Q-learning policy are reused across all 8 conditions, so
+- One shared train/val/test split and one Q-learning policy are reused across all 8 conditions, so
   differences reflect the **factor under study**, not split luck.
 
 **Debugging**
@@ -129,7 +136,7 @@ or re-clean — just re-run top to bottom and the caches make it quick.
   enc = R.get_encoder()
   feats = R.build_features(sample, 'qlearning', cfg, enc, agent=R.train_qlearning_agent(sample, cfg))
   ```
-- Inspect one condition: `bundle['results']['lstm_qlearn_gan']['per_trait']['Openness']`.
+- Inspect one condition: `bundle['results']['lstm_qlearn_gan']['test']['per_trait']['O']`.
 
 **Session hygiene**
 - Prefer `git pull` (cell 2 does this automatically) over re-cloning.
@@ -138,11 +145,9 @@ or re-clean — just re-run top to bottom and the caches make it quick.
 
 ---
 
-## Note on the two GANs
+## Note on Lasso and LSTM
 
-The Colab runner binds the **real adversarial GAN** at
-`backend/ml_pipeline/services/augmentation/gan.py`. The Django production `PipelineOrchestrator`
-currently uses the simpler MVP augmenter at `backend/ml_pipeline/services/gan_augmenter.py`
-(Gaussian-noise, numpy-only). When the pipeline results are folded back into the Django app, that
-orchestrator should be switched to the same real GAN so production matches what these experiments
-measured.
+Lasso and LSTM are both final-model conditions in this experiment. Lasso is trained on pooled BERT
+embeddings and evaluated as a thresholded continuous scorer; LSTM is trained on selected-comment
+embedding sequences and evaluated as a binary classifier. Both use the same participant split and
+the same validation-selected threshold policy.

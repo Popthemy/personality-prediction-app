@@ -1,72 +1,51 @@
 """
-Stacked LSTM Neural Network Service for Personality Trait Regression.
+Binary LSTM classifier for Big Five personality traits.
 
-This module implements a stacked recurrent neural network architecture using PyTorch
-to model temporal user post timelines (sequences of pre-computed 768-dimensional
-BERT embeddings).
+This module is intentionally focused on the current PANDORA experiment path:
 
-Architecture (LSTM-only — BERT is upstream and not implemented here):
+    selected comment BERT embeddings -> stacked bidirectional LSTM
+                                      -> optional auxiliary features
+                                      -> five sigmoid logits
+                                      -> P(High) for O, C, E, A, N
 
-    Pre-computed BERT sequence (batch, seq_len, 768)
-                    |
-          Stacked Bidirectional LSTM
-                    |
-        Mean-pooled sequence representation
-                    |
-                 LayerNorm
-                    |
-                  Dropout
-                    |
-             Fully Connected Head
-                    |
-              5 continuous outputs
-                    |
-            [O, C, E, A, N] scores
-
-Notes:
-- Single regression head outputting 5 continuous OCEAN values directly.
-  High/Low thresholding is a downstream evaluation/decision step — it does
-  NOT occur inside this module.
-- Loss is SmoothL1 (Huber) over 5 continuous outputs, weighted per sample.
-- Handles sequence padding and dynamic sequence lengths via
-  pack_padded_sequence / pad_packed_sequence.
-- Validation model selection uses mean MAE across the 5 OCEAN traits
-  (lower is better).  Best-epoch weights are restored after training exactly
-  as in the previous implementation.
-- `predict()` returns (N, 5) continuous OCEAN predictions.
-  `predict_trait()` is retained as a backward-compatible wrapper.
-- `evaluate_trait()` delegates metric computation to the common metric
-  engine so that MAE/RMSE/R²/Pearson are consistent with the Lasso pathway.
+Continuous OCEAN labels are used only to derive supervised Low/High targets
+with a fixed ground-truth cutoff. Decision thresholds are selected later by the
+metrics engine's validation sweep. There is no Medium class in this module.
 """
+
+from __future__ import annotations
 
 import logging
 import random
-import numpy as np
-from typing import Dict, List, Tuple, Optional, Any
-from collections import Counter
+from copy import deepcopy
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from scipy.stats import pearsonr
-from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader, TensorDataset
 
-logger = logging.getLogger('ml_pipeline')
+from backend.ml_pipeline.services import metrics_engine as me
 
-# Device configuration (GPU if available, CPU fallback)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+logger = logging.getLogger("ml_pipeline")
 
-# OCEAN trait ordering used throughout this module
-OCEAN_TRAITS = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']
-NUM_TRAITS = len(OCEAN_TRAITS)  # 5
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+TRAIT_KEYS: Tuple[str, ...] = ("O", "C", "E", "A", "N")
+OCEAN_TRAITS: List[str] = [
+    "Openness",
+    "Conscientiousness",
+    "Extraversion",
+    "Agreeableness",
+    "Neuroticism",
+]
+BINARY_LABELS = {0: "Low", 1: "High"}
+NUM_TRAITS = 5
 
 
 def set_seed(seed: int = 42) -> None:
-    """
-    Fix all relevant RNGs so training runs are reproducible.
-    """
+    """Fix RNGs used by Python, NumPy, and PyTorch."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -74,228 +53,73 @@ def set_seed(seed: int = 42) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def split_participants(
-    participant_ids: List[Any],
-    test_size: float = 0.2,
-    val_size: float = 0.1,
-    random_state: int = 42
-) -> Tuple[List[Any], List[Any], List[Any]]:
-    """
-    Split PARTICIPANT IDs (not individual posts) into train/val/test sets.
-
-    Splits at the participant level so posts from one participant never
-    appear in more than one split.  Stratification is not applicable for
-    continuous regression targets, so splits are random.
-
-    Deliberately makes NO assumption about how much data is available —
-    this project's dataset size will keep changing, so this function must
-    not hard-fail just because an exact 80/10/10 split isn't achievable.
-    Behavior:
-
-    - test_size / val_size are treated as target proportions, not
-      guarantees. Actual counts are derived from whatever `participant_ids`
-      it's given, clamped so train/test never go to zero when avoidable.
-    - With very few participants (<=2), a full train/val/test split isn't
-      meaningful; this returns the best degenerate split possible instead
-      of erroring.
-
-    Returns:
-        (train_ids, val_ids, test_ids)
-    """
-    ids = list(participant_ids)
-    n = len(ids)
-
-    if n == 0:
-        raise ValueError("split_participants received zero participants.")
-
-    if n == 1:
-        logger.warning("Only 1 participant available — using it for training only; val/test are empty.")
-        return ids, [], []
-
-    if n == 2:
-        logger.warning("Only 2 participants available — 1 for training, 1 for test; val is empty.")
-        return [ids[0]], [], [ids[1]]
-
-    def _split(ids_in, size, rs):
-        try:
-            return train_test_split(ids_in, test_size=size, random_state=rs)
-        except ValueError as e:
-            logger.warning(f"Split failed ({e}); returning unsplit.")
-            return ids_in, []
-
-    # --- carve off the test set -------------------------------------------
-    test_count = max(1, round(n * test_size))
-    test_count = min(test_count, n - 2)  # always leave >=2 for train (+val)
-
-    train_val_ids, test_ids = _split(ids, test_count / n, random_state)
-
-    # --- carve val out of what remains ------------------------------------
-    remaining_n = len(train_val_ids)
-    if remaining_n < 2 or val_size <= 0:
-        if remaining_n < 2:
-            logger.warning("Too few participants remain after the test split to also carve out a val set.")
-        return train_val_ids, [], test_ids
-
-    remaining_fraction = max(1e-8, 1.0 - test_size)
-    val_count = max(1, round(remaining_n * (val_size / remaining_fraction)))
-    val_count = min(val_count, remaining_n - 1)
-
-    if val_count <= 0:
-        return train_val_ids, [], test_ids
-
-    train_ids, val_ids = _split(train_val_ids, val_count / remaining_n, random_state)
-
-    logger.info(
-        f"split_participants: n={n} -> train={len(train_ids)}, "
-        f"val={len(val_ids)}, test={len(test_ids)}"
-    )
-    return train_ids, val_ids, test_ids
-
-
-def compute_regression_metrics(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    trait_names: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """
-    Compute regression metrics compatible with the common metric engine.
-
-    Accepts either:
-      - (N,) arrays for a single trait, or
-      - (N, 5) arrays for all OCEAN traits simultaneously.
-
-    Returns MAE, RMSE, R², and Pearson r for each trait plus overall means.
-
-    Args:
-        y_true: Ground-truth continuous OCEAN scores.
-        y_pred: Predicted continuous OCEAN scores (same shape as y_true).
-        trait_names: Optional list of trait names (defaults to OCEAN_TRAITS).
-
-    Returns:
-        Dict with per-trait and mean metrics.
-    """
-    y_true = np.asarray(y_true)
-    y_pred = np.asarray(y_pred)
-
-    if y_true.ndim == 1:
-        y_true = y_true[:, np.newaxis]
-        y_pred = y_pred[:, np.newaxis]
-
-    n_traits = y_true.shape[1]
-    names = trait_names if trait_names is not None else OCEAN_TRAITS[:n_traits]
-
-    per_trait: Dict[str, Dict[str, float]] = {}
-    for i, name in enumerate(names):
-        yt = y_true[:, i]
-        yp = y_pred[:, i]
-        mae = float(mean_absolute_error(yt, yp))
-        rmse = float(np.sqrt(mean_squared_error(yt, yp)))
-        r2 = float(r2_score(yt, yp))
-        try:
-            pearson_r, pearson_p = pearsonr(yt, yp)
-        except Exception:
-            pearson_r, pearson_p = float('nan'), float('nan')
-        per_trait[name] = {
-            'mae': mae,
-            'rmse': rmse,
-            'r2': r2,
-            'pearson_r': float(pearson_r),
-            'pearson_p': float(pearson_p),
-        }
-
-    mean_mae = float(np.mean([v['mae'] for v in per_trait.values()]))
-    mean_rmse = float(np.mean([v['rmse'] for v in per_trait.values()]))
-    mean_r2 = float(np.mean([v['r2'] for v in per_trait.values()]))
-    mean_pearson_r = float(np.nanmean([v['pearson_r'] for v in per_trait.values()]))
-
-    return {
-        'per_trait': per_trait,
-        'mean_mae': mean_mae,
-        'mean_rmse': mean_rmse,
-        'mean_r2': mean_r2,
-        'mean_pearson_r': mean_pearson_r,
-    }
-
-
-class StackedLSTMRegressor(nn.Module):
-    """
-    Stacked Bidirectional LSTM model for sequence-based OCEAN trait regression.
-
-    Processes sequences of pre-computed BERT embeddings
-    (Batch, Max_Seq_Len, 768) and outputs 5 continuous OCEAN scores.
-    The final layer has no activation — raw real-valued outputs are produced
-    so SmoothL1 loss can be applied directly during training.
-    """
+class StackedLSTMClassifier(nn.Module):
+    """Stacked bidirectional LSTM that emits one High/Low logit per trait."""
 
     def __init__(
         self,
         input_dim: int = 768,
         hidden_dim: int = 128,
         num_layers: int = 2,
-        num_outputs: int = NUM_TRAITS,
         dropout: float = 0.2,
-        bidirectional: bool = True
-    ):
-        super(StackedLSTMRegressor, self).__init__()
-
+        bidirectional: bool = True,
+        num_traits: int = NUM_TRAITS,
+        auxiliary_dim: int = 0,
+    ) -> None:
+        super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
-        self.num_outputs = num_outputs
+        self.dropout = dropout
         self.bidirectional = bidirectional
+        self.num_traits = num_traits
+        self.auxiliary_dim = auxiliary_dim
         self.num_directions = 2 if bidirectional else 1
 
-        # Stacked Bidirectional LSTM — identical to the previous architecture
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
             num_layers=num_layers,
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
-            bidirectional=bidirectional
+            bidirectional=bidirectional,
         )
 
         effective_hidden = hidden_dim * self.num_directions
         self.layer_norm = nn.LayerNorm(effective_hidden)
         self.dropout_layer = nn.Dropout(dropout)
-
-        # Regression head — 5 continuous OCEAN outputs (no final activation).
-        # Structure mirrors the former classifier head; only the output
-        # dimension changes from 3 → 5 and the softmax is removed.
-        self.regression_head = nn.Sequential(
-            nn.Linear(effective_hidden, 64),
+        self.classifier_head = nn.Sequential(
+            nn.Linear(effective_hidden + auxiliary_dim, 64),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(64, num_outputs)
+            nn.Linear(64, num_traits),
         )
 
     def forward(
         self,
         x: torch.Tensor,
-        seq_lengths: Optional[torch.Tensor] = None
+        seq_lengths: Optional[torch.Tensor] = None,
+        auxiliary_features: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """
-        Forward pass.
-
-        Args:
-            x: Input embeddings of shape (batch_size, seq_len, 768)
-            seq_lengths: Optional lengths of each sequence in the batch.
-
-        Returns:
-            outputs: Tensor of shape (batch_size, 5) — continuous OCEAN scores.
-        """
-        batch_size, seq_len, _ = x.shape
+        """Return raw logits with shape ``(batch, 5)``."""
+        _batch_size, seq_len, _ = x.shape
 
         if seq_lengths is not None:
             packed_input = nn.utils.rnn.pack_padded_sequence(
-                x, seq_lengths.cpu(), batch_first=True, enforce_sorted=False
+                x,
+                seq_lengths.cpu(),
+                batch_first=True,
+                enforce_sorted=False,
             )
             packed_output, _ = self.lstm(packed_input)
-            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
+            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
+                packed_output,
+                batch_first=True,
+                total_length=seq_len,
+            )
         else:
             lstm_out, _ = self.lstm(x)
 
-        # Mean pooling across valid (non-padded) positions
         if seq_lengths is not None:
             mask = torch.arange(seq_len, device=x.device)[None, :] < seq_lengths[:, None]
             mask = mask.unsqueeze(-1).float()
@@ -305,74 +129,139 @@ class StackedLSTMRegressor(nn.Module):
 
         pooled = self.layer_norm(pooled)
         pooled = self.dropout_layer(pooled)
-
-        outputs = self.regression_head(pooled)  # (batch_size, 5)
-        return outputs
+        if self.auxiliary_dim:
+            if auxiliary_features is None:
+                auxiliary_features = torch.zeros(
+                    (pooled.shape[0], self.auxiliary_dim),
+                    dtype=pooled.dtype,
+                    device=pooled.device,
+                )
+            pooled = torch.cat([pooled, auxiliary_features.to(pooled.device).float()], dim=1)
+        return self.classifier_head(pooled)
 
 
 class LSTMTrainer:
-    """
-    Trainer and Inference helper for StackedLSTMRegressor.
-
-    Trains a single LSTM model jointly on all five OCEAN traits, mapping
-    BERT-embedding sequences to (N, 5) continuous OCEAN predictions.
-
-    The model formerly trained one classifier per trait; it now trains one
-    shared regression model over all traits simultaneously.  Per-trait
-    wrapper methods (`train_trait_model`, `predict_trait`, `evaluate_trait`)
-    are retained for backward compatibility.
-    """
-
-    # Canonical trait index mapping for the 5-output head
-    TRAIT_INDEX = {name: i for i, name in enumerate(OCEAN_TRAITS)}
+    """Train and run the five-output binary LSTM classifier."""
 
     def __init__(
         self,
         hidden_dim: int = 128,
         num_layers: int = 2,
         dropout: float = 0.2,
-        learning_rate: float = 1e-3
-    ):
+        learning_rate: float = 1e-3,
+        positive_weight: Optional[Sequence[float]] = None,
+        auxiliary_dim: int = 0,
+    ) -> None:
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.dropout = dropout
         self.learning_rate = learning_rate
-        # Stores the trained model; keyed by 'model' (shared) or a trait
-        # name for backward-compat callers that used per-trait storage.
-        self.model: Optional[StackedLSTMRegressor] = None
-        # Legacy per-trait dict kept so downstream code that checks
-        # `trainer.models[trait]` continues to work.
-        self.models: Dict[str, StackedLSTMRegressor] = {}
+        self.positive_weight = positive_weight
+        self.auxiliary_dim = auxiliary_dim
+        self.model: Optional[StackedLSTMClassifier] = None
+        self.input_dim: Optional[int] = None
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+    @staticmethod
+    def binarize_targets(
+        targets: np.ndarray,
+        ground_truth_cutoff: float = me.DEFAULT_GROUND_TRUTH_CUTOFF,
+    ) -> np.ndarray:
+        """Convert continuous ``(N, 5)`` OCEAN scores to Low/High labels."""
+        y = np.asarray(targets, dtype=np.float32)
+        if y.ndim != 2 or y.shape[1] != NUM_TRAITS:
+            raise ValueError(f"targets must have shape (N, 5); got {y.shape}")
+        return (y >= float(ground_truth_cutoff)).astype(np.float32)
 
-    def _prepare_sequences(
+    def _prepare_sequences(self, sequence_list: List[np.ndarray]) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Pad a list of ``(num_comments, embedding_dim)`` arrays into one batch."""
+        if not sequence_list:
+            raise ValueError("sequence_list cannot be empty.")
+
+        normalised: List[np.ndarray] = []
+        for seq in sequence_list:
+            arr = np.asarray(seq, dtype=np.float32)
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+            if arr.ndim != 2:
+                raise ValueError(f"Each sequence must be 2-D; got {arr.shape}")
+            if arr.shape[0] == 0:
+                arr = np.zeros((1, arr.shape[1]), dtype=np.float32)
+            normalised.append(arr)
+
+        input_dim = normalised[0].shape[1]
+        for arr in normalised:
+            if arr.shape[1] != input_dim:
+                raise ValueError("All sequences must share the same embedding dimension.")
+
+        seq_lengths = [max(1, len(seq)) for seq in normalised]
+        max_len = max(seq_lengths)
+        padded = torch.zeros((len(normalised), max_len, input_dim), dtype=torch.float32)
+        for i, seq in enumerate(normalised):
+            padded[i, : len(seq), :] = torch.from_numpy(seq)
+
+        return padded, torch.tensor(seq_lengths, dtype=torch.long)
+
+    def _prepare_auxiliary(
         self,
-        sequence_list: List[np.ndarray]
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Pad a list of 2D embedding arrays (num_posts, 768) into a 3D batch tensor.
-        Identical to the previous implementation.
-        """
-        seq_lengths = [len(seq) for seq in sequence_list]
-        max_len = max(seq_lengths) if seq_lengths else 1
-        input_dim = sequence_list[0].shape[1] if (sequence_list and sequence_list[0].ndim > 1) else 768
+        auxiliary_features: Optional[np.ndarray],
+        n_samples: int,
+    ) -> torch.Tensor:
+        """Validate or create the optional auxiliary feature matrix."""
+        if self.auxiliary_dim == 0:
+            return torch.zeros((n_samples, 0), dtype=torch.float32)
+        if auxiliary_features is None:
+            raise ValueError(f"Expected auxiliary_features with shape (N, {self.auxiliary_dim}).")
+        aux = np.asarray(auxiliary_features, dtype=np.float32)
+        if aux.shape != (n_samples, self.auxiliary_dim):
+            raise ValueError(
+                f"auxiliary_features must have shape {(n_samples, self.auxiliary_dim)}; got {aux.shape}"
+            )
+        return torch.from_numpy(aux)
 
-        padded_tensor = torch.zeros((len(sequence_list), max_len, input_dim), dtype=torch.float32)
-        for i, seq in enumerate(sequence_list):
-            if seq.ndim == 1:
-                seq = seq.reshape(1, -1)
-            length = min(len(seq), max_len)
-            if length > 0:
-                padded_tensor[i, :length, :] = torch.tensor(seq[:length], dtype=torch.float32)
+    @staticmethod
+    def _class_distribution(labels: np.ndarray) -> Dict[str, Any]:
+        """Per-trait Low/High counts for diagnostics."""
+        out: Dict[str, Any] = {}
+        labels = labels.astype(int)
+        for i, trait in enumerate(OCEAN_TRAITS):
+            col = labels[:, i]
+            low = int(np.sum(col == 0))
+            high = int(np.sum(col == 1))
+            total = int(len(col))
+            out[trait] = {
+                "Low": {"count": low, "proportion": float(low / total) if total else 0.0},
+                "High": {"count": high, "proportion": float(high / total) if total else 0.0},
+            }
+        return out
 
-        return padded_tensor, torch.tensor(seq_lengths, dtype=torch.long)
+    def _validation_score(
+        self,
+        val_sequences: List[np.ndarray],
+        val_targets_binary: np.ndarray,
+        criterion: nn.Module,
+        val_auxiliary_features: Optional[np.ndarray] = None,
+    ) -> Tuple[float, float, Dict[str, Any]]:
+        """Return validation loss, mean best F1, and threshold diagnostics."""
+        assert self.model is not None
+        probs = self.predict_proba(val_sequences, auxiliary_features=val_auxiliary_features)
+        X_val, len_val = self._prepare_sequences(val_sequences)
+        aux_val = self._prepare_auxiliary(val_auxiliary_features, len(val_sequences))
+        with torch.no_grad():
+            logits = self.model(X_val.to(device), len_val.to(device), aux_val.to(device))
+            target = torch.from_numpy(val_targets_binary).to(device)
+            val_loss = float(criterion(logits, target).mean().detach().cpu())
 
-    # ------------------------------------------------------------------
-    # Primary training API
-    # ------------------------------------------------------------------
+        per_trait: Dict[str, Any] = {}
+        f1s: List[float] = []
+        for i, trait in enumerate(TRAIT_KEYS):
+            sweep = me.sweep_thresholds_on_scores(
+                val_targets_binary[:, i],
+                probs[:, i],
+                candidate_thresholds=list(me.CANDIDATE_THRESHOLDS),
+            )
+            per_trait[trait] = sweep
+            f1s.append(float(sweep["f1"]))
+        return val_loss, float(np.mean(f1s)) if f1s else 0.0, per_trait
 
     def train(
         self,
@@ -383,361 +272,171 @@ class LSTMTrainer:
         epochs: int = 35,
         batch_size: int = 4,
         sample_weights: Optional[np.ndarray] = None,
+        auxiliary_features: Optional[np.ndarray] = None,
+        val_auxiliary_features: Optional[np.ndarray] = None,
         seed: int = 42,
+        ground_truth_cutoff: float = me.DEFAULT_GROUND_TRUTH_CUTOFF,
     ) -> Dict[str, Any]:
-        """
-        Train the LSTM regressor directly on continuous OCEAN targets.
-
-        Args:
-            sequences:      List of (num_posts, 768) arrays — one per participant.
-            targets:        (N, 5) continuous OCEAN scores [O, C, E, A, N].
-            val_sequences:  Held-out validation sequences (strongly recommended).
-            val_targets:    (N_val, 5) continuous OCEAN scores for validation.
-            epochs:         Number of training epochs.
-            batch_size:     Mini-batch size.
-            sample_weights: Optional (N,) per-sample loss weights.
-            seed:           Random seed for reproducibility.
-
-        Returns:
-            Dict containing loss/MAE history and best-epoch metrics.
-        """
-        if len(sequences) == 0:
+        """Train one five-output binary classifier on participant sequences."""
+        if not sequences:
             raise ValueError("Cannot train LSTM with an empty sequence list.")
 
-        targets = np.asarray(targets)
-        if targets.ndim != 2 or targets.shape[1] != NUM_TRAITS:
-            raise ValueError(
-                f"targets must be (N, {NUM_TRAITS}); got shape {targets.shape}."
-            )
-        if targets.shape[0] != len(sequences):
-            raise ValueError(
-                f"sequences and targets length mismatch: {len(sequences)} vs {targets.shape[0]}."
-            )
-
         set_seed(seed)
+        X, seq_lengths = self._prepare_sequences(sequences)
+        self.input_dim = int(X.shape[2])
 
-        X_padded, seq_lengths = self._prepare_sequences(sequences)
-        y_tensor = torch.tensor(targets, dtype=torch.float32)
+        y_binary = self.binarize_targets(targets, ground_truth_cutoff)
+        y_tensor = torch.from_numpy(y_binary)
+        aux_tensor = self._prepare_auxiliary(auxiliary_features, len(sequences))
 
-        has_val = val_sequences is not None and len(val_sequences) > 0
-        X_val_padded = val_seq_lengths = y_val_tensor = None
+        if sample_weights is None:
+            weights = np.ones(len(sequences), dtype=np.float32)
+        else:
+            weights = np.asarray(sample_weights, dtype=np.float32)
+            if weights.shape[0] != len(sequences):
+                raise ValueError("sample_weights must have one value per training sequence.")
+        weights_tensor = torch.from_numpy(weights)
+
+        has_val = val_sequences is not None and val_targets is not None and len(val_sequences) > 0
+        y_val_binary: Optional[np.ndarray] = None
         if has_val:
-            val_targets = np.asarray(val_targets)
-            if val_targets.ndim != 2 or val_targets.shape[1] != NUM_TRAITS:
-                raise ValueError(
-                    f"val_targets must be (N_val, {NUM_TRAITS}); got shape {val_targets.shape}."
-                )
-            X_val_padded, val_seq_lengths = self._prepare_sequences(val_sequences)
-            y_val_tensor = torch.tensor(val_targets, dtype=torch.float32)
+            y_val_binary = self.binarize_targets(np.asarray(val_targets), ground_truth_cutoff)
+            self._prepare_auxiliary(val_auxiliary_features, len(val_sequences or []))
 
-        weights = (
-            torch.tensor(sample_weights, dtype=torch.float32)
-            if sample_weights is not None
-            else torch.ones(len(sequences), dtype=torch.float32)
-        )
-
-        dataset = TensorDataset(X_padded, seq_lengths, y_tensor, weights)
-        dataloader = DataLoader(dataset, batch_size=min(batch_size, len(sequences)), shuffle=True)
-
-        model = StackedLSTMRegressor(
-            input_dim=X_padded.shape[2],
+        self.model = StackedLSTMClassifier(
+            input_dim=self.input_dim,
             hidden_dim=self.hidden_dim,
             num_layers=self.num_layers,
-            num_outputs=NUM_TRAITS,
-            dropout=self.dropout
+            dropout=self.dropout,
+            auxiliary_dim=self.auxiliary_dim,
         ).to(device)
 
-        optimizer = optim.Adam(model.parameters(), lr=self.learning_rate, weight_decay=1e-4)
-        # SmoothL1 (Huber) loss — robust to outliers, preferred for
-        # personality score regression (spec §Loss).
-        criterion = nn.SmoothL1Loss(reduction='none')
+        pos_weight = None
+        if self.positive_weight is not None:
+            pos_weight = torch.tensor(self.positive_weight, dtype=torch.float32, device=device)
+
+        criterion = nn.BCEWithLogitsLoss(reduction="none", pos_weight=pos_weight)
+        optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=1e-4)
+        dataset = TensorDataset(X, seq_lengths, aux_tensor, y_tensor, weights_tensor)
+        loader = DataLoader(dataset, batch_size=min(batch_size, len(dataset)), shuffle=True)
 
         train_loss_history: List[float] = []
         val_loss_history: List[float] = []
-        val_mae_history: List[float] = []
-        best_val_mae = float('inf')
-        best_state_dict = None
+        val_mean_f1_history: List[float] = []
+        best_state = None
+        best_val_f1 = -1.0
+        best_val_loss = float("inf")
+        best_thresholds: Dict[str, Any] = {}
 
-        for epoch in range(epochs):
-            model.train()
+        for _epoch in range(epochs):
+            self.model.train()
             epoch_loss = 0.0
-
-            for batch_x, batch_len, batch_y, batch_w in dataloader:
+            for batch_x, batch_len, batch_aux, batch_y, batch_w in loader:
                 batch_x = batch_x.to(device)
                 batch_len = batch_len.to(device)
+                batch_aux = batch_aux.to(device)
                 batch_y = batch_y.to(device)
                 batch_w = batch_w.to(device)
 
-                optimizer.zero_grad()
-                preds = model(batch_x, batch_len)  # (B, 5)
-
-                # SmoothL1 returns (B, 5); mean over traits then weight by sample
-                per_sample_loss = criterion(preds, batch_y).mean(dim=1)  # (B,)
-                loss = (per_sample_loss * batch_w).mean()
-
+                optimizer.zero_grad(set_to_none=True)
+                logits = self.model(batch_x, batch_len, batch_aux)
+                loss_matrix = criterion(logits, batch_y)
+                loss = (loss_matrix.mean(dim=1) * batch_w).mean()
                 loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
+                epoch_loss += float(loss.detach().cpu())
 
-                epoch_loss += loss.item()
+            train_loss_history.append(epoch_loss / max(1, len(loader)))
 
-            train_loss_history.append(epoch_loss / max(1, len(dataloader)))
-
-            # --- Validation monitoring ------------------------------------
-            if has_val:
-                model.eval()
-                with torch.no_grad():
-                    X_v = X_val_padded.to(device)
-                    len_v = val_seq_lengths.to(device)
-                    y_v = y_val_tensor.to(device)
-                    val_preds = model(X_v, len_v)
-                    val_loss = criterion(val_preds, y_v).mean().item()
-
-                val_mae = float(
-                    torch.abs(val_preds - y_v).mean().item()
+            if has_val and y_val_binary is not None:
+                self.model.eval()
+                val_loss, val_f1, thresholds = self._validation_score(
+                    val_sequences or [],
+                    y_val_binary,
+                    criterion,
+                    val_auxiliary_features,
                 )
                 val_loss_history.append(val_loss)
-                val_mae_history.append(val_mae)
+                val_mean_f1_history.append(val_f1)
+                if val_f1 > best_val_f1 or (val_f1 == best_val_f1 and val_loss < best_val_loss):
+                    best_val_f1 = val_f1
+                    best_val_loss = val_loss
+                    best_thresholds = thresholds
+                    best_state = deepcopy(self.model.state_dict())
 
-                # Model selection: lower validation MAE is better
-                if val_mae < best_val_mae:
-                    best_val_mae = val_mae
-                    best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
-
-        # Restore best-on-validation weights (unchanged logic from prev impl)
-        if has_val and best_state_dict is not None:
-            model.load_state_dict(best_state_dict)
-            logger.info(f"LSTM: restored epoch with best validation MAE = {best_val_mae:.4f}")
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
+            logger.info("LSTM restored epoch with best validation mean F1 = %.4f", best_val_f1)
         else:
-            logger.warning(
-                "LSTM: no validation set provided — model selection defaulted to the "
-                "final training epoch. Provide val_sequences/val_targets for a real check."
-            )
+            logger.warning("No validation split supplied; LSTM kept final training epoch.")
 
-        self.model = model
-        # Keep legacy per-trait dict in sync so old callers don't break
-        for trait in OCEAN_TRAITS:
-            self.models[trait] = model
-
-        # Diagnostic metrics on the TRAINING set (explicitly NOT final performance)
-        model.eval()
-        with torch.no_grad():
-            X_eval = X_padded.to(device)
-            seq_eval = seq_lengths.to(device)
-            train_preds_np = model(X_eval, seq_eval).cpu().numpy()
-
-        train_diagnostics = compute_regression_metrics(targets, train_preds_np)
-
-        logger.info(f"LSTM training completed. Final train loss: {train_loss_history[-1]:.4f}")
-
+        logger.info("LSTM training completed. Final train loss: %.4f", train_loss_history[-1])
         return {
-            'epochs': epochs,
-            'train_loss_history': train_loss_history,
-            'val_loss_history': val_loss_history if has_val else None,
-            'val_mae_history': val_mae_history if has_val else None,
-            'best_val_mae': best_val_mae if has_val else None,
-            'train_diagnostics': train_diagnostics,  # NOT final performance
-            'sample_count': len(sequences),
+            "epochs": int(epochs),
+            "ground_truth_cutoff": float(ground_truth_cutoff),
+            "train_loss_history": train_loss_history,
+            "val_loss_history": val_loss_history if has_val else None,
+            "val_mean_f1_history": val_mean_f1_history if has_val else None,
+            "best_val_mean_f1": float(best_val_f1) if has_val else None,
+            "best_validation_thresholds": best_thresholds,
+            "train_class_distribution": self._class_distribution(y_binary),
+            "val_class_distribution": self._class_distribution(y_val_binary) if y_val_binary is not None else None,
+            "sample_count": int(len(sequences)),
         }
 
-    # ------------------------------------------------------------------
-    # Backward-compatible per-trait training wrapper
-    # ------------------------------------------------------------------
-
-    def train_trait_model(
-        self,
-        trait: str,
-        sequences: List[np.ndarray],
-        targets: np.ndarray,
-        val_sequences: Optional[List[np.ndarray]] = None,
-        val_targets: Optional[np.ndarray] = None,
-        epochs: int = 35,
-        batch_size: int = 4,
-        sample_weights: Optional[np.ndarray] = None,
-        seed: int = 42,
-        # Deprecated args kept for call-site compatibility; no longer used
-        low_threshold: float = 2.5,
-        high_threshold: float = 3.5,
-        precomputed_labels: Optional[np.ndarray] = None,
-        val_precomputed_labels: Optional[np.ndarray] = None,
-    ) -> Dict[str, Any]:
-        """
-        Backward-compatible wrapper around `train()`.
-
-        Previously trained one classifier per trait; now delegates to the
-        joint 5-output regression trainer.  `targets` may be passed as
-        (N,) for a single trait — in that case all other trait columns are
-        zeroed (the model still trains jointly, but only the supplied
-        trait's ground-truth is meaningful for that call).  Prefer passing
-        full (N, 5) targets to `train()` directly.
-
-        `low_threshold`, `high_threshold`, `precomputed_labels`, and
-        `val_precomputed_labels` are accepted but ignored; they were
-        classification-only concerns.
-        """
-        if low_threshold != 2.5 or high_threshold != 3.5:
-            logger.warning(
-                "train_trait_model: low_threshold/high_threshold are ignored — "
-                "the model is now a continuous regressor and does not bin scores."
-            )
-        if precomputed_labels is not None or val_precomputed_labels is not None:
-            logger.warning(
-                "train_trait_model: precomputed_labels/val_precomputed_labels are ignored — "
-                "the model trains directly on continuous targets."
-            )
-
-        targets_arr = np.asarray(targets)
-        if targets_arr.ndim == 1:
-            # Wrap single-trait targets into (N, 5); zero-fill other traits
-            full_targets = np.zeros((len(targets_arr), NUM_TRAITS), dtype=np.float32)
-            idx = self.TRAIT_INDEX.get(trait, 0)
-            full_targets[:, idx] = targets_arr
-            logger.warning(
-                f"train_trait_model('{trait}'): received (N,) targets — wrapping into "
-                f"(N, 5) with zeros for other traits. Pass full (N, 5) targets for best results."
-            )
-        else:
-            full_targets = targets_arr
-
-        full_val_targets = None
-        if val_targets is not None:
-            val_arr = np.asarray(val_targets)
-            if val_arr.ndim == 1:
-                full_val_targets = np.zeros((len(val_arr), NUM_TRAITS), dtype=np.float32)
-                idx = self.TRAIT_INDEX.get(trait, 0)
-                full_val_targets[:, idx] = val_arr
-            else:
-                full_val_targets = val_arr
-
-        result = self.train(
-            sequences=sequences,
-            targets=full_targets,
-            val_sequences=val_sequences,
-            val_targets=full_val_targets,
-            epochs=epochs,
-            batch_size=batch_size,
-            sample_weights=sample_weights,
-            seed=seed,
-        )
-        result['trait'] = trait
-        return result
-
-    # ------------------------------------------------------------------
-    # Prediction API
-    # ------------------------------------------------------------------
-
-    def predict(
+    def predict_proba(
         self,
         sequences: List[np.ndarray],
+        auxiliary_features: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        """
-        Predict continuous OCEAN scores for N participants.
-
-        Requires a trained model — there is no fallback.
-
-        Args:
-            sequences: List of (num_posts, 768) arrays, one per participant.
-
-        Returns:
-            predictions: np.ndarray of shape (N, 5) — continuous [O,C,E,A,N] scores.
-        """
+        """Return ``(N, 5)`` probabilities, one P(High) per trait."""
         if self.model is None:
-            raise RuntimeError(
-                "No trained LSTM model found. "
-                "Call train() or train_trait_model() before requesting predictions."
-            )
-
+            raise RuntimeError("No trained LSTM model found. Call train() before prediction.")
         self.model.eval()
-        X_padded, seq_lengths = self._prepare_sequences(sequences)
-
+        X, seq_lengths = self._prepare_sequences(sequences)
+        aux = self._prepare_auxiliary(auxiliary_features, len(sequences))
         with torch.no_grad():
-            X_eval = X_padded.to(device)
-            seq_eval = seq_lengths.to(device)
-            preds = self.model(X_eval, seq_eval)  # (N, 5)
+            logits = self.model(X.to(device), seq_lengths.to(device), aux.to(device))
+            probs = torch.sigmoid(logits).detach().cpu().numpy()
+        return probs.astype(np.float32)
 
-        return preds.cpu().numpy()
+    def predict(self, sequences: List[np.ndarray], auxiliary_features: Optional[np.ndarray] = None) -> np.ndarray:
+        """Alias for predict_proba, kept for the experiment runner."""
+        return self.predict_proba(sequences, auxiliary_features=auxiliary_features)
 
-    def predict_trait(
+    def predict_labels(
         self,
-        trait: str,
         sequences: List[np.ndarray],
+        thresholds: Optional[Sequence[float]] = None,
+        auxiliary_features: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        """
-        Backward-compatible prediction for a single named trait.
-
-        Returns (N, 5) continuous predictions — the full OCEAN vector — so
-        callers receive the same contract as `predict()`.  Single-trait
-        slicing (predictions[:, trait_index]) is left to the caller if needed.
-
-        Previously returned (class_probabilities, predicted_classes, predicted_labels);
-        that tuple return value was classification-only and is no longer produced.
-        Callers that destructured the old 3-tuple will need to be updated.
-
-        Args:
-            trait:     OCEAN trait name (used only for logging/error messages).
-            sequences: List of (num_posts, 768) arrays, one per participant.
-
-        Returns:
-            predictions: np.ndarray of shape (N, 5) — continuous OCEAN scores.
-        """
-        if self.model is None and trait not in self.models:
-            raise RuntimeError(
-                f"No trained LSTM model found for trait '{trait}'. "
-                f"Call train() before requesting predictions."
-            )
-        return self.predict(sequences)
-
-    # ------------------------------------------------------------------
-    # Evaluation API
-    # ------------------------------------------------------------------
-
-    def evaluate_trait(
-        self,
-        trait: str,
-        sequences: List[np.ndarray],
-        targets: np.ndarray,
-        # Deprecated args kept for call-site compatibility; no longer used
-        low_threshold: float = 2.5,
-        high_threshold: float = 3.5,
-        precomputed_labels: Optional[np.ndarray] = None,
-    ) -> Dict[str, Any]:
-        """
-        Evaluate the trained model on a held-out (validation or test) split.
-
-        Metrics are computed via `compute_regression_metrics` — the same
-        engine used by the Lasso pathway — so results are directly comparable.
-
-        Never call this on participants the model was trained on.
-
-        Args:
-            trait:             OCEAN trait name (used for context in returned dict).
-            sequences:         Held-out participant sequences.
-            targets:           Ground-truth OCEAN scores; may be (N,) for a single
-                               trait or (N, 5) for all traits.
-            low_threshold:     Ignored (retained for call-site compatibility).
-            high_threshold:    Ignored (retained for call-site compatibility).
-            precomputed_labels: Ignored (retained for call-site compatibility).
-
-        Returns:
-            Dict with per-trait MAE, RMSE, R², Pearson r, plus overall means.
-        """
-        if precomputed_labels is not None:
-            logger.warning(
-                "evaluate_trait: precomputed_labels is ignored — evaluation "
-                "uses continuous targets only."
-            )
-
-        targets_arr = np.asarray(targets)
-        preds = self.predict(sequences)  # (N, 5)
-
-        if targets_arr.ndim == 1:
-            # Single-trait ground-truth: evaluate only the relevant column
-            idx = self.TRAIT_INDEX.get(trait, 0)
-            metrics = compute_regression_metrics(
-                targets_arr, preds[:, idx], trait_names=[trait]
-            )
+        """Return binary Low/High labels using one threshold or five thresholds."""
+        probs = self.predict_proba(sequences, auxiliary_features=auxiliary_features)
+        if thresholds is None:
+            thresh = np.full(NUM_TRAITS, 0.5, dtype=np.float32)
         else:
-            metrics = compute_regression_metrics(targets_arr, preds)
+            thresh = np.asarray(thresholds, dtype=np.float32)
+            if thresh.size == 1:
+                thresh = np.full(NUM_TRAITS, float(thresh.item()), dtype=np.float32)
+            if thresh.shape != (NUM_TRAITS,):
+                raise ValueError(f"thresholds must be scalar or length 5; got {thresh.shape}")
+        return (probs >= thresh.reshape(1, -1)).astype(int)
 
-        metrics['trait'] = trait
-        return metrics
+    def save_state(self) -> Dict[str, Any]:
+        """Return metadata plus state dict for artifact persistence."""
+        if self.model is None:
+            raise RuntimeError("Cannot save an untrained LSTM model.")
+        return {
+            "state_dict": self.model.state_dict(),
+            "config": {
+                "input_dim": self.input_dim,
+                "hidden_dim": self.hidden_dim,
+                "num_layers": self.num_layers,
+                "dropout": self.dropout,
+                "auxiliary_dim": self.auxiliary_dim,
+                "num_traits": NUM_TRAITS,
+                "trait_keys": list(TRAIT_KEYS),
+                "trait_names": list(OCEAN_TRAITS),
+            },
+        }

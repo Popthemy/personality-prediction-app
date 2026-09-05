@@ -44,6 +44,10 @@ class LassoTrainer:
         self.feature_scale = embeddings.std(axis=0) + 1e-8
         return (embeddings - self.feature_mean) / self.feature_scale
 
+    def fit_transform_features(self, embeddings: np.ndarray) -> np.ndarray:
+        """Fit feature standardization on training embeddings and return scaled features."""
+        return self._fit_feature_scaler(np.asarray(embeddings, dtype=float))
+
     def transform_features(self, embeddings: np.ndarray) -> np.ndarray:
         """Transform embeddings using the fitted training scaler."""
         if self.feature_mean is None or self.feature_scale is None:

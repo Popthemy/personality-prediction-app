@@ -1,50 +1,26 @@
 """
-Stacked LSTM Neural Network Service for Personality Trait Regression.
+Binary LSTM classifier for Big Five personality traits.
 
-This module implements a stacked recurrent neural network architecture using PyTorch
-to model temporal user post timelines (sequences of pre-computed 768-dimensional
-BERT embeddings).
+This module is intentionally focused on the current PANDORA experiment path:
 
-Architecture (LSTM-only — BERT is upstream and not implemented here):
+    selected comment BERT embeddings -> stacked bidirectional LSTM
+                                      -> optional auxiliary features
+                                      -> five sigmoid logits
+                                      -> P(High) for O, C, E, A, N
 
-    Pre-computed BERT sequence (batch, seq_len, 768)
-                    |
-          Stacked Bidirectional LSTM
-                    |
-        Mean-pooled sequence representation
-                    |
-                 LayerNorm
-                    |
-                  Dropout
-                    |
-             Fully Connected Head
-                    |
-              5 continuous outputs
-                    |
-            [O, C, E, A, N] scores
-
-Notes:
-- Single regression head outputting 5 continuous OCEAN values directly.
-  High/Low thresholding is a downstream evaluation/decision step — it does
-  NOT occur inside this module.
-- Loss is SmoothL1 (Huber) over 5 continuous outputs, weighted per sample.
-- Handles sequence padding and dynamic sequence lengths via
-  pack_padded_sequence / pad_packed_sequence.
-- Validation model selection uses mean MAE across the 5 OCEAN traits
-  (lower is better).  Best-epoch weights are restored after training exactly
-  as in the previous implementation.
-- `predict()` returns (N, 5) continuous OCEAN predictions.
-  `predict_trait()` is retained as a backward-compatible wrapper.
-- `evaluate_trait()` delegates metric computation to the common metric
-  engine so that MAE/RMSE/R²/Pearson are consistent with the Lasso pathway.
+Continuous OCEAN labels are used only to derive supervised Low/High targets
+with a fixed ground-truth cutoff. Decision thresholds are selected later by the
+metrics engine's validation sweep. There is no Medium class in this module.
 """
+
+from __future__ import annotations
 
 import logging
 import random
-import numpy as np
-from typing import Dict, List, Tuple, Optional, Any
-from collections import Counter
+from copy import deepcopy
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -53,10 +29,9 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from scipy.stats import pearsonr
 from sklearn.model_selection import train_test_split
 
-logger = logging.getLogger('ml_pipeline')
+logger = logging.getLogger("ml_pipeline")
 
-# Device configuration (GPU if available, CPU fallback)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # OCEAN trait ordering used throughout this module
 OCEAN_TRAITS = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism']
@@ -243,6 +218,8 @@ class StackedLSTMRegressor(nn.Module):
         self.num_layers = num_layers
         self.num_outputs = num_outputs
         self.bidirectional = bidirectional
+        self.num_traits = num_traits
+        self.auxiliary_dim = auxiliary_dim
         self.num_directions = 2 if bidirectional else 1
 
         # Stacked Bidirectional LSTM — identical to the previous architecture
@@ -252,7 +229,7 @@ class StackedLSTMRegressor(nn.Module):
             num_layers=num_layers,
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
-            bidirectional=bidirectional
+            bidirectional=bidirectional,
         )
 
         effective_hidden = hidden_dim * self.num_directions
@@ -272,7 +249,8 @@ class StackedLSTMRegressor(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        seq_lengths: Optional[torch.Tensor] = None
+        seq_lengths: Optional[torch.Tensor] = None,
+        auxiliary_features: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass.
@@ -287,13 +265,17 @@ class StackedLSTMRegressor(nn.Module):
         batch_size, seq_len, _ = x.shape
 
         if seq_lengths is not None:
+            # Pack padded sequence for dynamic batching
             packed_input = nn.utils.rnn.pack_padded_sequence(
-                x, seq_lengths.cpu(), batch_first=True, enforce_sorted=False
+                x,
+                seq_lengths.cpu(),
+                batch_first=True,
+                enforce_sorted=False,
             )
             packed_output, _ = self.lstm(packed_input)
             lstm_out, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
         else:
-            lstm_out, _ = self.lstm(x)
+            lstm_out, (hn, cn) = self.lstm(x)
 
         # Mean pooling across valid (non-padded) positions
         if seq_lengths is not None:
@@ -331,8 +313,10 @@ class LSTMTrainer:
         hidden_dim: int = 128,
         num_layers: int = 2,
         dropout: float = 0.2,
-        learning_rate: float = 1e-3
-    ):
+        learning_rate: float = 1e-3,
+        positive_weight: Optional[Sequence[float]] = None,
+        auxiliary_dim: int = 0,
+    ) -> None:
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.dropout = dropout
@@ -376,10 +360,15 @@ class LSTMTrainer:
 
     def train(
         self,
+        trait: str,
         sequences: List[np.ndarray],
         targets: np.ndarray,
         val_sequences: Optional[List[np.ndarray]] = None,
         val_targets: Optional[np.ndarray] = None,
+        low_threshold: float = 2.5,
+        high_threshold: float = 3.5,
+        precomputed_labels: Optional[np.ndarray] = None,
+        val_precomputed_labels: Optional[np.ndarray] = None,
         epochs: int = 35,
         batch_size: int = 4,
         sample_weights: Optional[np.ndarray] = None,
@@ -458,13 +447,14 @@ class LSTMTrainer:
         best_val_mae = float('inf')
         best_state_dict = None
 
-        for epoch in range(epochs):
-            model.train()
+        for _epoch in range(epochs):
+            self.model.train()
             epoch_loss = 0.0
 
             for batch_x, batch_len, batch_y, batch_w in dataloader:
                 batch_x = batch_x.to(device)
                 batch_len = batch_len.to(device)
+                batch_aux = batch_aux.to(device)
                 batch_y = batch_y.to(device)
                 batch_w = batch_w.to(device)
 
@@ -476,12 +466,11 @@ class LSTMTrainer:
                 loss = (per_sample_loss * batch_w).mean()
 
                 loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
+                epoch_loss += float(loss.detach().cpu())
 
-                epoch_loss += loss.item()
-
-            train_loss_history.append(epoch_loss / max(1, len(dataloader)))
+            train_loss_history.append(epoch_loss / max(1, len(loader)))
 
             # --- Validation monitoring ------------------------------------
             if has_val:

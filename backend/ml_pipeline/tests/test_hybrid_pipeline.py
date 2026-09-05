@@ -1,97 +1,149 @@
-"""
-Unit & Integration Tests for Hybrid LSTM-Lasso Architecture & 8-Metric Framework.
-"""
-import numpy as np
-import pytest
-from django.test import TestCase
-import torch
+"""Tests for the PANDORA binary LSTM classification path."""
 
-from backend.ml_pipeline.services.lstm_classifier import StackedLSTMClassifier, LSTMTrainer
+import numpy as np
+import torch
+from django.test import TestCase
+
+from backend.ml_pipeline.services.lstm_classifier import (
+    NUM_TRAITS,
+    LSTMTrainer,
+    StackedLSTMClassifier,
+)
 from backend.ml_pipeline.services.metrics_engine import (
-    evaluate_hybrid_metrics,
-    calculate_binary_classification_metrics,
-    calculate_model_confidence,
-    CANDIDATE_THRESHOLDS
+    CANDIDATE_THRESHOLDS,
+    compute_classification_metrics_at_threshold,
+    evaluate_lstm_binary_classifier,
+    evaluate_lstm_binary_with_thresholds,
 )
 
 
-class TestMetricsEngine(TestCase):
-    """Test 8-Metric Framework & 5-Threshold Sweep calculation."""
-
+class TestBinaryMetricsEngine(TestCase):
     def test_candidate_thresholds(self):
         self.assertEqual(CANDIDATE_THRESHOLDS, [0.30, 0.40, 0.50, 0.60, 0.70])
 
     def test_binary_metrics_perfect(self):
         y_true = np.array([1, 1, 0, 0])
         y_prob = np.array([0.9, 0.8, 0.1, 0.2])
-        res = calculate_binary_classification_metrics(y_true, y_prob, threshold=0.50)
-        self.assertEqual(res['accuracy'], 1.0)
-        self.assertEqual(res['precision'], 1.0)
-        self.assertEqual(res['f1_score'], 1.0)
-        self.assertEqual(res['specificity'], 1.0)
+        res = compute_classification_metrics_at_threshold(y_true, y_prob, threshold=0.50)
+        self.assertEqual(res["accuracy"], 1.0)
+        self.assertEqual(res["precision"], 1.0)
+        self.assertEqual(res["f1_score"], 1.0)
+        self.assertEqual(res["specificity"], 1.0)
 
-    def test_evaluate_hybrid_metrics(self):
-        y_true = np.array([4.2, 2.1, 4.8, 1.9, 3.5])
-        y_pred_lasso = np.array([4.0, 2.3, 4.5, 2.1, 3.4])
-        y_pred_lstm = np.array([4.1, 2.0, 4.6, 2.0, 3.6])
-        probs_lstm = np.array([0.85, 0.15, 0.90, 0.10, 0.55])
+    def test_validation_thresholds_are_applied_to_test(self):
+        y_val = np.array([
+            [0.8, 0.2, 0.9, 0.1, 0.7],
+            [0.7, 0.3, 0.8, 0.2, 0.6],
+            [0.2, 0.8, 0.1, 0.9, 0.3],
+            [0.3, 0.7, 0.2, 0.8, 0.4],
+        ])
+        p_val = np.array([
+            [0.9, 0.2, 0.8, 0.1, 0.7],
+            [0.7, 0.4, 0.9, 0.3, 0.6],
+            [0.1, 0.8, 0.2, 0.9, 0.2],
+            [0.3, 0.7, 0.1, 0.8, 0.4],
+        ])
 
-        metrics = evaluate_hybrid_metrics(
-            y_true=y_true,
-            y_pred_lasso=y_pred_lasso,
-            y_pred_lstm_continuous=y_pred_lstm,
-            probabilities_lstm=probs_lstm,
-            ground_truth_cutoff=4.0,
-            candidate_thresholds=CANDIDATE_THRESHOLDS
+        selected = evaluate_lstm_binary_classifier(y_val, p_val)
+        self.assertEqual(selected["split"], "validation")
+        self.assertEqual(len(selected["per_trait"]["O"]["threshold_sweep"]), 5)
+
+        scored = evaluate_lstm_binary_with_thresholds(y_val, p_val, selected)
+        self.assertEqual(scored["split"], "test")
+        self.assertIn("accuracy", scored["aggregate"])
+        self.assertIn("f1", scored["aggregate"])
+        self.assertIn("specificity", scored["aggregate"])
+        self.assertEqual(
+            scored["per_trait"]["O"]["selected_threshold"],
+            selected["per_trait"]["O"]["best_threshold"],
         )
-
-        # Check all 8 metrics exist
-        self.assertIn('lasso_r2', metrics)
-        self.assertIn('lasso_correlation', metrics)
-        self.assertIn('lasso_mae', metrics)
-        self.assertIn('lstm_accuracy', metrics)
-        self.assertIn('lstm_precision', metrics)
-        self.assertIn('lstm_f1_score', metrics)
-        self.assertIn('lstm_specificity', metrics)
-        self.assertIn('lstm_model_confidence', metrics)
-
-        # Check 5-threshold sweep output
-        self.assertIn('threshold_sweep', metrics)
-        self.assertEqual(len(metrics['threshold_sweep']), 5)
-        for t in ['0.3', '0.4', '0.5', '0.6', '0.7']:
-            self.assertIn(t, metrics['threshold_sweep'])
 
 
 class TestStackedLSTMClassifier(TestCase):
-    """Test PyTorch Stacked LSTM Neural Network Architecture."""
+    def test_model_forward_pass_outputs_five_logits(self):
+        model = StackedLSTMClassifier(input_dim=16, hidden_dim=8, num_layers=1, dropout=0.0)
+        dummy_input = torch.randn(4, 3, 16)
+        logits = model(dummy_input)
+        self.assertEqual(logits.shape, (4, NUM_TRAITS))
 
-    def test_model_forward_pass(self):
-        model = StackedLSTMClassifier(input_dim=768, hidden_dim=64, num_layers=2)
-        batch_size = 4
-        seq_len = 10
-        dummy_input = torch.randn(batch_size, seq_len, 768)
-        probs, reg_out = model(dummy_input)
-
-        self.assertEqual(probs.shape, (batch_size, 1))
-        self.assertEqual(reg_out.shape, (batch_size, 1))
-        self.assertTrue(torch.all(probs >= 0.0) and torch.all(probs <= 1.0))
-        self.assertTrue(torch.all(reg_out >= 1.0) and torch.all(reg_out <= 5.0))
-
-    def test_lstm_trainer_training(self):
-        trainer = LSTMTrainer(hidden_dim=32, num_layers=1, dropout=0.0, learning_rate=1e-3)
-        # Create synthetic sequence data
-        seqs = [np.random.randn(5, 768) for _ in range(6)]
-        targets = np.array([4.5, 2.0, 4.2, 1.8, 3.9, 2.5])
-
-        trainer.train_trait_model(
-            trait="Openness",
-            sequences=seqs,
-            targets=targets,
-            threshold=4.0,
-            epochs=2,
-            batch_size=2
+    def test_model_forward_pass_accepts_lasso_auxiliary_features(self):
+        model = StackedLSTMClassifier(
+            input_dim=16,
+            hidden_dim=8,
+            num_layers=1,
+            dropout=0.0,
+            auxiliary_dim=NUM_TRAITS,
         )
+        dummy_input = torch.randn(4, 3, 16)
+        lasso_hints = torch.rand(4, NUM_TRAITS)
+        logits = model(dummy_input, auxiliary_features=lasso_hints)
+        self.assertEqual(logits.shape, (4, NUM_TRAITS))
 
-        probs, preds = trainer.predict_trait("Openness", seqs[:2])
-        self.assertEqual(len(probs), 2)
-        self.assertEqual(len(preds), 2)
+    def test_lstm_trainer_training_and_probabilities(self):
+        trainer = LSTMTrainer(hidden_dim=8, num_layers=1, dropout=0.0, learning_rate=1e-3)
+        seqs = [np.random.randn(3, 16).astype(np.float32) for _ in range(8)]
+        targets = np.array([
+            [0.8, 0.2, 0.7, 0.3, 0.9],
+            [0.7, 0.3, 0.8, 0.2, 0.6],
+            [0.2, 0.8, 0.1, 0.9, 0.4],
+            [0.3, 0.7, 0.2, 0.8, 0.1],
+            [0.9, 0.1, 0.6, 0.4, 0.8],
+            [0.1, 0.9, 0.4, 0.6, 0.2],
+            [0.6, 0.4, 0.9, 0.1, 0.7],
+            [0.4, 0.6, 0.3, 0.7, 0.3],
+        ], dtype=np.float32)
+
+        history = trainer.train(
+            sequences=seqs[:6],
+            targets=targets[:6],
+            val_sequences=seqs[6:],
+            val_targets=targets[6:],
+            epochs=1,
+            batch_size=2,
+            seed=123,
+        )
+        probs = trainer.predict_proba(seqs[6:])
+        labels = trainer.predict_labels(seqs[6:], thresholds=[0.5] * NUM_TRAITS)
+
+        self.assertEqual(probs.shape, (2, NUM_TRAITS))
+        self.assertEqual(labels.shape, (2, NUM_TRAITS))
+        self.assertTrue(np.all(probs >= 0.0))
+        self.assertTrue(np.all(probs <= 1.0))
+        self.assertEqual(history["sample_count"], 6)
+
+    def test_lstm_trainer_training_with_lasso_auxiliary_features(self):
+        trainer = LSTMTrainer(
+            hidden_dim=8,
+            num_layers=1,
+            dropout=0.0,
+            learning_rate=1e-3,
+            auxiliary_dim=NUM_TRAITS,
+        )
+        seqs = [np.random.randn(3, 16).astype(np.float32) for _ in range(8)]
+        targets = np.array([
+            [0.8, 0.2, 0.7, 0.3, 0.9],
+            [0.7, 0.3, 0.8, 0.2, 0.6],
+            [0.2, 0.8, 0.1, 0.9, 0.4],
+            [0.3, 0.7, 0.2, 0.8, 0.1],
+            [0.9, 0.1, 0.6, 0.4, 0.8],
+            [0.1, 0.9, 0.4, 0.6, 0.2],
+            [0.6, 0.4, 0.9, 0.1, 0.7],
+            [0.4, 0.6, 0.3, 0.7, 0.3],
+        ], dtype=np.float32)
+        aux = np.clip(targets + np.random.normal(0.0, 0.05, targets.shape), 0.0, 1.0).astype(np.float32)
+
+        history = trainer.train(
+            sequences=seqs[:6],
+            targets=targets[:6],
+            val_sequences=seqs[6:],
+            val_targets=targets[6:],
+            auxiliary_features=aux[:6],
+            val_auxiliary_features=aux[6:],
+            epochs=1,
+            batch_size=2,
+            seed=123,
+        )
+        probs = trainer.predict_proba(seqs[6:], auxiliary_features=aux[6:])
+
+        self.assertEqual(probs.shape, (2, NUM_TRAITS))
+        self.assertEqual(history["sample_count"], 6)

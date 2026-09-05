@@ -60,10 +60,12 @@ from pathlib import Path
 from typing import Any, Iterable, Literal
 
 from backend.ml_pipeline.cleaning.cleaner import CleanedContent, DataCleaner, RawXData
+from backend.ml_pipeline.services.data.quality import exclusion, safe_rate
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT_PATH = Path("backend/ml_pipeline/data/prepared/pandora_prepared.json")
+_LAST_INGESTION_QUALITY: dict[str, Any] | None = None
 
 # The five Big Five trait columns, in the order the dataset uses them.
 _TRAIT_COLS = ("O", "C", "E", "A", "N")
@@ -135,7 +137,7 @@ def _row_key(row: dict[str, Any]) -> str:
 def _group_rows(
     rows: Iterable[dict[str, Any]],
     group_by: GroupBy,
-) -> dict[str, tuple[UserTraits | None, list[str]]]:
+) -> tuple[dict[str, tuple[UserTraits | None, list[str]]], dict[str, Any]]:
     """
     Group raw comment text by proxy user id.
 
@@ -149,8 +151,11 @@ def _group_rows(
     """
     grouped: dict[str, tuple[UserTraits | None, list[str]]] = {}
     skipped = 0
+    invalid_traits = 0
+    raw_rows = 0
 
     for i, row in enumerate(rows):
+        raw_rows += 1
         text = row.get("text")
         if not text or not str(text).strip():
             skipped += 1
@@ -168,6 +173,7 @@ def _group_rows(
                 ptype=int(row["ptype"]),
             )
         except (KeyError, TypeError, ValueError):
+            invalid_traits += 1
             logger.debug("Row %d missing/invalid trait columns; storing without traits.", i)
 
         if key not in grouped:
@@ -178,13 +184,24 @@ def _group_rows(
         logger.warning("Skipped %d PANDORA rows with empty/missing text.", skipped)
 
     n_singletons = sum(1 for _, texts in grouped.values() if len(texts) == 1)
+    comments_grouped = sum(len(t) for _, t in grouped.values())
     logger.info(
         "Grouped %d rows into %d proxy users (%d are singleton groups).",
-        skipped + sum(len(t) for _, t in grouped.values()),
+        skipped + comments_grouped,
         len(grouped),
         n_singletons,
     )
-    return grouped
+    row_stats = {
+        "raw_rows": raw_rows,
+        "empty_or_missing_text": skipped,
+        "missing_or_invalid_traits": invalid_traits,
+        "rows_retained_for_grouping": raw_rows - skipped,
+        "users_after_grouping": len(grouped),
+        "comments_after_grouping": comments_grouped,
+        "singleton_users": n_singletons,
+        "group_by": group_by,
+    }
+    return grouped, row_stats
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +211,7 @@ def _group_rows(
 def _clean_all(
     grouped: dict[str, tuple[UserTraits | None, list[str]]],
     cleaner: DataCleaner,
-) -> list[PreparedUserComments]:
+) -> tuple[list[PreparedUserComments], dict[str, Any]]:
     """
     Flatten every user's comments into a single ordered payload, run it
     through the existing DataCleaner exactly once (so dedup / length
@@ -220,19 +237,25 @@ def _clean_all(
     cleaned_items = cleaner.clean(raw)
 
     grouped_prepared: dict[str, list[CleanedContent]] = defaultdict(list)
+    accepted_tweets = 0
+    unmapped = 0
     for item in cleaned_items:
         if item.content_type != "tweet":
             continue  # skip the (absent) profile item; we only fed tweets
+        accepted_tweets += 1
         suffix = item.content_id.rsplit("_p", 1)
         if len(suffix) != 2 or not suffix[1].isdigit():
+            unmapped += 1
             logger.debug("Could not map cleaned item %s back to a user; dropping.", item.content_id)
             continue
         idx = int(suffix[1])
         user_id = idx_to_user.get(idx)
         if user_id is not None:
             grouped_prepared[user_id].append(item)
+        else:
+            unmapped += 1
 
-    return [
+    prepared = [
         PreparedUserComments(
             user_id=user_id,
             traits=grouped[user_id][0],
@@ -241,6 +264,20 @@ def _clean_all(
         for user_id, items in grouped_prepared.items()
         if items  # drop users left with zero usable comments after cleaning
     ]
+    comments_retained = sum(len(u.comments) for u in prepared)
+    account = cleaner.last_account or {}
+    clean_stats = {
+        "comments_before_cleaning": len(flat_posts),
+        "users_before_cleaning": len(grouped),
+        "cleaner": account,
+        "accepted_tweets": accepted_tweets,
+        "excluded_unmapped": unmapped,
+        "comments_retained": comments_retained,
+        "users_after_cleaning": len(prepared),
+        "users_excluded_no_usable_comments": len(grouped) - len(prepared),
+        "min_text_length": cleaner.min_text_length,
+    }
+    return prepared, clean_stats
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +291,120 @@ def _save_prepared(prepared: list[PreparedUserComments], output_path: str | Path
     with path.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
     logger.info("Saved prepared PANDORA data to %s", path)
+
+
+def quality_sidecar_path(output_path: str | Path) -> Path:
+    path = Path(output_path)
+    return path.with_name(f"{path.stem}_quality.json")
+
+
+def get_last_ingestion_quality() -> dict[str, Any] | None:
+    """Quality measured by the most recent load_pandora_comments() call, if any."""
+    return _LAST_INGESTION_QUALITY
+
+
+def load_ingestion_quality(output_path: str | Path) -> dict[str, Any] | None:
+    path = quality_sidecar_path(output_path)
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    return data if isinstance(data, dict) else None
+
+
+def _build_ingestion_quality(
+    row_stats: dict[str, Any],
+    clean_stats: dict[str, Any],
+    *,
+    source: str,
+    min_text_length: int,
+) -> dict[str, Any]:
+    raw_rows = int(row_stats["raw_rows"])
+    empty = int(row_stats["empty_or_missing_text"])
+    retained_rows = int(row_stats["rows_retained_for_grouping"])
+    before = int(clean_stats["comments_before_cleaning"])
+    account = clean_stats.get("cleaner") or {}
+    too_short = int(account.get("excluded_too_short", 0))
+    duplicate = int(account.get("excluded_duplicate", 0))
+    invalid = int(account.get("excluded_empty_or_invalid_post", 0))
+    unmapped = int(clean_stats["excluded_unmapped"])
+    retained = int(clean_stats["comments_retained"])
+    users_before = int(clean_stats["users_before_cleaning"])
+    users_after = int(clean_stats["users_after_cleaning"])
+
+    exclusion_reasons = {
+        "empty_or_missing_text": exclusion(
+            empty,
+            "Row text was missing or whitespace-only; dropped before grouping.",
+            stage="ingestion",
+        ),
+        "missing_or_invalid_traits": exclusion(
+            int(row_stats["missing_or_invalid_traits"]),
+            "O/C/E/A/N or ptype missing/invalid. Row was kept for grouping; "
+            "user is stored without traits and later excluded from the experiment sample.",
+            stage="ingestion",
+        ),
+        "too_short": exclusion(
+            too_short,
+            f"cleaned_text length < {min_text_length} after DataCleaner normalization.",
+            stage="cleaning",
+        ),
+        "duplicate_cleaned_text": exclusion(
+            duplicate,
+            "Identical cleaned_text already accepted in this DataCleaner.clean() pass.",
+            stage="cleaning",
+        ),
+        "invalid_content": exclusion(
+            invalid,
+            "Post payload was empty; DataCleaner._clean_post returned None.",
+            stage="cleaning",
+        ),
+        "unmapped_after_clean": exclusion(
+            unmapped,
+            "Cleaned tweet could not be mapped back to its proxy user.",
+            stage="cleaning",
+        ),
+        "users_no_usable_comments": exclusion(
+            int(clean_stats["users_excluded_no_usable_comments"]),
+            "Proxy user had zero comments left after cleaning.",
+            stage="cleaning",
+        ),
+    }
+
+    return {
+        "available": True,
+        "source": source,
+        "raw_rows": raw_rows,
+        "rows_removed": empty,
+        "rows_retained_for_grouping": retained_rows,
+        "row_retention": safe_rate(
+            retained_rows, raw_rows, denominator_name="raw_rows",
+        ),
+        "empty_or_missing_text": exclusion_reasons["empty_or_missing_text"],
+        "missing_or_invalid_traits": exclusion_reasons["missing_or_invalid_traits"],
+        "users_before_cleaning": users_before,
+        "users_after_cleaning": users_after,
+        "comments_before_cleaning": before,
+        "comments_after_cleaning": retained,
+        "comments_retained": retained,
+        "comment_retention": safe_rate(
+            retained, before, denominator_name="comments_before_cleaning",
+        ),
+        "excluded_too_short": exclusion_reasons["too_short"],
+        "excluded_duplicate": exclusion_reasons["duplicate_cleaned_text"],
+        "excluded_invalid_content": exclusion_reasons["invalid_content"],
+        "excluded_unmapped": exclusion_reasons["unmapped_after_clean"],
+        "users_excluded_no_usable_comments": exclusion_reasons["users_no_usable_comments"],
+        "exclusion_reasons": exclusion_reasons,
+        "min_text_length": min_text_length,
+        "group_by": row_stats.get("group_by"),
+        "notes": [
+            "Empty-text rows are counted only as empty_or_missing_text, not also as invalid traits.",
+            "missing_or_invalid_traits rows are not removed at ingestion; they remain grouped.",
+            "Cleaning exclusions are exclusive: invalid content, then too-short, then duplicate.",
+            "unmapped_after_clean is applied after the cleaner accepted the tweet.",
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -297,12 +448,27 @@ def load_pandora_comments(
         comments and Big Five / ptype traits attached.
     """
     rows = _load_raw_rows(pandora_file)
-    grouped = _group_rows(rows, group_by)
+    grouped, row_stats = _group_rows(rows, group_by)
 
     cleaner = DataCleaner(min_text_length=min_text_length)
-    prepared = _clean_all(grouped, cleaner)
+    prepared, clean_stats = _clean_all(grouped, cleaner)
+
+    quality = _build_ingestion_quality(
+        row_stats,
+        clean_stats,
+        source=str(pandora_file),
+        min_text_length=min_text_length,
+    )
+
+    global _LAST_INGESTION_QUALITY
+    _LAST_INGESTION_QUALITY = quality
 
     _save_prepared(prepared, output_path)
+    quality_path = quality_sidecar_path(output_path)
+    quality_path.parent.mkdir(parents=True, exist_ok=True)
+    with quality_path.open("w", encoding="utf-8") as fh:
+        json.dump(quality, fh, ensure_ascii=False, indent=2)
+    logger.info("Saved PANDORA ingestion quality to %s", quality_path)
 
     logger.info(
         "PANDORA ingestion complete: %d users, %d total cleaned comments.",

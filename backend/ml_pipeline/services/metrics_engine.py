@@ -1,6 +1,7 @@
 """
 Metrics engine for Big Five personality classification.
 
+<<<<<<< HEAD
 The current PANDORA experiment path treats LSTM as the final classifier. The
 LSTM emits five probabilities, one P(High) for each OCEAN trait, and this
 module selects/applies binary Low/High decision thresholds.
@@ -13,6 +14,24 @@ Primary PANDORA evaluation:
 
 There is no Medium class in the active PANDORA path. Older regression and
 hybrid helpers remain below only for leftover callers outside the new runner.
+=======
+Plug-and-play evaluation service. The PANDORA runner and PipelineOrchestrator
+call `evaluate()` after Lasso and LSTM produce continuous predictions on the
+same held-out participant-level test users. This module has no knowledge of
+training, data loading, splitting, experiment identity, GAN, Q-learning, or
+BERT.
+
+Primary evaluation (both models are continuous 5-output OCEAN regression)
+-------------------------------------------------------------------------
+- Per-trait MAE, MSE, RMSE, R^2, Pearson r on normalized [0, 1] scores
+- Binary High/Low threshold sweep on continuous scores (no Medium class)
+- ROC and Precision-Recall from continuous scores (not binarized labels)
+- Trait-specific O/C/E/A/N plus aggregate means
+
+There is no final Low/Medium/High LSTM classification stage. 3-class helpers
+below are retained only for leftover legacy callers; `evaluate()` does not
+use them.
+>>>>>>> 03204756263ea3f3e10d1b190530c815f4c2c272
 """
 
 import logging
@@ -373,11 +392,18 @@ def sweep_thresholds_on_scores(
     decision boundary. The runner must supply a train/validation-selected
     cutoff via `derive_binary_ground_truth` / `evaluate(ground_truth_cutoff=...)`.
 
+<<<<<<< HEAD
     Default candidates are the supervisor-facing five-threshold sweep:
     0.30, 0.40, 0.50, 0.60, 0.70.
     """
     if candidate_thresholds is None:
         candidate_thresholds = list(CANDIDATE_THRESHOLDS)
+=======
+    Default candidates are 0.00, 0.01, ..., 1.00 (normalized OCEAN scale).
+    """
+    if candidate_thresholds is None:
+        candidate_thresholds = list(DEFAULT_NORMALIZED_THRESHOLDS)
+>>>>>>> 03204756263ea3f3e10d1b190530c815f4c2c272
 
     results = []
     best = None
@@ -399,6 +425,7 @@ def sweep_thresholds_on_scores(
     }
 
 
+<<<<<<< HEAD
 def _aggregate_metric(per_trait: Dict[str, Dict[str, Any]], key: str) -> Optional[float]:
     vals = [v.get(key) for v in per_trait.values() if v.get(key) is not None]
     return round(float(np.mean(vals)), 4) if vals else None
@@ -559,6 +586,8 @@ calculate_binary_classification_metrics = compute_classification_metrics_at_thre
 calculate_model_confidence = compute_model_confidence
 
 
+=======
+>>>>>>> 03204756263ea3f3e10d1b190530c815f4c2c272
 def compute_roc_curve_metrics(y_true_binary: np.ndarray, scores: np.ndarray) -> Dict[str, Any]:
     """ROC curve points and ROC-AUC from continuous scores (not High/Low labels)."""
     y_true_binary = np.asarray(y_true_binary).astype(int)
@@ -799,4 +828,8 @@ def evaluate(
                 'aggregate': _mean_keys(per_trait_pr_lstm, ['average_precision']),
             },
         },
+<<<<<<< HEAD
     }
+=======
+    }
+>>>>>>> 03204756263ea3f3e10d1b190530c815f4c2c272

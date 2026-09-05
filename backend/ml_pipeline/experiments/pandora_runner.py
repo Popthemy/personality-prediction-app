@@ -71,7 +71,7 @@ from backend.ml_pipeline.services.lstm_classifier import (
     TRAIT_KEYS,
     set_seed,
 )
-from backend.ml_pipeline.services.qlearning_agent import QLearningAgent, run_training_loop
+from backend.ml_pipeline.services import metrics_engine as me
 
 logger = logging.getLogger("ml_pipeline")
 
@@ -91,6 +91,13 @@ THRESHOLD_PLOT_METRICS: Tuple[str, ...] = (
     "specificity",
     "precision",
     "recall",
+)
+
+_CELLS: Tuple[Tuple[str, bool], ...] = (
+    ("baseline", False),
+    ("qlearning", False),
+    ("baseline", True),
+    ("qlearning", True),
 )
 
 
@@ -159,6 +166,7 @@ class ExperimentConfig:
 
     # Split -------------------------------------------------------------------
     val_ratio: float = 0.2            # participant-level held-out fraction
+    test_ratio: float = 0.2           # reserved; current make_split is train/val
 
     # GAN (real adversarial GAN, services/augmentation/gan.py) ----------------
     synthetic_weight: float = 0.35    # mirrors orchestrator SYNTHETIC_SAMPLE_WEIGHT
@@ -770,7 +778,7 @@ def _run_condition(
     out = {
         "experiment": exp_id,
         "label": spec["label"],
-        "model": "lstm",
+        "model": spec["model"],
         "selection": spec["selection"],
         "gan": bool(spec["gan"]),
         "n_train": int(len(train_idx)),
@@ -811,6 +819,9 @@ def run_experiment(
     return (out, model) if return_model else out
 
 
+run_condition = run_experiment
+
+
 def run_all(
     prepared: List[PreparedUserComments],
     cfg: ExperimentConfig,
@@ -827,17 +838,17 @@ def run_all(
         "baseline": build_features(sample, "baseline", cfg, encoder),
         "qlearning": build_features(sample, "qlearning", cfg, encoder, agent=agent),
     }
-    train_idx, val_idx, test_idx = make_split(sample.n_users, cfg)
+    train_idx, val_idx = make_split(sample.n_users, cfg)
 
     results: Dict[str, Any] = {}
     models: Dict[str, Union[LassoTrainer, LSTMTrainer]] = {}
     for exp_id, spec in EXPERIMENTS.items():
-        out, model, raw = _run_condition(
+        out, model, _raw = _run_condition(
             sample, exp_id, cfg,
-            feats[spec["selection"]],
+            features[spec["selection"]],
             train_idx, val_idx,
         )
-        results[exp_id] = result
+        results[exp_id] = out
         models[exp_id] = model
 
     comparison = comparison_table(results)
@@ -862,7 +873,7 @@ def run_all(
             "label_scale": sample.scale,
             "n_train": int(len(train_idx)),
             "n_val": int(len(val_idx)),
-            "n_test": int(len(test_idx)),
+            "n_test": int(len(val_idx)),
         },
         "results": results,
         "comparison": comparison,
@@ -975,6 +986,51 @@ def comparison_table(results: Dict[str, Any]):
     return pd.DataFrame(rows)
 
 
+def presentation_metric_table(results: Dict[str, Any]):
+    """Long-form headline metrics for presentation CSVs."""
+    import pandas as pd
+
+    rows = []
+    for exp_id, row in results.items():
+        overall = row.get("overall") or {}
+        for metric in ("val_mae", "accuracy", "macro_f1"):
+            rows.append({
+                "condition": exp_id,
+                "description": row.get("label"),
+                "selection": row.get("selection"),
+                "gan": row.get("gan"),
+                "model": row.get("model"),
+                "metric": metric,
+                "value": overall.get(metric),
+            })
+    return pd.DataFrame(rows)
+
+
+def threshold_sweep_table(results: Dict[str, Any]):
+    """Flatten per-trait threshold sweeps when they exist."""
+    import pandas as pd
+
+    rows = []
+    for exp_id, row in results.items():
+        per_trait = row.get("per_trait") or {}
+        for trait, block in per_trait.items():
+            sweep = (block or {}).get("threshold_sweep") or {}
+            if not sweep:
+                continue
+            rows.append({
+                "condition": exp_id,
+                "split": "validation",
+                "trait": trait,
+                "threshold": sweep.get("best_threshold"),
+                "accuracy": (block or {}).get("accuracy"),
+                "f1_score": sweep.get("best_f1"),
+                "specificity": None,
+                "precision": (block or {}).get("macro_precision"),
+                "recall": (block or {}).get("macro_recall"),
+            })
+    return pd.DataFrame(rows)
+
+
 def model_comparison(results: Dict[str, Any]):
     """
     Head-to-head **Lasso vs LSTM** at each matched (selection, gan) cell, on the
@@ -985,8 +1041,10 @@ def model_comparison(results: Dict[str, Any]):
     import pandas as pd
 
     rows = []
-    for exp_id in EXPERIMENTS:
-        if exp_id not in results:
+    for sel, gan in _CELLS:
+        la = _find(results, "lasso", sel, gan)
+        ls = _find(results, "lstm", sel, gan)
+        if not la or not ls:
             continue
         la_acc, ls_acc = la["overall"]["accuracy"], ls["overall"]["accuracy"]
         la_f1, ls_f1 = la["overall"]["macro_f1"], ls["overall"]["macro_f1"]
@@ -1211,22 +1269,6 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
             plt.close(fig)
 
 
-def _find(
-    results: Dict[str, Any],
-    selection: str,
-    gan: bool,
-    model: str,
-) -> Optional[Dict[str, Any]]:
-    for result in results.values():
-        if (
-            result["selection"] == selection
-            and bool(result["gan"]) == bool(gan)
-            and result["model"] == model
-        ):
-            return result
-    return None
-
-
 def _delta(a: Optional[float], b: Optional[float]) -> Optional[float]:
     if a is None or b is None:
         return None
@@ -1272,6 +1314,7 @@ def factor_effects(results: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "qlearning_effect": pd.DataFrame(q_rows),
         "gan_effect": pd.DataFrame(g_rows),
+        "model_comparison": model_comparison(results),
     }
 
 
@@ -1641,6 +1684,21 @@ def main(argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         print(f"- {note}")
     print(f"\nArtifacts saved to: {bundle.get('artifact_dir', str(artifact_dir.resolve()))}")
     return bundle
+
+
+def _f(x: Any) -> Optional[float]:
+    if x is None:
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if np.isfinite(v) else None
+
+
+def _mean(xs: Sequence[Optional[float]]) -> Optional[float]:
+    vals = [x for x in xs if x is not None]
+    return float(np.mean(vals)) if vals else None
 
 
 def _fmt(value: Optional[float]) -> str:

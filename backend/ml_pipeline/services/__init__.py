@@ -76,4 +76,18 @@ def __getattr__(name):
         from .pipeline_orchestrator import PipelineOrchestrator
 
         return PipelineOrchestrator
+    if name in {
+        "interpret_experiment_bundle",
+        "interpret_condition_result",
+        "InterpretationThresholds",
+        "interpret_ocean_predictions",
+        "interpret_prediction_quality",
+        "interpret_evidence_quality",
+        "interpret_experiment_effects",
+        "interpret_research_summary",
+        "build_research_questions",
+    }:
+        from . import interpretation_engine
+
+        return getattr(interpretation_engine, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -219,6 +219,8 @@ class DataCleaner:
         """
         self.min_text_length = min_text_length
         self._seen_hashes: set[str] = set()
+        # Measured during the last clean() call. Does not change accept/reject rules.
+        self.last_account: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -238,6 +240,13 @@ class DataCleaner:
             Ordered: profile first, then tweets, then replies.
         """
         self._seen_hashes = set()
+        self.last_account = {
+            "posts_submitted": 0,
+            "excluded_empty_or_invalid_post": 0,
+            "excluded_too_short": 0,
+            "excluded_duplicate": 0,
+            "posts_accepted": 0,
+        }
         results: list[CleanedContent] = []
 
         # Profile (always included; never filtered by length or dedup)
@@ -247,14 +256,14 @@ class DataCleaner:
 
         # Tweets
         for idx, tweet in enumerate(raw.tweets):
-            item = self._clean_post(tweet, "tweet", idx)
-            if item and self._accept(item):
+            item = self._account_post(tweet, "tweet", idx)
+            if item:
                 results.append(item)
 
         # Replies
         for idx, reply in enumerate(raw.replies):
-            item = self._clean_post(reply, "reply", idx)
-            if item and self._accept(item):
+            item = self._account_post(reply, "reply", idx)
+            if item:
                 results.append(item)
 
         logger.info(
@@ -269,6 +278,23 @@ class DataCleaner:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _account_post(
+        self,
+        post: dict[str, Any],
+        content_type: str,
+        fallback_idx: int,
+    ) -> CleanedContent | None:
+        """Clean + accept one post, recording exactly one exclusion reason if dropped."""
+        self.last_account["posts_submitted"] += 1
+        item = self._clean_post(post, content_type, fallback_idx)
+        if item is None:
+            self.last_account["excluded_empty_or_invalid_post"] += 1
+            return None
+        if self._accept(item):
+            self.last_account["posts_accepted"] += 1
+            return item
+        return None
+
     def _accept(self, item: CleanedContent) -> bool:
         """
         Filter gate applied to every non-profile item.
@@ -278,11 +304,17 @@ class DataCleaner:
         """
         if len(item.cleaned_text) < self.min_text_length:
             logger.debug("Dropping %s (too short).", item.content_id)
+            self.last_account["excluded_too_short"] = (
+                self.last_account.get("excluded_too_short", 0) + 1
+            )
             return False
 
         fingerprint = hashlib.md5(item.cleaned_text.encode()).hexdigest()
         if fingerprint in self._seen_hashes:
             logger.debug("Dropping %s (duplicate).", item.content_id)
+            self.last_account["excluded_duplicate"] = (
+                self.last_account.get("excluded_duplicate", 0) + 1
+            )
             return False
 
         self._seen_hashes.add(fingerprint)

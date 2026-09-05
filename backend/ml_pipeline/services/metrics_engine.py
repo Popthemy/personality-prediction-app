@@ -27,6 +27,16 @@ Primary evaluation (both models are continuous 5-output OCEAN regression)
 - Binary High/Low threshold sweep on continuous scores (no Medium class)
 - ROC and Precision-Recall from continuous scores (not binarized labels)
 - Trait-specific O/C/E/A/N plus aggregate means
+- Model confidence/certainty heuristic (not calibrated uncertainty)
+
+`evaluate()` keeps its original keys (`lasso`, `lstm`, `threshold`, `roc`,
+`precision_recall`) and also exposes a reporting contract that groups the
+same numbers for a downstream interpretation layer:
+
+    A. continuous_regression
+    B. binary_interpretation
+    C. threshold_analysis
+    D. confidence
 
 There is no final Low/Medium/High LSTM classification stage. 3-class helpers
 below are retained only for leftover legacy callers; `evaluate()` does not
@@ -144,33 +154,109 @@ def compute_classification_metrics_at_threshold(
     }
 
 
-def compute_model_confidence(probabilities: np.ndarray, continuous_errors: Optional[np.ndarray] = None) -> float:
-    """
-    Evaluate Model Confidence from output certainty levels (softmax/sigmoid output distance from 0.5)
-    blended with continuous prediction error bound.
+# Shared description of compute_model_confidence(). Not a statistical model.
+MODEL_CONFIDENCE_SEMANTICS = {
+    "name": "model_confidence_heuristic",
+    "kind": "certainty_heuristic",
+    "calibrated_probability": False,
+    "statistical_uncertainty": False,
+    "confidence_interval": None,
+    "description": (
+        "Heuristic blend of how far continuous scores sit from 0.5 and, when "
+        "available, a scaled mean absolute error term. It is a model "
+        "confidence/certainty score for reporting, not a calibrated "
+        "probability and not a statistical uncertainty estimate."
+    ),
+    "suitable_for": (
+        "deterministic interpretation / reporting of output extremity and "
+        "error magnitude"
+    ),
+    "not_suitable_for": (
+        "calibrated class probability, confidence intervals, credible "
+        "intervals, or p-values"
+    ),
+    "formula": {
+        "certainty": "mean(2 * |score - 0.5|)",
+        "error_factor": "clip(1 - mean(|error|) / 2, 0, 1) when errors are supplied",
+        "score": "0.6 * certainty + 0.4 * error_factor if errors else certainty",
+        "range": "[0, 1]",
+    },
+}
 
-    This is the SINGLE implementation of model confidence in the pipeline.
-    PipelineOrchestrator must not maintain a second copy of this formula --
-    call this function (via evaluate(), or directly) instead.
 
-    Formula:
-    Certainty = mean(2 * |P - 0.5|) in [0.0, 1.0]
-    Error Factor = max(0, 1.0 - mean_mae / 2.0)
-    Model Confidence = 0.6 * Certainty + 0.4 * Error Factor
-    """
-    if len(probabilities) == 0:
-        return 0.50
+def _model_confidence_components(
+    probabilities: np.ndarray,
+    continuous_errors: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
+    """Internal parts of the existing confidence heuristic. One formula only."""
+    scores = np.asarray(probabilities, dtype=float).ravel()
+    if scores.size == 0:
+        return {
+            "score": 0.50,
+            "certainty": 0.50,
+            "error_factor": None,
+            "used_error_term": False,
+        }
 
-    certainty = float(np.mean(2.0 * np.abs(probabilities - 0.5)))
-
+    certainty = float(np.mean(2.0 * np.abs(scores - 0.5)))
+    used_error = False
+    error_factor = None
     if continuous_errors is not None and len(continuous_errors) > 0:
-        mean_err = float(np.mean(continuous_errors))
+        mean_err = float(np.mean(np.asarray(continuous_errors, dtype=float)))
         error_factor = max(0.0, min(1.0, 1.0 - (mean_err / 2.0)))
         confidence = 0.6 * certainty + 0.4 * error_factor
+        used_error = True
     else:
         confidence = certainty
 
-    return round(float(np.clip(confidence, 0.0, 1.0)), 4)
+    return {
+        "score": round(float(np.clip(confidence, 0.0, 1.0)), 4),
+        "certainty": round(float(np.clip(certainty, 0.0, 1.0)), 4),
+        "error_factor": (
+            round(float(error_factor), 4) if error_factor is not None else None
+        ),
+        "used_error_term": used_error,
+    }
+
+
+def compute_model_confidence(probabilities: np.ndarray, continuous_errors: Optional[np.ndarray] = None) -> float:
+    """
+    Model confidence / certainty heuristic from score distance to 0.5, optionally
+    blended with a mean-absolute-error factor.
+
+    This is the SINGLE implementation of that heuristic in the pipeline.
+    PipelineOrchestrator must not maintain a second copy of this formula --
+    call this function (via evaluate(), or directly) instead.
+
+    This is NOT calibrated statistical uncertainty. It does not produce a
+    confidence interval, standard error, or well-calibrated probability.
+    Scores farther from 0.5 simply increase the certainty term; lower MAE
+    increases the optional error factor.
+
+    Formula (unchanged):
+    Certainty = mean(2 * |score - 0.5|) in [0.0, 1.0]
+    Error Factor = clip(1.0 - mean_mae / 2.0, 0, 1)
+    Model Confidence = 0.6 * Certainty + 0.4 * Error Factor
+    """
+    return float(_model_confidence_components(probabilities, continuous_errors)["score"])
+
+
+def describe_model_confidence(
+    probabilities: np.ndarray,
+    continuous_errors: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
+    """
+    Same heuristic as ``compute_model_confidence()``, plus semantics for a
+    reporting / interpretation layer. Does not invent intervals or a second score.
+    """
+    parts = _model_confidence_components(probabilities, continuous_errors)
+    return {
+        "score": parts["score"],
+        "certainty": parts["certainty"],
+        "error_factor": parts["error_factor"],
+        "used_error_term": parts["used_error_term"],
+        **MODEL_CONFIDENCE_SEMANTICS,
+    }
 
 
 def evaluate_threshold_sweep(
@@ -669,6 +755,18 @@ def _resolve_class_labels(arr: ArrayLike, y_true_2d_shape: tuple, name: str) -> 
     return a2.astype(int)
 
 
+def _threshold_for_trait(
+    supplied: Optional[Union[float, Dict[str, float]]],
+    trait: str,
+) -> Optional[float]:
+    if supplied is None:
+        return None
+    if isinstance(supplied, dict):
+        value = supplied.get(trait)
+        return None if value is None else float(value)
+    return float(supplied)
+
+
 def evaluate(
     y_true: ArrayLike,
     lasso_predictions: ArrayLike,
@@ -679,6 +777,7 @@ def evaluate(
     class_cutoffs: Optional[Union[List[float], Dict[str, List[float]]]] = None,
     ground_truth_cutoff: Optional[Union[float, Dict[str, float]]] = None,
     candidate_thresholds: Optional[List[float]] = None,
+    decision_thresholds: Optional[Union[float, Dict[str, float]]] = None,
 ) -> Dict[str, Any]:
     """
     Plug-and-play evaluation of continuous (N, 5) Lasso and LSTM predictions.
@@ -705,6 +804,12 @@ def evaluate(
         Thresholds to sweep on continuous predictions. Defaults to
         0.00, 0.01, ..., 1.00. The sweep reports every point plus the
         highest-F1 threshold; that best-of-sweep is descriptive only.
+    decision_thresholds
+        Optional frozen High/Low decision threshold(s) chosen outside this
+        function (typically on validation). A single float applies to every
+        trait, or {trait: tau}. When supplied, binary_interpretation reports
+        those thresholds as the ones used. evaluate() still does not learn
+        a test-set decision boundary.
 
     lstm_probabilities, lstm_true_classes, class_cutoffs
         Accepted for call-site compatibility. Ignored. 3-class evaluation
@@ -712,8 +817,14 @@ def evaluate(
 
     Returns
     -------
-    dict with keys 'lasso', 'lstm', 'threshold', 'roc', 'precision_recall'.
-    Each model block is {'per_trait': {O/C/E/A/N: ...}, 'aggregate': ...}.
+    dict with the original keys 'lasso', 'lstm', 'threshold', 'roc',
+    'precision_recall' (each {'per_trait': {O/C/E/A/N: ...}, 'aggregate': ...})
+    plus the reporting contract:
+
+        continuous_regression  -- same regression blocks as 'lasso' / 'lstm'
+        binary_interpretation  -- threshold used, P/R/F1/accuracy, ROC-AUC, PR-AUC
+        threshold_analysis     -- thresholds tested, metric values, selected tau
+        confidence             -- heuristic certainty, not calibrated uncertainty
     """
     if lstm_probabilities is not None or lstm_true_classes is not None or class_cutoffs is not None:
         logger.debug(
@@ -740,19 +851,74 @@ def evaluate(
     if len(trait_names) != n_traits:
         raise ValueError(f"trait_names has {len(trait_names)} entries, expected {n_traits}.")
 
-    def _cutoff_for(trait: str) -> Optional[float]:
-        if ground_truth_cutoff is None:
-            return None
-        if isinstance(ground_truth_cutoff, dict):
-            return ground_truth_cutoff.get(trait)
-        return ground_truth_cutoff
-
     def _mean_keys(per_trait: Dict[str, Dict[str, Any]], keys: List[str]) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         for key in keys:
             values = [per_trait[t][key] for t in trait_names if per_trait[t].get(key) is not None]
             out[key] = round(float(np.mean(values)), 4) if values else None
         return out
+
+    def _binary_block(
+        scores: np.ndarray,
+        y_true_binary: np.ndarray,
+        sweep: Dict[str, Any],
+        roc_block: Dict[str, Any],
+        pr_block: Dict[str, Any],
+        used_cutoff: float,
+        trait: str,
+    ) -> Dict[str, Any]:
+        caller_tau = _threshold_for_trait(decision_thresholds, trait)
+        if caller_tau is not None:
+            official = compute_classification_metrics_at_threshold(
+                y_true_binary, scores, caller_tau,
+            )
+            return {
+                "ground_truth_cutoff": used_cutoff,
+                "threshold_used": official["threshold"],
+                "threshold_source": "caller",
+                "threshold_is_official": True,
+                "accuracy": official["accuracy"],
+                "precision": official["precision"],
+                "recall": official["recall"],
+                "f1": official["f1_score"],
+                "roc_auc": roc_block.get("auc"),
+                "pr_auc": pr_block.get("average_precision"),
+            }
+        return {
+            "ground_truth_cutoff": used_cutoff,
+            "threshold_used": sweep.get("best_threshold"),
+            "threshold_source": "analysis_best_f1_on_this_set",
+            "threshold_is_official": False,
+            "accuracy": sweep.get("accuracy"),
+            "precision": sweep.get("precision"),
+            "recall": sweep.get("recall"),
+            "f1": sweep.get("f1"),
+            "roc_auc": roc_block.get("auc"),
+            "pr_auc": pr_block.get("average_precision"),
+        }
+
+    def _threshold_analysis_block(sweep: Dict[str, Any], trait: str) -> Dict[str, Any]:
+        caller_tau = _threshold_for_trait(decision_thresholds, trait)
+        metric_values = sweep.get("results") or []
+        return {
+            "thresholds_tested": [row.get("threshold") for row in metric_values],
+            "metric_values": metric_values,
+            "selected_threshold": sweep.get("best_threshold"),
+            "selected_threshold_rule": "highest_f1_on_this_evaluation_set",
+            "selected_metric_values": {
+                "accuracy": sweep.get("accuracy"),
+                "precision": sweep.get("precision"),
+                "recall": sweep.get("recall"),
+                "f1": sweep.get("f1"),
+            },
+            "reported_decision_threshold": (
+                caller_tau if caller_tau is not None else sweep.get("best_threshold")
+            ),
+            "reported_decision_source": (
+                "caller" if caller_tau is not None else "analysis_best_f1_on_this_set"
+            ),
+            "ground_truth_cutoff": sweep.get("ground_truth_cutoff"),
+        }
 
     per_trait_lasso: Dict[str, Dict[str, float]] = {}
     per_trait_lstm: Dict[str, Dict[str, float]] = {}
@@ -762,6 +928,12 @@ def evaluate(
     per_trait_roc_lstm: Dict[str, Dict[str, Any]] = {}
     per_trait_pr_lasso: Dict[str, Dict[str, Any]] = {}
     per_trait_pr_lstm: Dict[str, Dict[str, Any]] = {}
+    per_trait_bin_lasso: Dict[str, Dict[str, Any]] = {}
+    per_trait_bin_lstm: Dict[str, Dict[str, Any]] = {}
+    per_trait_thr_analysis_lasso: Dict[str, Dict[str, Any]] = {}
+    per_trait_thr_analysis_lstm: Dict[str, Dict[str, Any]] = {}
+    per_trait_conf_lasso: Dict[str, Dict[str, Any]] = {}
+    per_trait_conf_lstm: Dict[str, Dict[str, Any]] = {}
 
     for i, trait in enumerate(trait_names):
         yt = y_true_2d[:, i]
@@ -771,7 +943,9 @@ def evaluate(
         per_trait_lasso[trait] = compute_regression_metrics(yt, lp)
         per_trait_lstm[trait] = compute_regression_metrics(yt, ls)
 
-        y_true_binary, used_cutoff = derive_binary_ground_truth(yt, _cutoff_for(trait))
+        y_true_binary, used_cutoff = derive_binary_ground_truth(
+            yt, _threshold_for_trait(ground_truth_cutoff, trait),
+        )
 
         lasso_sweep = sweep_thresholds_on_scores(y_true_binary, lp, candidate_thresholds)
         lasso_sweep['ground_truth_cutoff'] = used_cutoff
@@ -786,46 +960,114 @@ def evaluate(
         per_trait_pr_lasso[trait] = compute_precision_recall_curve_metrics(y_true_binary, lp)
         per_trait_pr_lstm[trait] = compute_precision_recall_curve_metrics(y_true_binary, ls)
 
+        per_trait_bin_lasso[trait] = _binary_block(
+            lp, y_true_binary, lasso_sweep,
+            per_trait_roc_lasso[trait], per_trait_pr_lasso[trait],
+            used_cutoff, trait,
+        )
+        per_trait_bin_lstm[trait] = _binary_block(
+            ls, y_true_binary, lstm_sweep,
+            per_trait_roc_lstm[trait], per_trait_pr_lstm[trait],
+            used_cutoff, trait,
+        )
+        per_trait_thr_analysis_lasso[trait] = _threshold_analysis_block(lasso_sweep, trait)
+        per_trait_thr_analysis_lstm[trait] = _threshold_analysis_block(lstm_sweep, trait)
+        per_trait_conf_lasso[trait] = describe_model_confidence(lp, np.abs(yt - lp))
+        per_trait_conf_lstm[trait] = describe_model_confidence(ls, np.abs(yt - ls))
+
     reg_keys = ['mae', 'mse', 'rmse', 'r2', 'correlation']
     thr_keys = ['best_f1', 'accuracy', 'precision', 'recall', 'f1']
+    bin_keys = ['accuracy', 'precision', 'recall', 'f1', 'roc_auc', 'pr_auc']
 
-    return {
+    lasso_reg = {
+        'per_trait': per_trait_lasso,
+        'aggregate': _mean_keys(per_trait_lasso, reg_keys),
+    }
+    lstm_reg = {
+        'per_trait': per_trait_lstm,
+        'aggregate': _mean_keys(per_trait_lstm, reg_keys),
+    }
+    threshold_block = {
         'lasso': {
-            'per_trait': per_trait_lasso,
-            'aggregate': _mean_keys(per_trait_lasso, reg_keys),
+            'per_trait': per_trait_thr_lasso,
+            'aggregate': _mean_keys(per_trait_thr_lasso, thr_keys),
         },
         'lstm': {
-            'per_trait': per_trait_lstm,
-            'aggregate': _mean_keys(per_trait_lstm, reg_keys),
+            'per_trait': per_trait_thr_lstm,
+            'aggregate': _mean_keys(per_trait_thr_lstm, thr_keys),
         },
-        'threshold': {
+    }
+    roc_block = {
+        'lasso': {
+            'per_trait': per_trait_roc_lasso,
+            'aggregate': _mean_keys(per_trait_roc_lasso, ['auc']),
+        },
+        'lstm': {
+            'per_trait': per_trait_roc_lstm,
+            'aggregate': _mean_keys(per_trait_roc_lstm, ['auc']),
+        },
+    }
+    pr_block = {
+        'lasso': {
+            'per_trait': per_trait_pr_lasso,
+            'aggregate': _mean_keys(per_trait_pr_lasso, ['average_precision']),
+        },
+        'lstm': {
+            'per_trait': per_trait_pr_lstm,
+            'aggregate': _mean_keys(per_trait_pr_lstm, ['average_precision']),
+        },
+    }
+
+    return {
+        'lasso': lasso_reg,
+        'lstm': lstm_reg,
+        'threshold': threshold_block,
+        'roc': roc_block,
+        'precision_recall': pr_block,
+        'continuous_regression': {
+            'lasso': lasso_reg,
+            'lstm': lstm_reg,
+        },
+        'binary_interpretation': {
             'lasso': {
-                'per_trait': per_trait_thr_lasso,
-                'aggregate': _mean_keys(per_trait_thr_lasso, thr_keys),
+                'per_trait': per_trait_bin_lasso,
+                'aggregate': _mean_keys(per_trait_bin_lasso, bin_keys),
             },
             'lstm': {
-                'per_trait': per_trait_thr_lstm,
-                'aggregate': _mean_keys(per_trait_thr_lstm, thr_keys),
+                'per_trait': per_trait_bin_lstm,
+                'aggregate': _mean_keys(per_trait_bin_lstm, bin_keys),
             },
         },
-        'roc': {
+        'threshold_analysis': {
+            'note': (
+                "selected_threshold is the highest-F1 point on this evaluation "
+                "sweep (descriptive). reported_decision_threshold is the caller "
+                "frozen threshold when decision_thresholds is supplied; otherwise "
+                "it repeats the descriptive best-F1 point. evaluate() does not "
+                "learn a test-set decision boundary."
+            ),
             'lasso': {
-                'per_trait': per_trait_roc_lasso,
-                'aggregate': _mean_keys(per_trait_roc_lasso, ['auc']),
+                'per_trait': per_trait_thr_analysis_lasso,
+                'aggregate': threshold_block['lasso']['aggregate'],
             },
             'lstm': {
-                'per_trait': per_trait_roc_lstm,
-                'aggregate': _mean_keys(per_trait_roc_lstm, ['auc']),
+                'per_trait': per_trait_thr_analysis_lstm,
+                'aggregate': threshold_block['lstm']['aggregate'],
             },
         },
-        'precision_recall': {
+        'confidence': {
+            'semantics': MODEL_CONFIDENCE_SEMANTICS,
             'lasso': {
-                'per_trait': per_trait_pr_lasso,
-                'aggregate': _mean_keys(per_trait_pr_lasso, ['average_precision']),
+                'per_trait': per_trait_conf_lasso,
+                'aggregate': {
+                    'score': _mean_keys(per_trait_conf_lasso, ['score']).get('score'),
+                },
             },
             'lstm': {
-                'per_trait': per_trait_pr_lstm,
-                'aggregate': _mean_keys(per_trait_pr_lstm, ['average_precision']),
+                'per_trait': per_trait_conf_lstm,
+                'aggregate': {
+                    'score': _mean_keys(per_trait_conf_lstm, ['score']).get('score'),
+                },
             },
         },
 <<<<<<< HEAD

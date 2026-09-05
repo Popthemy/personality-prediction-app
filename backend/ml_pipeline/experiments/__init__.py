@@ -22,10 +22,19 @@ _PANDORA_EXPORTS = {
     "summarize_findings",
 }
 
-__all__ = sorted(_PANDORA_EXPORTS)
+_CONTRACT_EXPORTS = {
+    "validate_research_contract",
+    "format_report",
+}
+
+__all__ = sorted(_PANDORA_EXPORTS | _CONTRACT_EXPORTS)
 
 
 def __getattr__(name):
+    if name in _CONTRACT_EXPORTS:
+        from . import research_contract
+
+        return getattr(research_contract, name)
     if name in _PANDORA_EXPORTS:
         from . import pandora_runner
 

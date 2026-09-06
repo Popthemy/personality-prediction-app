@@ -181,3 +181,74 @@ def thesis_rows(data_quality: Dict[str, Any]) -> List[Dict[str, Any]]:
     if extra and not rows:
         return list(extra)
     return rows
+
+
+def build_experiment_data_quality(
+    *,
+    ingestion: Optional[Dict[str, Any]] = None,
+    users_before_filter: Optional[int] = None,
+    users_after_filter: Optional[int] = None,
+    users_used: Optional[int] = None,
+    exclusion_reasons: Optional[Dict[str, Any]] = None,
+    comment_volume: Optional[Dict[str, Any]] = None,
+    notes: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Format already-measured experiment counts. Does not clean, filter, or split.
+
+    ``ingestion`` is the sidecar from ``load_pandora_comments`` when present.
+    Filter/volume numbers must be supplied by the caller.
+    """
+    ingestion_block = dict(ingestion) if ingestion else {"available": False}
+    if ingestion_block.get("available"):
+        cleaning = {
+            "available": True,
+            "comments_before_cleaning": ingestion_block.get("comments_before_cleaning"),
+            "comments_after_cleaning": (
+                ingestion_block.get("comments_after_cleaning")
+                or ingestion_block.get("comments_retained")
+            ),
+            "comments_retained": (
+                ingestion_block.get("comments_retained")
+                or ingestion_block.get("comments_after_cleaning")
+            ),
+            "excluded_too_short": ingestion_block.get("excluded_too_short"),
+            "excluded_duplicate": ingestion_block.get("excluded_duplicate"),
+            "excluded_invalid_content": ingestion_block.get("excluded_invalid_content"),
+            "comment_retention": ingestion_block.get("comment_retention"),
+        }
+    else:
+        cleaning = {"available": False}
+
+    before = None if users_before_filter is None else int(users_before_filter)
+    after = None if users_after_filter is None else int(users_after_filter)
+    used = None if users_used is None else int(users_used)
+    excluded = None if before is None or used is None else before - used
+    reasons = dict(exclusion_reasons or {})
+    filt = {
+        "users_before_filter": before,
+        "users_after_filter": after,
+        "users_used": used,
+        "users_excluded": excluded,
+        "user_retention": safe_rate(used, before, denominator_name="users_before_filter"),
+        "exclusion_reasons": reasons,
+    }
+    payload = {
+        "kind": "experiment_data_quality",
+        "ingestion": ingestion_block,
+        "cleaning": cleaning,
+        "experiment_filter": filt,
+        "exclusion_reasons": reasons,
+        "comment_volume": dict(comment_volume or {}),
+        "retention": {
+            "users_experiment": filt["user_retention"],
+            "comments_cleaning": (
+                ingestion_block.get("comment_retention")
+                if ingestion_block.get("available")
+                else None
+            ),
+        },
+        "notes": list(notes or []),
+    }
+    payload["thesis_rows"] = thesis_rows(payload)
+    return payload

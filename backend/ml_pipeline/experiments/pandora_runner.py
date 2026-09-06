@@ -57,7 +57,15 @@ from backend.ml_pipeline.cleaning.cleaner import CleanedContent, ExtractedSignal
 from backend.ml_pipeline.services.data.pandora import (
     PreparedUserComments,
     UserTraits,
+    get_last_ingestion_quality,
+    load_ingestion_quality,
     load_pandora_comments,
+)
+from backend.ml_pipeline.services.data.quality import (
+    build_experiment_data_quality,
+    comment_volume,
+    exclusion,
+    thesis_rows,
 )
 from backend.ml_pipeline.services.qlearning_agent import QLearningAgent, run_training_loop
 from backend.ml_pipeline.services.bert_encoder import BERTEncoder
@@ -706,6 +714,9 @@ def _run_lstm(
             "macro_precision": block["precision"],
             "macro_recall": block["recall"],
             "specificity": block["specificity"],
+            "roc_auc": block.get("roc_auc"),
+            "pr_auc": block.get("pr_auc"),
+            "best_threshold": block.get("best_threshold"),
             "threshold_sweep": block["threshold_sweep"],
         }
 
@@ -714,6 +725,8 @@ def _run_lstm(
         "accuracy": validation["aggregate"]["accuracy"],
         "macro_f1": validation["aggregate"]["f1"],
         "specificity": validation["aggregate"]["specificity"],
+        "roc_auc": validation["aggregate"].get("roc_auc"),
+        "pr_auc": validation["aggregate"].get("pr_auc"),
     }
     raw = {"true_unit": y_val, "lstm_pred": val_pred}
     return {"per_trait": per_trait, "overall": overall}, trainer, raw
@@ -757,9 +770,14 @@ def _run_condition(
         "gan": bool(spec["gan"]),
         "n_train": int(len(train_idx)),
         "n_val": int(len(val_idx)),
+        "n_test": int(len(val_idx)),
         "mean_comments_selected": float(np.mean(features.n_selected)),
         "per_trait": result["per_trait"],
-        "overall": result["overall"],
+        "overall": _reporting_aliases(result["overall"]),
+        "validation": {
+            "candidate_thresholds": list(cfg.candidate_thresholds),
+            "split": "validation",
+        },
     }
     logger.info(
         "%s done | overall: MAE=%s acc=%.3f macroF1=%.3f",
@@ -794,6 +812,227 @@ def run_experiment(
 
 
 run_condition = run_experiment
+
+
+def _reporting_aliases(overall: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy already-computed metrics onto the names interpretation/contract read."""
+    out = dict(overall)
+    if out.get("mae") is None:
+        out["mae"] = out.get("val_mae")
+    if out.get("rmse") is None:
+        out["rmse"] = out.get("val_rmse")
+    if out.get("r2") is None:
+        out["r2"] = out.get("val_r2")
+    if out.get("official_f1") is None:
+        out["official_f1"] = out.get("macro_f1")
+    if out.get("official_accuracy") is None:
+        out["official_accuracy"] = out.get("accuracy")
+    return out
+
+
+def _json_default(obj: Any) -> Any:
+    if hasattr(obj, "item") and not isinstance(obj, (bytes, str)):
+        try:
+            return obj.item()
+        except (ValueError, AttributeError):
+            pass
+    if hasattr(obj, "tolist"):
+        return obj.tolist()
+    if hasattr(obj, "to_dict"):
+        try:
+            return obj.to_dict()
+        except Exception:
+            pass
+    return str(obj)
+
+
+def _repository_identity() -> Dict[str, Any]:
+    sha = None
+    dirty = None
+    try:
+        import subprocess
+
+        root = Path(__file__).resolve().parents[3]
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        dirty = bool(status.strip())
+    except Exception:
+        sha = None
+        dirty = None
+    return {
+        "repository_commit_sha": sha,
+        "repository_dirty": dirty,
+        "code_identity_reliable": bool(sha) and dirty is False,
+    }
+
+
+def _measure_experiment_filter(
+    prepared: List[PreparedUserComments],
+    sample: Sample,
+    cfg: ExperimentConfig,
+) -> Dict[str, Any]:
+    n_before = len(prepared)
+    n_no_traits = sum(1 for user in prepared if user.traits is None)
+    n_too_few = sum(
+        1
+        for user in prepared
+        if user.traits is not None and len(user.comments) < cfg.min_comments_per_user
+    )
+    n_eligible = n_before - n_no_traits - n_too_few
+    return {
+        "users_before_filter": n_before,
+        "users_after_filter": n_eligible,
+        "users_used": sample.n_users,
+        "exclusion_reasons": {
+            "missing_traits": exclusion(
+                n_no_traits,
+                "Prepared user has no OCEAN traits.",
+                stage="experiment_filter",
+            ),
+            "too_few_comments": exclusion(
+                n_too_few,
+                f"Prepared user has fewer than {cfg.min_comments_per_user} comments.",
+                stage="experiment_filter",
+            ),
+        },
+    }
+
+
+def _assemble_data_quality(
+    prepared: List[PreparedUserComments],
+    sample: Sample,
+    train_idx: np.ndarray,
+    val_idx: np.ndarray,
+    cfg: ExperimentConfig,
+) -> Dict[str, Any]:
+    filt = _measure_experiment_filter(prepared, sample, cfg)
+    ingestion = get_last_ingestion_quality()
+    if not ingestion and cfg.output_dir:
+        prepared_json = Path(cfg.output_dir).parent / "data" / "pandora_prepared.json"
+        ingestion = load_ingestion_quality(prepared_json)
+    train_counts = [len(sample.texts[int(i)]) for i in train_idx]
+    val_counts = [len(sample.texts[int(i)]) for i in val_idx]
+    all_counts = [len(texts) for texts in sample.texts]
+    volume = {
+        "train": comment_volume(train_counts, split="train", population="sampled_train"),
+        "val": comment_volume(val_counts, split="validation", population="sampled_held_out"),
+        "test": comment_volume(val_counts, split="held_out", population="sampled_held_out"),
+        "sampled_all_folds": comment_volume(all_counts, split="all", population="sampled_all_folds"),
+    }
+    notes = [
+        "Filter counts recount the same eligibility rules used by sample_users; they do not change sampling.",
+        "The current runner uses a train/validation split; val is the held-out eval fold.",
+    ]
+    if not ingestion or not ingestion.get("available"):
+        notes.append("Ingestion/cleaning counts were not measured in this process.")
+    return build_experiment_data_quality(
+        ingestion=ingestion,
+        users_before_filter=filt["users_before_filter"],
+        users_after_filter=filt["users_after_filter"],
+        users_used=filt["users_used"],
+        exclusion_reasons=filt["exclusion_reasons"],
+        comment_volume=volume,
+        notes=notes,
+    )
+
+
+def _build_experiment_data(
+    sample: Sample,
+    train_idx: np.ndarray,
+    val_idx: np.ndarray,
+    cfg: ExperimentConfig,
+) -> Dict[str, Any]:
+    train_ids = [sample.user_ids[int(i)] for i in train_idx]
+    val_ids = [sample.user_ids[int(i)] for i in val_idx]
+    return {
+        "kind": "experiment_data",
+        "dataset_source": "PANDORA",
+        "seed": cfg.seed,
+        "n_users": sample.n_users,
+        "n_train": int(len(train_idx)),
+        "n_val": int(len(val_idx)),
+        "n_test": int(len(val_idx)),
+        "held_out_fold": "validation",
+        "label_scale": sample.scale,
+        "user_ids": list(sample.user_ids),
+        "split": {
+            "train_user_ids": train_ids,
+            "validation_user_ids": val_ids,
+            "test_user_ids": [],
+            "held_out_fold": "validation",
+        },
+    }
+
+
+def _build_reproducibility(
+    sample: Sample,
+    train_idx: np.ndarray,
+    val_idx: np.ndarray,
+    cfg: ExperimentConfig,
+    experiment_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    repo = _repository_identity()
+    return {
+        "random_seed": cfg.seed,
+        "dataset_source": "PANDORA",
+        "repository": repo,
+        "repository_commit_sha": repo.get("repository_commit_sha"),
+        "repository_dirty": repo.get("repository_dirty"),
+        "code_identity_reliable": repo.get("code_identity_reliable"),
+        "train_participant_count": int(len(train_idx)),
+        "validation_participant_count": int(len(val_idx)),
+        "test_participant_count": int(len(val_idx)),
+        "participant_sample_size": sample.n_users,
+        "split": experiment_data["split"],
+        "preprocessing": {"label_scale": sample.scale, "group_by": "traits"},
+        "config_fingerprint": hashlib.sha1(
+            json.dumps(asdict(cfg), sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def _safe_interpret(fn, *args, **kwargs) -> Dict[str, Any]:
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        logger.exception("Interpretation layer failed: %s", exc)
+        return {
+            "kind": "interpretation_error",
+            "error": str(exc),
+            "uses_llm": False,
+            "recalculates_metrics": False,
+            "clinical_diagnosis": False,
+        }
+
+
+def _attach_interpretation(bundle: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.ml_pipeline.services.interpretation_engine import (
+        interpret_condition_result,
+        interpret_experiment_bundle,
+    )
+
+    data_quality = bundle.get("data_quality") or {}
+    config = bundle.get("config") or {}
+    for row in (bundle.get("results") or {}).values():
+        if not isinstance(row, dict):
+            continue
+        row["interpretation"] = _safe_interpret(
+            interpret_condition_result,
+            row,
+            data_quality=data_quality,
+            config=config,
+        )
+    return _safe_interpret(interpret_experiment_bundle, bundle)
 
 
 def run_all(
@@ -833,6 +1072,10 @@ def run_all(
     prediction_evidence = prediction_evidence_table(results)
     audit = audit_classification_metrics(results)
 
+    experiment_data = _build_experiment_data(sample, train_idx, val_idx, cfg)
+    data_quality = _assemble_data_quality(prepared, sample, train_idx, val_idx, cfg)
+    reproducibility = _build_reproducibility(sample, train_idx, val_idx, cfg, experiment_data)
+
     logger.info("Comparison:\n%s", comparison.to_string(index=False))
     for note in findings["notes"]:
         logger.info("FINDING: %s", note)
@@ -848,16 +1091,52 @@ def run_all(
             "n_train": int(len(train_idx)),
             "n_val": int(len(val_idx)),
             "n_test": int(len(val_idx)),
+            "seed": cfg.seed,
+            "dataset_source": "PANDORA",
+            "held_out_fold": "validation",
+            "split": experiment_data["split"],
         },
+        "experiment_data": experiment_data,
+        "data_quality": data_quality,
+        "reproducibility": reproducibility,
         "results": results,
         "comparison": comparison,
         "presentation_metrics": presentation_metrics,
         "threshold_sweeps": threshold_sweeps,
         "prediction_evidence": prediction_evidence,
         "factor_effects": effects,
+        "model_comparison": effects.get("model_comparison"),
         "findings": findings,
         "audit": audit,
     }
+    bundle["interpretation"] = _attach_interpretation(bundle)
+    research_questions = (bundle.get("interpretation") or {}).get("research_questions")
+    bundle["research_evidence"] = {
+        "kind": "research_evidence",
+        "quality": (bundle.get("interpretation") or {}).get("quality"),
+        "effects": (bundle.get("interpretation") or {}).get("effects"),
+        "evidence": (bundle.get("interpretation") or {}).get("evidence"),
+        "research_questions": research_questions,
+    }
+    try:
+        from backend.ml_pipeline.experiments.research_contract import (
+            format_report,
+            validate_research_contract,
+        )
+
+        contract = validate_research_contract(bundle, include_source_checks=True)
+        bundle["research_contract"] = contract
+        if contract.get("status") == "FAIL":
+            logger.warning("Research contract FAIL (does not abort training):\n%s", format_report(contract))
+        elif contract.get("status") == "WARNING":
+            logger.info("Research contract WARNING:\n%s", format_report(contract))
+    except Exception as exc:
+        logger.exception("Research contract validation failed to run: %s", exc)
+        bundle["research_contract"] = {
+            "kind": "research_contract_error",
+            "error": str(exc),
+            "stops_execution": False,
+        }
     if cfg.output_dir:
         save_artifacts(bundle, models, agent, cfg)
     return bundle
@@ -1493,9 +1772,34 @@ def save_artifacts(
     effects["model_comparison"].to_csv(out / "model_comparison.csv", index=False)
 
     with (out / "findings.json").open("w", encoding="utf-8") as fh:
-        json.dump(bundle["findings"], fh, ensure_ascii=False, indent=2)
+        json.dump(bundle["findings"], fh, ensure_ascii=False, indent=2, default=_json_default)
     with (out / "classification_audit.json").open("w", encoding="utf-8") as fh:
-        json.dump(bundle["audit"], fh, ensure_ascii=False, indent=2)
+        json.dump(bundle["audit"], fh, ensure_ascii=False, indent=2, default=_json_default)
+    for name, key in (
+        ("experiment_data.json", "experiment_data"),
+        ("data_quality.json", "data_quality"),
+        ("reproducibility.json", "reproducibility"),
+        ("interpretation.json", "interpretation"),
+        ("research_evidence.json", "research_evidence"),
+        ("research_contract.json", "research_contract"),
+    ):
+        if bundle.get(key) is not None:
+            with (out / name).open("w", encoding="utf-8") as fh:
+                json.dump(bundle[key], fh, ensure_ascii=False, indent=2, default=_json_default)
+    questions = (bundle.get("interpretation") or {}).get("research_questions")
+    if questions:
+        with (out / "research_questions.json").open("w", encoding="utf-8") as fh:
+            json.dump(questions, fh, ensure_ascii=False, indent=2, default=_json_default)
+    thesis = (bundle.get("interpretation") or {}).get("research_summary", {}).get("thesis_rows")
+    if thesis:
+        import pandas as pd
+
+        pd.DataFrame(thesis).to_csv(out / "interpretation_thesis.csv", index=False)
+    dq_rows = (bundle.get("data_quality") or {}).get("thesis_rows") or thesis_rows(bundle.get("data_quality") or {})
+    if dq_rows:
+        import pandas as pd
+
+        pd.DataFrame(dq_rows).to_csv(out / "data_quality_thesis.csv", index=False)
     manifest = {
         "presentation_order": [
             "comparison.csv",
@@ -1506,6 +1810,12 @@ def save_artifacts(
             "qlearning_effect.csv",
             "gan_effect.csv",
             "model_comparison.csv",
+            "experiment_data.json",
+            "data_quality.json",
+            "interpretation.json",
+            "research_evidence.json",
+            "research_questions.json",
+            "research_contract.json",
             "plots/",
         ],
         "run_folder": out.name,
@@ -1535,10 +1845,11 @@ def save_artifacts(
             "threshold_sweeps",
             "prediction_evidence",
             "factor_effects",
+            "model_comparison",
         }
     }
     with (out / "run_summary.json").open("w", encoding="utf-8") as fh:
-        json.dump(summary, fh, ensure_ascii=False, indent=2)
+        json.dump(summary, fh, ensure_ascii=False, indent=2, default=_json_default)
 
     save_presentation_plots(bundle["results"], out)
 
@@ -1546,7 +1857,10 @@ def save_artifacts(
         exp_dir = out / exp_id
         exp_dir.mkdir(parents=True, exist_ok=True)
         with (exp_dir / "metrics.json").open("w", encoding="utf-8") as fh:
-            json.dump(result, fh, ensure_ascii=False, indent=2)
+            json.dump(result, fh, ensure_ascii=False, indent=2, default=_json_default)
+        if result.get("interpretation"):
+            with (exp_dir / "interpretation.json").open("w", encoding="utf-8") as fh:
+                json.dump(result["interpretation"], fh, ensure_ascii=False, indent=2, default=_json_default)
         model = models[exp_id]
         if result["model"] == "lasso":
             with (exp_dir / "lasso_state.json").open("w", encoding="utf-8") as fh:

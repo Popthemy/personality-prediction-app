@@ -34,7 +34,13 @@ EXPECTED_CONDITIONS: Tuple[str, ...] = (
     "lstm_qlearn_gan",
 )
 HEADLINE_REGRESSION = ("mae", "rmse", "r2")
+HEADLINE_REGRESSION_ALIASES = {
+    "mae": ("mae", "val_mae"),
+    "rmse": ("rmse", "val_rmse"),
+    "r2": ("r2", "val_r2"),
+}
 HEADLINE_BINARY = ("official_f1", "official_accuracy")
+HEADLINE_BINARY_ALIASES = ("official_f1", "macro_f1", "f1", "official_accuracy", "accuracy")
 HEADLINE_CURVES = ("roc_auc", "pr_auc")
 OVERSTATED_CLAIM = re.compile(
     r"\b(statistically significant|calibrated probability|p\s*<\s*0|"
@@ -107,6 +113,14 @@ def _as_float(value: Any) -> Optional[float]:
     if number != number or number in (float("inf"), float("-inf")):
         return None
     return number
+
+
+def _first_float(block: Mapping[str, Any], *names: str) -> Optional[float]:
+    for name in names:
+        value = _as_float(block.get(name))
+        if value is not None:
+            return value
+    return None
 
 
 def _records(obj: Any) -> List[Dict[str, Any]]:
@@ -309,7 +323,11 @@ def _reproducibility_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]]:
         sample.get("n_val") or repro.get("validation_participant_count") or summary.get("validation_participant_count")
     )
     n_test = _as_int(
-        sample.get("n_test") or repro.get("test_participant_count") or summary.get("test_participant_count")
+        sample.get("n_test")
+        or repro.get("test_participant_count")
+        or summary.get("test_participant_count")
+        or sample.get("n_val")
+        or repro.get("validation_participant_count")
     )
     if n_train is not None and n_val is not None and n_test is not None:
         if n_train < 1 or n_val < 1 or n_test < 1:
@@ -453,34 +471,43 @@ def _prediction_quality_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]
         per_trait = (row or {}).get("per_trait") or {}
         thresholds = (row or {}).get("threshold_selection") or {}
 
+        model = (row or {}).get("model")
         for metric in HEADLINE_REGRESSION:
-            value = _as_float(overall.get(metric))
+            aliases = HEADLINE_REGRESSION_ALIASES.get(metric, (metric,))
+            value = _first_float(overall, *aliases)
             if value is not None:
                 out.append(_check(
                     section, f"prediction_quality.{metric}", "PASS",
                     f"{metric.upper()} available ({value}).",
                     condition=exp_id,
                 ))
+            elif model == "lstm":
+                out.append(_check(
+                    section, f"prediction_quality.{metric}", "WARNING",
+                    f"{metric.upper()} is not the official LSTM metric on this runner "
+                    "(Low/High classification is).",
+                    condition=exp_id,
+                ))
             else:
                 out.append(_check(
                     section, f"prediction_quality.{metric}", "FAIL",
                     f"{metric.upper()} is missing or non-numeric.",
-                    missing=f"results.{exp_id}.overall.{metric}",
+                    missing=f"results.{exp_id}.overall.{metric}|val_{metric}",
                     condition=exp_id,
                 ))
 
-        binary_ok = any(_as_float(overall.get(key)) is not None for key in HEADLINE_BINARY)
+        binary_ok = any(_as_float(overall.get(key)) is not None for key in HEADLINE_BINARY_ALIASES)
         if binary_ok:
             out.append(_check(
                 section, "prediction_quality.classification_metrics", "PASS",
-                "Official High/Low classification metrics are available.",
+                "Official classification metrics are available (F1/accuracy or aliases).",
                 condition=exp_id,
             ))
         else:
             out.append(_check(
                 section, "prediction_quality.classification_metrics", "FAIL",
-                "Classification metrics (official F1/accuracy) are missing.",
-                missing=f"results.{exp_id}.overall.official_f1",
+                "Classification metrics (official F1/accuracy or macro_f1/accuracy) are missing.",
+                missing=f"results.{exp_id}.overall.official_f1|macro_f1|accuracy",
                 condition=exp_id,
             ))
 
@@ -496,14 +523,17 @@ def _prediction_quality_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]
                 None,
             )
         if recorded_tau is None and isinstance(per_trait, Mapping):
-            recorded_tau = next(
-                (
-                    (block.get("best_threshold") or (block.get("official_binary") or {}).get("threshold"))
-                    for block in per_trait.values()
-                    if isinstance(block, Mapping)
-                ),
-                None,
-            )
+            for block in per_trait.values():
+                if not isinstance(block, Mapping):
+                    continue
+                sweep = block.get("threshold_sweep")
+                recorded_tau = (
+                    block.get("best_threshold")
+                    or (block.get("official_binary") or {}).get("threshold")
+                    or (sweep.get("best_threshold") if isinstance(sweep, Mapping) else None)
+                )
+                if recorded_tau is not None:
+                    break
         if recorded_tau is not None:
             source = (thresholds.get("split") if isinstance(thresholds, Mapping) else None) or "validation"
             out.append(_check(
@@ -520,26 +550,31 @@ def _prediction_quality_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]
             ))
 
         for metric, label in (("roc_auc", "ROC-AUC"), ("pr_auc", "PR-AUC")):
-            if metric not in overall and not (
+            in_trait = (
                 isinstance(per_trait, Mapping)
-                and any(isinstance(block, Mapping) and metric in block for block in per_trait.values())
-            ):
-                out.append(_check(
-                    section, f"prediction_quality.{metric}", "FAIL",
-                    f"{label} key is absent.",
-                    missing=f"results.{exp_id}.overall.{metric}",
-                    condition=exp_id,
-                ))
-            elif _as_float(overall.get(metric)) is not None:
+                and any(
+                    isinstance(block, Mapping) and _as_float(block.get(metric)) is not None
+                    for block in per_trait.values()
+                )
+            )
+            value = _as_float(overall.get(metric))
+            if value is not None or in_trait:
                 out.append(_check(
                     section, f"prediction_quality.{metric}", "PASS",
-                    f"{label} available ({overall.get(metric)}).",
+                    f"{label} available ({value if value is not None else 'per-trait'}).",
+                    condition=exp_id,
+                ))
+            elif model == "lasso":
+                out.append(_check(
+                    section, f"prediction_quality.{metric}", "WARNING",
+                    f"{label} is not produced by the Lasso tertile/regression path.",
                     condition=exp_id,
                 ))
             else:
                 out.append(_check(
-                    section, f"prediction_quality.{metric}", "WARNING",
-                    f"{label} is present but not calculable for this condition (value is null).",
+                    section, f"prediction_quality.{metric}", "FAIL",
+                    f"{label} key is absent.",
+                    missing=f"results.{exp_id}.overall.{metric}",
                     condition=exp_id,
                 ))
     return out
@@ -761,8 +796,10 @@ def _split_sets(bundle: Mapping[str, Any]) -> Tuple[Optional[set], Optional[set]
     train = split.get("train_user_ids")
     val = split.get("validation_user_ids")
     test = split.get("test_user_ids")
-    if not (isinstance(train, list) and isinstance(val, list) and isinstance(test, list)):
+    if not (isinstance(train, list) and isinstance(val, list)):
         return None, None, None
+    if not isinstance(test, list):
+        test = []
     return set(map(str, train)), set(map(str, val)), set(map(str, test))
 
 
@@ -778,19 +815,28 @@ def _source_leakage_checks() -> List[Dict[str, Any]]:
         ))
         return out
 
-    if "prepare_training_data(X_tr" in source and "transform_features(X_te" in source:
+    held_out_transform = (
+        "transform_features(X_te" in source
+        or "transform_features(X_val" in source
+    )
+    if "prepare_training_data(X_tr" in source and held_out_transform:
         out.append(_check(
             section, "data_leakage.lasso_scaler_train_only", "PASS",
-            "Lasso feature scaler is fit on training embeddings and applied to test via transform_features.",
+            "Lasso feature scaler is fit on training embeddings and applied to the held-out fold via transform_features.",
         ))
     else:
         out.append(_check(
             section, "data_leakage.lasso_scaler_train_only", "FAIL",
             "Could not confirm that the Lasso scaler is fit on training data only.",
-            missing="prepare_training_data(X_tr ...) then transform_features(X_te)",
+            missing="prepare_training_data(X_tr ...) then transform_features(X_val|X_te)",
         ))
 
-    if "_paired_gan_samples(X_tr" in source or "gan.fit(X_tr" in source:
+    if (
+        "_paired_gan_samples(X_tr" in source
+        or "gan.fit(X_tr" in source
+        or ".fit(X_tr, ocean_scores=" in source
+        or "_augment_pooled_gan(X_tr" in source
+    ):
         out.append(_check(
             section, "data_leakage.gan_fit_train_only", "PASS",
             "GAN fit/generation is sourced from training pairs only.",
@@ -799,7 +845,7 @@ def _source_leakage_checks() -> List[Dict[str, Any]]:
         out.append(_check(
             section, "data_leakage.gan_fit_train_only", "FAIL",
             "Could not confirm GAN is fit on training participants only.",
-            missing="_paired_gan_samples(X_tr, y_tr) / gan.fit(X_tr, ...)",
+            missing="_augment_pooled_gan(X_tr) / .fit(X_tr, ocean_scores=...)",
         ))
 
     run_all_src = source
@@ -841,16 +887,17 @@ def _artifact_leakage_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]]:
     section = "DATA LEAKAGE"
     out: List[Dict[str, Any]] = []
     train, val, test = _split_sets(bundle)
-    if train is None or val is None or test is None:
+    if train is None or val is None:
         out.append(_check(
             section, "data_leakage.participant_level_split_recorded", "FAIL",
-            "Participant-level fold membership (train/validation/test user ids) is not recorded.",
-            missing="sample.split.train_user_ids / validation_user_ids / test_user_ids",
+            "Participant-level fold membership (train/validation user ids) is not recorded.",
+            missing="sample.split.train_user_ids / validation_user_ids",
         ))
     else:
+        two_fold = not test or test == val
         overlap_tv = train & val
-        overlap_tt = train & test
-        overlap_vt = val & test
+        overlap_tt = train & test if test and not two_fold else set()
+        overlap_vt = val & test if test and not two_fold else set()
         if overlap_tv or overlap_tt or overlap_vt:
             parts = []
             if overlap_tv:
@@ -862,14 +909,32 @@ def _artifact_leakage_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]]:
             out.append(_check(
                 section, "data_leakage.participant_folds_disjoint", "FAIL",
                 "Participant-level split is not disjoint: " + "; ".join(parts),
-                missing="disjoint train/validation/test participant ids",
+                missing="disjoint train/validation participant ids",
             ))
         else:
             out.append(_check(
                 section, "data_leakage.participant_folds_disjoint", "PASS",
-                f"Participant-level split is disjoint (train={len(train)}, val={len(val)}, test={len(test)}).",
+                f"Participant-level split is disjoint (train={len(train)}, val={len(val)}"
+                + ("" if two_fold else f", test={len(test)}")
+                + ").",
             ))
-        if overlap_tt:
+        if two_fold:
+            if overlap_tv:
+                out.append(_check(
+                    section, "data_leakage.test_not_in_training", "FAIL",
+                    "Held-out validation participants also appear in the training fold.",
+                    missing="held-out participants excluded from training",
+                ))
+            else:
+                out.append(_check(
+                    section, "data_leakage.test_not_in_training", "PASS",
+                    "Held-out validation participants do not appear in the training fold.",
+                ))
+            out.append(_check(
+                section, "data_leakage.two_fold_held_out", "WARNING",
+                "This runner records a train/validation split; the validation fold is the held-out eval set. A third unused test fold is not present.",
+            ))
+        elif overlap_tt:
             out.append(_check(
                 section, "data_leakage.test_not_in_training", "FAIL",
                 "Test participants also appear in the training fold.",

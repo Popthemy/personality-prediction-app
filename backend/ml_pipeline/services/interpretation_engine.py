@@ -81,6 +81,8 @@ class InterpretationThresholds:
     # D. Effect size below which a matched-pair delta is called minimal.
     mae_minimal_abs: float = 0.01
     r2_minimal_abs: float = 0.02
+    accuracy_minimal_abs: float = 0.01
+    f1_minimal_abs: float = 0.01
 
     # Small-sample qualification (held-out test participants).
     small_test_n: int = 20
@@ -122,7 +124,9 @@ def _as_records(obj: Any) -> List[Dict[str, Any]]:
             rows = []
     elif isinstance(obj, list):
         rows = [row for row in obj if isinstance(row, Mapping)]
-    elif isinstance(obj, Mapping) and {"delta_mae", "model"} <= set(obj.keys()):
+    elif isinstance(obj, Mapping) and (
+        "delta_mae" in obj or "delta_accuracy" in obj or "delta_macro_f1" in obj
+    ):
         rows = [dict(obj)]
     return [
         {str(k): _plain(v) for k, v in row.items()}
@@ -147,6 +151,46 @@ def _i(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _first_metric(block: Optional[Mapping[str, Any]], *names: str) -> Optional[float]:
+    """Read the first present numeric metric from a stored metrics dict."""
+    if not isinstance(block, Mapping):
+        return None
+    for name in names:
+        value = _f(block.get(name))
+        if value is not None:
+            return value
+    return None
+
+
+def _overall_metrics(overall: Optional[Mapping[str, Any]]) -> Dict[str, Optional[float]]:
+    """Map current runner keys (val_mae, macro_f1, ...) onto reporting names."""
+    overall = overall or {}
+    return {
+        "mae": _first_metric(overall, "mae", "val_mae"),
+        "rmse": _first_metric(overall, "rmse", "val_rmse"),
+        "r2": _first_metric(overall, "r2", "val_r2"),
+        "official_f1": _first_metric(overall, "official_f1", "macro_f1", "f1"),
+        "official_accuracy": _first_metric(overall, "official_accuracy", "accuracy"),
+        "roc_auc": _first_metric(overall, "roc_auc"),
+        "pr_auc": _first_metric(overall, "pr_auc"),
+    }
+
+
+def _held_out_n(sample: Optional[Mapping[str, Any]] = None, result: Optional[Mapping[str, Any]] = None) -> Optional[int]:
+    """Held-out count: n_test when recorded, otherwise the validation fold."""
+    sample = sample or {}
+    result = result or {}
+    repro = result.get("reproducibility") or {}
+    return (
+        _i(result.get("n_test"))
+        or _i(sample.get("n_test"))
+        or _i(repro.get("test_participant_count"))
+        or _i(result.get("n_val"))
+        or _i(sample.get("n_val"))
+        or _i(repro.get("validation_participant_count"))
+    )
 
 
 def _worse(a: Optional[str], b: Optional[str]) -> Optional[str]:
@@ -322,12 +366,12 @@ def interpret_prediction_quality(
     """
     if regression:
         agg = regression.get("aggregate") if "aggregate" in regression else regression
-        mae = mae if mae is not None else _f((agg or {}).get("mae"))
-        r2 = r2 if r2 is not None else _f((agg or {}).get("r2"))
+        mae = mae if mae is not None else _first_metric(agg, "mae", "val_mae")
+        r2 = r2 if r2 is not None else _first_metric(agg, "r2", "val_r2")
     if binary:
         bagg = binary.get("aggregate") if "aggregate" in binary else binary
-        f1 = f1 if f1 is not None else _f((bagg or {}).get("f1") or (bagg or {}).get("official_f1"))
-        roc_auc = roc_auc if roc_auc is not None else _f((bagg or {}).get("roc_auc"))
+        f1 = f1 if f1 is not None else _first_metric(bagg, "official_f1", "macro_f1", "f1")
+        roc_auc = roc_auc if roc_auc is not None else _first_metric(bagg, "roc_auc")
 
     mae_label = _label_mae(mae, thresholds)
     r2_label = _label_higher_is_better(
@@ -346,14 +390,14 @@ def interpret_prediction_quality(
         for key, block in regression["per_trait"].items():
             if not isinstance(block, Mapping):
                 continue
-            t_mae = _label_mae(_f(block.get("mae")), thresholds)
+            t_mae = _label_mae(_first_metric(block, "mae", "val_mae"), thresholds)
             t_r2 = _label_higher_is_better(
-                _f(block.get("r2")),
+                _first_metric(block, "r2", "val_r2"),
                 thresholds.r2_strong_min, thresholds.r2_moderate_min, thresholds.r2_limited_min,
             )
             per_trait[key] = {
-                "mae": _f(block.get("mae")),
-                "r2": _f(block.get("r2")),
+                "mae": _first_metric(block, "mae", "val_mae"),
+                "r2": _first_metric(block, "r2", "val_r2"),
                 "mae_label": t_mae,
                 "r2_label": t_r2,
                 "continuous_label": _worse(t_mae, t_r2),
@@ -445,7 +489,7 @@ def interpret_evidence_quality(
     filt = dq.get("experiment_filter") or {}
     volume = dq.get("comment_volume") or {}
     train_vol = volume.get("train") or {}
-    test_vol = volume.get("test") or {}
+    test_vol = volume.get("test") or volume.get("val") or volume.get("held_out") or {}
     used_vol = volume.get("sampled_all_folds") or {}
 
     if n_participants is None:
@@ -477,7 +521,7 @@ def interpret_evidence_quality(
     if participant_n is not None:
         details.append(f"{participant_n} training/used participants ({participant_label})")
     if n_test is not None:
-        details.append(f"{n_test} held-out test participants ({test_label})")
+        details.append(f"{n_test} held-out participants ({test_label})")
     if mean_comments is not None:
         details.append(f"mean {mean_comments:.2f} comments/participant ({comment_label})")
     if details:
@@ -559,14 +603,40 @@ def _effect_from_delta_mae(
     return mae_dir or r2_dir or "had_minimal_effect"
 
 
+def _effect_from_higher_better(
+    delta: Optional[float],
+    abs_min: float,
+) -> Optional[str]:
+    value = _f(delta)
+    if value is None:
+        return None
+    if abs(value) < abs_min:
+        return "had_minimal_effect"
+    return "improved" if value > 0 else "reduced"
+
+
+def _effect_from_row(
+    row: Mapping[str, Any],
+    thresholds: InterpretationThresholds,
+) -> str:
+    """Label one stored matched-pair row. Uses MAE/R² when present, else accuracy/F1."""
+    if row.get("delta_mae") is not None or row.get("delta_r2") is not None:
+        return _effect_from_delta_mae(row.get("delta_mae"), row.get("delta_r2"), thresholds)
+    acc = _effect_from_higher_better(row.get("delta_accuracy"), thresholds.accuracy_minimal_abs)
+    f1 = _effect_from_higher_better(
+        row.get("delta_macro_f1") if row.get("delta_macro_f1") is not None else row.get("delta_f1"),
+        thresholds.f1_minimal_abs,
+    )
+    if acc and f1 and acc != f1:
+        return "produced_a_mixed_effect"
+    return acc or f1 or "had_minimal_effect"
+
+
 def _summarize_cell_effects(
     rows: Sequence[Mapping[str, Any]],
     thresholds: InterpretationThresholds,
 ) -> str:
-    labels = [
-        _effect_from_delta_mae(row.get("delta_mae"), row.get("delta_r2"), thresholds)
-        for row in rows
-    ]
+    labels = [_effect_from_row(row, thresholds) for row in rows]
     if not labels:
         return "had_minimal_effect"
     improved = any(x == "improved" for x in labels)
@@ -626,6 +696,10 @@ def _model_pair_rows(model_comparison: Any) -> List[Dict[str, Any]]:
         lstm_mae = _f(row.get("lstm_mae"))
         lasso_r2 = _f(row.get("lasso_r2"))
         lstm_r2 = _f(row.get("lstm_r2"))
+        lasso_acc = _f(row.get("lasso_accuracy"))
+        lstm_acc = _f(row.get("lstm_accuracy"))
+        lasso_f1 = _first_metric(row, "lasso_macro_f1", "lasso_f1")
+        lstm_f1 = _first_metric(row, "lstm_macro_f1", "lstm_f1")
         rows.append({
             "selection": row.get("selection"),
             "gan": row.get("gan"),
@@ -633,8 +707,14 @@ def _model_pair_rows(model_comparison: Any) -> List[Dict[str, Any]]:
             "lstm_mae": lstm_mae,
             "lasso_r2": lasso_r2,
             "lstm_r2": lstm_r2,
+            "lasso_accuracy": lasso_acc,
+            "lstm_accuracy": lstm_acc,
+            "lasso_macro_f1": lasso_f1,
+            "lstm_macro_f1": lstm_f1,
             "delta_mae": None if lasso_mae is None or lstm_mae is None else lstm_mae - lasso_mae,
             "delta_r2": None if lasso_r2 is None or lstm_r2 is None else lstm_r2 - lasso_r2,
+            "delta_accuracy": None if lasso_acc is None or lstm_acc is None else lstm_acc - lasso_acc,
+            "delta_macro_f1": None if lasso_f1 is None or lstm_f1 is None else lstm_f1 - lasso_f1,
         })
     return rows
 
@@ -659,7 +739,7 @@ def interpret_experiment_effects(
     effects = factor_effects or bundle.get("factor_effects") or {}
     sample = bundle.get("sample") or {}
     if n_test is None:
-        n_test = _i(sample.get("n_test"))
+        n_test = _held_out_n(sample)
 
     q_rows = _as_records(effects.get("qlearning_effect"))
     g_rows = _as_records(effects.get("gan_effect"))
@@ -676,14 +756,27 @@ def interpret_experiment_effects(
     lstm_mae = _f((model_means.get("lstm") or {}).get("mae"))
     lasso_r2 = _f((model_means.get("lasso") or {}).get("r2"))
     lstm_r2 = _f((model_means.get("lstm") or {}).get("r2"))
+    lasso_acc = _f((model_means.get("lasso") or {}).get("accuracy"))
+    lstm_acc = _f((model_means.get("lstm") or {}).get("accuracy"))
+    lasso_f1 = _first_metric(model_means.get("lasso") or {}, "macro_f1", "f1")
+    lstm_f1 = _first_metric(model_means.get("lstm") or {}, "macro_f1", "f1")
     mae_delta = None if lasso_mae is None or lstm_mae is None else lstm_mae - lasso_mae
     r2_delta = None if lasso_r2 is None or lstm_r2 is None else lstm_r2 - lasso_r2
+    acc_delta = None if lasso_acc is None or lstm_acc is None else lstm_acc - lasso_acc
+    f1_delta = None if lasso_f1 is None or lstm_f1 is None else lstm_f1 - lasso_f1
     # Treat Lasso as the reference: negative mae_delta => LSTM improved (lower MAE).
-    model_pair_rows = _model_pair_rows(bundle.get("model_comparison"))
+    model_pair_rows = _model_pair_rows(
+        bundle.get("model_comparison") or effects.get("model_comparison")
+    )
     if model_pair_rows:
         model_label = _summarize_cell_effects(model_pair_rows, thresholds)
-    else:
+    elif mae_delta is not None or r2_delta is not None:
         model_label = _effect_from_delta_mae(mae_delta, r2_delta, thresholds)
+    else:
+        model_label = _effect_from_row(
+            {"delta_accuracy": acc_delta, "delta_macro_f1": f1_delta},
+            thresholds,
+        )
 
     interactions = [
         _interaction_block("Q-learning effect by GAN", q_rows, "gan", thresholds),
@@ -702,32 +795,37 @@ def interpret_experiment_effects(
 
     conditions = []
     for exp_id, row in (results or {}).items():
-        overall = row.get("overall") or {}
+        metrics = _overall_metrics(row.get("overall") or {})
         conditions.append({
             "condition": exp_id,
             "selection": row.get("selection"),
             "gan": row.get("gan"),
             "model": row.get("model"),
-            "mae": _f(overall.get("mae")),
-            "r2": _f(overall.get("r2")),
-            "official_f1": _f(overall.get("official_f1")),
-            "mae_label": _label_mae(_f(overall.get("mae")), thresholds),
+            "mae": metrics["mae"],
+            "r2": metrics["r2"],
+            "official_f1": metrics["official_f1"],
+            "accuracy": metrics["official_accuracy"],
+            "mae_label": _label_mae(metrics["mae"], thresholds),
         })
     observed_lowest_mae = None
     scored = [c for c in conditions if c["mae"] is not None]
     if scored:
         observed_lowest_mae = min(scored, key=lambda c: c["mae"])["condition"]
+    observed_highest_accuracy = None
+    acc_scored = [c for c in conditions if c["accuracy"] is not None]
+    if acc_scored:
+        observed_highest_accuracy = max(acc_scored, key=lambda c: c["accuracy"])["condition"]
 
     small = n_test is not None and n_test < thresholds.small_test_n
     qualification = (
-        f"Comparisons use this run's held-out set"
-        + (f" (n_test={n_test})" if n_test is not None else "")
+        f"Comparisons use this run's held-out fold"
+        + (f" (n={n_test})" if n_test is not None else "")
         + ". They are descriptive matched-pair observations, not a statistical "
           "claim that one component is generally better."
     )
     if small:
         qualification += (
-            f" n_test is below {thresholds.small_test_n}, so component rankings "
+            f" Held-out n is below {thresholds.small_test_n}, so component rankings "
             "from this run are unstable and must not be treated as a result."
         )
 
@@ -738,10 +836,12 @@ def interpret_experiment_effects(
             "effect": label,
             "mean_delta_mae": _f(mean.get("delta_mae")),
             "mean_delta_r2": _f(mean.get("delta_r2")),
+            "mean_delta_accuracy": _f(mean.get("delta_accuracy")),
+            "mean_delta_macro_f1": _f(mean.get("delta_macro_f1")),
             "matched_pairs": [
                 {
                     **{k: row.get(k) for k in row},
-                    "effect": _effect_from_delta_mae(row.get("delta_mae"), row.get("delta_r2"), thresholds),
+                    "effect": _effect_from_row(row, thresholds),
                 }
                 for row in rows
             ],
@@ -751,13 +851,22 @@ def interpret_experiment_effects(
             ),
         }
 
-    model_statement = (
-        f"Across the four matched (selection × GAN) cells, Lasso mean MAE="
-        f"{lasso_mae if lasso_mae is None else round(lasso_mae, 4)} and LSTM mean MAE="
-        f"{lstm_mae if lstm_mae is None else round(lstm_mae, 4)}. "
-        f"Relative to Lasso, LSTM {model_label.replace('_', ' ')} on those means. "
-        f"{qualification}"
-    )
+    if lasso_mae is not None or lstm_mae is not None:
+        model_statement = (
+            f"Across the four matched (selection × GAN) cells, Lasso mean MAE="
+            f"{lasso_mae if lasso_mae is None else round(lasso_mae, 4)} and LSTM mean MAE="
+            f"{lstm_mae if lstm_mae is None else round(lstm_mae, 4)}. "
+            f"Relative to Lasso, LSTM {model_label.replace('_', ' ')} on those means. "
+            f"{qualification}"
+        )
+    else:
+        model_statement = (
+            f"Across the four matched (selection × GAN) cells, Lasso mean accuracy="
+            f"{lasso_acc if lasso_acc is None else round(lasso_acc, 4)} and LSTM mean accuracy="
+            f"{lstm_acc if lstm_acc is None else round(lstm_acc, 4)}. "
+            f"Relative to Lasso, LSTM {model_label.replace('_', ' ')} on those recorded "
+            f"classification means. {qualification}"
+        )
 
     return {
         "kind": "experiment_effect_interpretation",
@@ -770,10 +879,12 @@ def interpret_experiment_effects(
             "lstm_mean_mae": lstm_mae,
             "lasso_mean_r2": lasso_r2,
             "lstm_mean_r2": lstm_r2,
+            "lasso_mean_accuracy": lasso_acc,
+            "lstm_mean_accuracy": lstm_acc,
             "matched_pairs": [
                 {
                     **row,
-                    "effect": _effect_from_delta_mae(row.get("delta_mae"), row.get("delta_r2"), thresholds),
+                    "effect": _effect_from_row(row, thresholds),
                 }
                 for row in model_pair_rows
             ],
@@ -790,12 +901,14 @@ def interpret_experiment_effects(
         },
         "factorial_conditions": conditions,
         "lowest_observed_test_mae_condition": observed_lowest_mae,
+        "highest_observed_held_out_accuracy_condition": observed_highest_accuracy,
         "small_test_set": small,
         "qualification": qualification,
         "effect_vocabulary": list(EFFECT_LABELS),
         "note": (
-            "improved / reduced refer to recorded test MAE (and R²) deltas on "
-            "this run. They are not endorsements of a production model."
+            "improved / reduced refer to recorded held-out deltas on this run "
+            "(MAE/R² when present; otherwise accuracy/macro-F1). They are not "
+            "endorsements of a production model."
         ),
     }
 
@@ -877,28 +990,32 @@ def interpret_condition_result(
     experiment-level interpretation after all eight cells exist.
     """
     overall = result.get("overall") or {}
+    metrics = _overall_metrics(overall)
     per_trait = result.get("per_trait") or {}
     reproducibility = result.get("reproducibility") or {}
-    n_test = _i(result.get("n_test") or reproducibility.get("test_participant_count"))
+    n_test = _held_out_n(result=result)
     n_train = _i(result.get("n_train") or reproducibility.get("train_participant_count"))
     n_val = _i(result.get("n_val") or reproducibility.get("validation_participant_count"))
     n_users = _i(result.get("n_users") or reproducibility.get("participant_sample_size"))
 
     regression = {
         "aggregate": {
-            "mae": overall.get("mae"),
-            "r2": overall.get("r2"),
+            "mae": metrics["mae"],
+            "r2": metrics["r2"],
         },
         "per_trait": {
-            key: {"mae": (block or {}).get("mae"), "r2": (block or {}).get("r2")}
+            key: {
+                "mae": _first_metric(block, "mae", "val_mae"),
+                "r2": _first_metric(block, "r2", "val_r2"),
+            }
             for key, block in per_trait.items()
             if isinstance(block, Mapping)
         },
     }
     binary = {
         "aggregate": {
-            "f1": overall.get("official_f1"),
-            "roc_auc": overall.get("roc_auc"),
+            "f1": metrics["official_f1"],
+            "roc_auc": metrics["roc_auc"],
         },
     }
     quality = interpret_prediction_quality(
@@ -911,12 +1028,12 @@ def interpret_condition_result(
         None,
         {
             "aggregate": {
-                "f1": overall.get("official_f1"),
-                "roc_auc": overall.get("roc_auc"),
+                "f1": metrics["official_f1"],
+                "roc_auc": metrics["roc_auc"],
             },
         },
-        f1=overall.get("official_f1"),
-        roc_auc=overall.get("roc_auc"),
+        f1=metrics["official_f1"],
+        roc_auc=metrics["roc_auc"],
         source="official_high_low_from_validation_threshold",
         thresholds=thresholds,
     )
@@ -940,9 +1057,9 @@ def interpret_condition_result(
     what_happened = (
         f"Condition {result.get('experiment')} ({label}) ran selection="
         f"{result.get('selection')}, gan={result.get('gan')}, model="
-        f"{result.get('model')} on train={n_train}, validation={n_val}, "
-        f"test={n_test} participants. Metrics were produced by the metrics engine; "
-        "this record only describes those stored values."
+        f"{result.get('model')} on train={n_train}, validation={n_val} "
+        f"held-out participants (n_test alias={n_test}). Metrics were produced "
+        "by the metrics engine; this record only describes those stored values."
     )
     component_note = (
         "This record is one cell of the 2×2×2 matrix. Whether Q-learning, GAN, "
@@ -951,12 +1068,12 @@ def interpret_condition_result(
     )
     limitations = [
         "Predictions are model outputs on a normalized [0, 1] scale, not diagnoses.",
-        "High/Low metrics use the validation-selected threshold applied once to test.",
+        "High/Low metrics use the validation-selected threshold on the held-out fold.",
         component_note,
     ]
     if evidence.get("small_test_set"):
         limitations.append(
-            f"Held-out n_test={n_test} is below {thresholds.small_test_n}; "
+            f"Held-out n={n_test} is below {thresholds.small_test_n}; "
             "do not treat this cell as a stable ranking."
         )
 
@@ -982,10 +1099,10 @@ def interpret_condition_result(
         "quality": quality,
         "high_low": {
             "source": "official_binary_validation_threshold",
-            "official_f1": _f(overall.get("official_f1")),
-            "official_accuracy": _f(overall.get("official_accuracy")),
-            "roc_auc": _f(overall.get("roc_auc")),
-            "pr_auc": _f(overall.get("pr_auc")),
+            "official_f1": metrics["official_f1"],
+            "official_accuracy": metrics["official_accuracy"],
+            "roc_auc": metrics["roc_auc"],
+            "pr_auc": metrics["pr_auc"],
             "labels": high_low["labels"],
             "statement": high_low["statement"],
         },
@@ -1123,7 +1240,7 @@ def interpret_research_summary(
     reproducibility = bundle.get("reproducibility") or {}
     results = bundle.get("results") or {}
 
-    n_test = _i(sample.get("n_test"))
+    n_test = _held_out_n(sample)
     n_train = _i(sample.get("n_train"))
     n_val = _i(sample.get("n_val"))
     n_users = _i(sample.get("n_users"))
@@ -1153,15 +1270,25 @@ def interpret_research_summary(
     if headline_overall is None and results:
         headline_overall = next(iter(results.values()), {}).get("overall")
 
+    lasso_headline = headline_overall
+    lstm_headline = None
+    for row in results.values():
+        if not isinstance(row, Mapping):
+            continue
+        if row.get("model") == "lasso" and lasso_headline is headline_overall:
+            lasso_headline = row.get("overall") or lasso_headline
+        if row.get("model") == "lstm" and lstm_headline is None:
+            lstm_headline = row.get("overall")
+
     quality_lasso = interpret_prediction_quality(
-        lasso_reg or headline_overall,
-        (binary.get("lasso") if isinstance(binary, Mapping) else None) or headline_overall,
+        lasso_reg or lasso_headline,
+        (binary.get("lasso") if isinstance(binary, Mapping) else None) or lasso_headline,
         source="metrics_engine_or_runner_overall",
         thresholds=thresholds,
     )
     quality_lstm = interpret_prediction_quality(
-        lstm_reg,
-        binary.get("lstm") if isinstance(binary, Mapping) else None,
+        lstm_reg or lstm_headline,
+        (binary.get("lstm") if isinstance(binary, Mapping) else None) or lstm_headline,
         source="metrics_engine_or_runner_overall",
         thresholds=thresholds,
     )
@@ -1193,8 +1320,10 @@ def interpret_research_summary(
         "statement": (
             f"This run evaluated {len(results)} factorial conditions on "
             f"{n_users if n_users is not None else 'an unstated number of'} "
-            f"participants (train={n_train}, validation={n_val}, test={n_test}) "
-            f"using continuous 5-output OCEAN regression for both Lasso and LSTM."
+            f"participants (train={n_train}, validation/held-out={n_val}, "
+            f"n_test alias={n_test}). Lasso reports continuous OCEAN regression "
+            f"plus a tertile view; LSTM reports Low/High classification from "
+            f"the metrics-engine threshold sweep."
         ),
     }
 
@@ -1206,7 +1335,7 @@ def interpret_research_summary(
     ]
     if evidence.get("small_test_set"):
         limitations.append(
-            f"Held-out n_test={n_test} is below {thresholds.small_test_n}; "
+            f"Held-out n={n_test} is below {thresholds.small_test_n}; "
             "do not treat component rankings as stable."
         )
     if (data_quality.get("ingestion") or {}).get("available") is False:

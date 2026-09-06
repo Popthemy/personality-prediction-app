@@ -130,10 +130,10 @@ def _record_pandora_bundle(run, bundle):
     run.best_f1 = _json_safe_float(best.get("macro_f1"))
     run.audit_status = (bundle.get("audit") or {}).get("status", "")
     run.findings = findings.get("notes", [])
-    run.summary = {
+    run.summary = _json_safe_value({
         'comparison': comparison.to_dict("records") if comparison is not None else [],
         'artifact_dir': run.artifact_dir,
-    }
+    })
     run.status = 'completed'
     run.completed_at = timezone.now()
     run.save()

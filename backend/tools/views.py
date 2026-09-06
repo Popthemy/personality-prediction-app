@@ -3,10 +3,11 @@ import csv
 import logging
 import json
 import re
+from pathlib import Path
 from io import StringIO, BytesIO
-from django.views.generic import TemplateView, FormView, View
+from django.views.generic import TemplateView, FormView, View, DetailView, ListView
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, FileResponse, Http404
 from django.shortcuts import redirect
 from django.urls import reverse_lazy
 from django.utils import timezone
@@ -19,13 +20,123 @@ from .forms import (
     CohortTrainingForm,
     PredictionSelectionForm,
 )
-from backend.core.models import VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING, COHORT_MODEL, PSYCHOMETRIC_PROFILE
+from backend.core.models import (
+    VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING, COHORT_MODEL, PSYCHOMETRIC_PROFILE,
+    PANDORA_EXPERIMENT_RUN, PANDORA_CONDITION_RESULT, PANDORA_THRESHOLD_RESULT,
+    PANDORA_DATASET_ALLOCATION,
+)
 from backend.core.services.bfi_scorer import BFIScorer, score_bfi_survey
 from backend.ml_pipeline.services.pipeline_orchestrator import PipelineOrchestrator
 from backend.ml_pipeline.services.timeline_exporter import export_cleaned_posts_to_txt
 from backend.ml_pipeline.tasks import run_full_pipeline_task, run_pipeline_phase_task
 
 logger = logging.getLogger(__name__)
+
+PANDORA_DATA_DIR = Path("PANDORA") / "pandora-big5" / "data"
+
+
+def _pandora_dataset_status():
+    data_dir = PANDORA_DATA_DIR
+    parquet_files = sorted(data_dir.glob("*.parquet")) if data_dir.exists() else []
+    prepared_cache = Path("pandora_personality") / "data" / "pandora_prepared.json"
+    latest_run = PANDORA_EXPERIMENT_RUN.objects.order_by('-created_at').first()
+    return {
+        'path': str(data_dir.resolve()),
+        'exists': data_dir.exists(),
+        'parquet_count': len(parquet_files),
+        'parquet_files': [p.name for p in parquet_files],
+        'prepared_cache_exists': prepared_cache.exists(),
+        'prepared_cache_path': str(prepared_cache.resolve()),
+        'latest_run': latest_run,
+    }
+
+
+def _json_safe_float(value):
+    try:
+        numeric = float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    if numeric is None or numeric != numeric or numeric in (float("inf"), float("-inf")):
+        return None
+    return numeric
+
+
+def _json_safe_value(value):
+    if isinstance(value, float):
+        return value if value == value and value not in (float("inf"), float("-inf")) else None
+    if isinstance(value, dict):
+        return {str(k): _json_safe_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_value(v) for v in value]
+    return value
+
+
+def _record_pandora_bundle(run, bundle):
+    sample = bundle.get("sample") or {}
+    for user_id in sample.get("user_ids") or []:
+        PANDORA_DATASET_ALLOCATION.objects.get_or_create(
+            run=run,
+            pandora_user_id=str(user_id),
+            defaults={'source_split': 'experiment_sample', 'row_hash': str(user_id)},
+        )
+
+    comparison = bundle.get("comparison")
+    if comparison is not None:
+        for row in comparison.to_dict("records"):
+            overall = (bundle.get("results") or {}).get(row.get("condition"), {}).get("overall", {})
+            PANDORA_CONDITION_RESULT.objects.update_or_create(
+                run=run,
+                condition=row.get("condition", ""),
+                defaults={
+                    'description': row.get("description") or row.get("label") or "",
+                    'selection': row.get("selection") or "",
+                    'gan': bool(row.get("gan")),
+                    'model': row.get("model") or "",
+                    'val_mae': _json_safe_float(row.get("val_mae")),
+                    'accuracy': _json_safe_float(row.get("accuracy")),
+                    'macro_f1': _json_safe_float(row.get("macro_f1")),
+                    'specificity': _json_safe_float(overall.get("specificity")),
+                    'precision': _json_safe_float(overall.get("macro_precision")),
+                    'recall': _json_safe_float(overall.get("macro_recall")),
+                    'metrics': _json_safe_value(row),
+                }
+            )
+
+    sweeps = bundle.get("threshold_sweeps")
+    if sweeps is not None:
+        PANDORA_THRESHOLD_RESULT.objects.filter(run=run).delete()
+        for row in sweeps.to_dict("records"):
+            threshold = _json_safe_float(row.get("threshold"))
+            if threshold is None:
+                continue
+            PANDORA_THRESHOLD_RESULT.objects.create(
+                run=run,
+                condition=row.get("condition", ""),
+                split=row.get("split") or "validation",
+                trait=row.get("trait") or "",
+                threshold=threshold,
+                accuracy=_json_safe_float(row.get("accuracy")),
+                f1_score=_json_safe_float(row.get("f1_score")),
+                specificity=_json_safe_float(row.get("specificity")),
+                precision=_json_safe_float(row.get("precision")),
+                recall=_json_safe_float(row.get("recall")),
+            )
+
+    findings = bundle.get("findings") or {}
+    best = findings.get("best_condition") or {}
+    run.artifact_dir = str(bundle.get("artifact_dir") or "")
+    run.best_condition = best.get("condition") or ""
+    run.best_accuracy = _json_safe_float(best.get("accuracy"))
+    run.best_f1 = _json_safe_float(best.get("macro_f1"))
+    run.audit_status = (bundle.get("audit") or {}).get("status", "")
+    run.findings = findings.get("notes", [])
+    run.summary = {
+        'comparison': comparison.to_dict("records") if comparison is not None else [],
+        'artifact_dir': run.artifact_dir,
+    }
+    run.status = 'completed'
+    run.completed_at = timezone.now()
+    run.save()
 
 
 def _export_cleaned_timeline_for_volunteer(volunteer, posts):
@@ -50,7 +161,7 @@ def _export_cleaned_timeline_for_volunteer(volunteer, posts):
 
 
 class ToolsView(LoginRequiredMixin, TemplateView):
-    """Main tools hub showing import, fetch, and pipeline options."""
+    """Main tools hub for PANDORA experiments and prediction evaluation."""
     template_name = 'tools/index.html'
 
     def get_context_data(self, **kwargs):
@@ -66,6 +177,10 @@ class ToolsView(LoginRequiredMixin, TemplateView):
             researcher=self.request.user).values_list('id', flat=True))
         context['pipeline_control_form'] = PipelineControlForm(user=self.request.user)
         context['active_cohort_model'] = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
+        context['pandora_status'] = _pandora_dataset_status()
+        context['latest_pandora_runs'] = PANDORA_EXPERIMENT_RUN.objects.filter(
+            researcher=self.request.user
+        ).order_by('-created_at')[:5]
         return context
 
 
@@ -331,75 +446,146 @@ class PipelineControlView(LoginRequiredMixin, FormView):
 
 
 class CohortTrainingView(LoginRequiredMixin, FormView):
-    """Dedicated page for training and validating the shared cohort model."""
+    """Dedicated page for running the PANDORA 8-condition experiment."""
     form_class = CohortTrainingForm
     template_name = 'tools/train.html'
     success_url = reverse_lazy('tools:train')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        labeled_volunteers = VOLUNTEER.objects.filter(
-            researcher=self.request.user,
-            bfi_survey__isnull=False,
-        ).order_by('id')
-        labeled_with_posts = labeled_volunteers.filter(posts__isnull=False).distinct()
-        labeled_with_embeddings = labeled_volunteers.filter(bert_embeddings__isnull=False).distinct()
-        active_model = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
-
-        context['labeled_volunteers_count'] = labeled_volunteers.count()
-        context['labeled_with_posts_count'] = labeled_with_posts.count()
-        context['labeled_with_embeddings_count'] = labeled_with_embeddings.count()
-        context['active_model'] = active_model
-        context['saved_train_count'] = len(active_model.train_volunteer_ids) if active_model else 0
-        context['saved_validation_count'] = len(active_model.validation_volunteer_ids) if active_model else 0
-        context['train_volunteers'] = []
-        context['validation_volunteers'] = []
-
-        if active_model:
-            context['train_volunteers'] = labeled_volunteers.filter(
-                id__in=active_model.train_volunteer_ids
-            )
-            context['validation_volunteers'] = labeled_volunteers.filter(
-                id__in=active_model.validation_volunteer_ids
-            )
+        context['pandora_status'] = _pandora_dataset_status()
+        context['runs'] = PANDORA_EXPERIMENT_RUN.objects.filter(
+            researcher=self.request.user
+        ).order_by('-created_at')[:8]
+        context['consumed_sample_count'] = PANDORA_DATASET_ALLOCATION.objects.values(
+            'pandora_user_id'
+        ).distinct().count()
 
         return context
 
     def form_valid(self, form):
-        try:
-            anchor_volunteer = VOLUNTEER.objects.filter(
-                researcher=self.request.user,
-                bfi_survey__isnull=False,
-            ).order_by('id').first()
-            if not anchor_volunteer:
-                messages.error(self.request, 'No labeled volunteers are available for training.')
-                return self.form_invalid(form)
+        status = _pandora_dataset_status()
+        if not status['exists'] or status['parquet_count'] == 0:
+            messages.error(self.request, 'PANDORA parquet files were not found in the project dataset folder.')
+            return self.form_invalid(form)
 
-            orchestrator = PipelineOrchestrator(anchor_volunteer.id)
-            result = orchestrator.train_cohort_model()
+        sample_size = form.cleaned_data['sample_size']
+        seed = form.cleaned_data['seed']
+        run = PANDORA_EXPERIMENT_RUN.objects.create(
+            researcher=self.request.user,
+            run_id=f"pandora_{timezone.now().strftime('%Y%m%d_%H%M%S')}",
+            label=form.cleaned_data.get('run_label') or "",
+            status='running',
+            dataset_path=status['path'],
+            sample_size=sample_size,
+            seed=seed,
+            max_comments_per_user=form.cleaned_data.get('max_comments_per_user'),
+            refresh_prepared_cache=form.cleaned_data.get('refresh_prepared_cache') or False,
+            allow_reuse=form.cleaned_data.get('allow_reuse') or False,
+            started_at=timezone.now(),
+        )
+
+        try:
+            from backend.ml_pipeline.experiments import pandora_runner
+
+            pandora_file = pandora_runner._default_pandora_file()
+            if pandora_file is None:
+                raise ValueError("No PANDORA parquet file found.")
+
+            work_dir = Path("pandora_personality")
+            data_dir = work_dir / "data"
+            cache_dir = work_dir / "cache"
+            artifact_dir = work_dir / "artifacts"
+            for folder in (data_dir, cache_dir, artifact_dir):
+                folder.mkdir(parents=True, exist_ok=True)
+
+            prepared = pandora_runner.load_or_prepare_pandora(
+                pandora_file,
+                data_dir / "pandora_prepared.json",
+                refresh_prepared=form.cleaned_data.get('refresh_prepared_cache') or False,
+            )
+            if not run.allow_reuse:
+                used_ids = set(PANDORA_DATASET_ALLOCATION.objects.values_list('pandora_user_id', flat=True))
+                prepared = [item for item in prepared if item.user_id not in used_ids]
+                if len(prepared) < sample_size:
+                    raise ValueError(
+                        f"Only {len(prepared)} unused PANDORA users remain. Reduce sample size or enable reuse."
+                    )
+
+            cfg = pandora_runner.ExperimentConfig(
+                sample_n_users=sample_size,
+                seed=seed,
+                embedding_cache_dir=str(cache_dir),
+                output_dir=str(artifact_dir),
+            )
+            bundle = pandora_runner.ExperimentRunner(prepared, cfg).run()
+            _record_pandora_bundle(run, bundle)
 
             messages.success(
                 self.request,
-                f"Cohort model trained successfully with {result.get('train_count', 0)} training volunteers "
-                f"and {result.get('validation_count', 0)} validation volunteers."
+                f"PANDORA experiment completed. Artifacts saved to {run.artifact_dir}."
             )
-            logger.info(
-                "Cohort model trained by %s: model_id=%s version=%s",
-                self.request.user,
-                result.get('model_id'),
-                result.get('model_version'),
-            )
+            return redirect('tools:experiment_detail', pk=run.pk)
         except Exception as e:
-            logger.error("Cohort training error: %s", e, exc_info=True)
-            if 'No usable training samples' in str(e) or 'Need at least 2 labeled volunteers' in str(e):
-                messages.error(
-                    self.request,
-                    'Your 13 BFI-labeled volunteers are imported, but they still need fetched posts and embeddings before training can start.'
-                )
-            messages.error(self.request, f'Error training cohort model: {str(e)}')
+            run.status = 'error'
+            run.error_message = str(e)
+            run.completed_at = timezone.now()
+            run.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
+            logger.error("PANDORA experiment error: %s", e, exc_info=True)
+            messages.error(self.request, f'Error running PANDORA experiment: {str(e)}')
             return self.form_invalid(form)
 
         return super().form_valid(form)
+
+
+class PandoraRunListView(LoginRequiredMixin, ListView):
+    """History of PANDORA experiment runs."""
+    model = PANDORA_EXPERIMENT_RUN
+    template_name = 'tools/experiment_history.html'
+    context_object_name = 'runs'
+    paginate_by = 20
+
+    def get_queryset(self):
+        return PANDORA_EXPERIMENT_RUN.objects.filter(researcher=self.request.user).order_by('-created_at')
+
+
+class PandoraRunDetailView(LoginRequiredMixin, DetailView):
+    """Presentation-ready PANDORA run results."""
+    model = PANDORA_EXPERIMENT_RUN
+    template_name = 'tools/experiment_detail.html'
+    context_object_name = 'run'
+
+    def get_queryset(self):
+        return PANDORA_EXPERIMENT_RUN.objects.filter(researcher=self.request.user)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        run = self.object
+        context['conditions'] = run.condition_results.all()
+        context['thresholds'] = run.threshold_results.all()
+        context['plot_files'] = []
+        if run.artifact_dir:
+            plot_dir = Path(run.artifact_dir) / "plots"
+            if plot_dir.exists():
+                context['plot_files'] = [
+                    {'name': p.name, 'url': reverse_lazy('tools:experiment_plot', kwargs={'pk': run.pk, 'filename': p.name})}
+                    for p in sorted(plot_dir.glob("*.png"))
+                ]
+        return context
+
+
+class PandoraRunPlotView(LoginRequiredMixin, View):
+    """Serve generated plot images for a user's own PANDORA run."""
+
+    def get(self, request, pk, filename):
+        run = PANDORA_EXPERIMENT_RUN.objects.filter(pk=pk, researcher=request.user).first()
+        if not run or not run.artifact_dir:
+            raise Http404("Plot not found")
+        plot_dir = (Path(run.artifact_dir) / "plots").resolve()
+        target = (plot_dir / Path(filename).name).resolve()
+        if plot_dir not in target.parents or not target.exists() or target.suffix.lower() != ".png":
+            raise Http404("Plot not found")
+        return FileResponse(target.open("rb"), content_type="image/png")
 
 
 class CohortPredictionView(LoginRequiredMixin, FormView):

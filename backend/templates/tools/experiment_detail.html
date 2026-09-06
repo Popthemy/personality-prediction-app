@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}PANDORA Results{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6">
+    <div class="flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Experiment result</p>
+        <h1 class="mt-2 text-3xl font-bold text-stone-900">{{ run.label|default:run.run_id }}</h1>
+        <p class="mt-2 text-stone-600">Samples: {{ run.sample_size }} · Seed: {{ run.seed }} · Status: {{ run.status }}</p>
+      </div>
+      <a href="{% url 'tools:experiment_history' %}" class="rounded-lg border border-stone-300 px-4 py-2 font-semibold text-stone-800 hover:bg-stone-50">Run History</a>
+    </div>
+
+    <div class="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">Best condition</div>
+        <div class="mt-1 font-bold text-stone-900">{{ run.best_condition|default:"n/a" }}</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">Accuracy</div>
+        <div class="mt-1 text-2xl font-bold text-stone-900">{{ run.best_accuracy|floatformat:3|default:"n/a" }}</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">F1</div>
+        <div class="mt-1 text-2xl font-bold text-stone-900">{{ run.best_f1|floatformat:3|default:"n/a" }}</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">Audit</div>
+        <div class="mt-1 text-2xl font-bold text-stone-900">{{ run.audit_status|default:"n/a" }}</div>
+      </div>
+    </div>
+
+    {% if run.findings %}
+      <div class="mt-6 rounded-lg bg-emerald-50 border border-emerald-200 p-4">
+        <h2 class="font-bold text-stone-900">Research Evidence</h2>
+        <ul class="mt-3 space-y-2 text-sm text-stone-700">
+          {% for finding in run.findings %}
+            <li>{{ finding }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-stone-200">
+      <h2 class="text-xl font-bold text-stone-900">8-Condition Comparison</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-stone-200 text-sm">
+        <thead class="bg-stone-50 text-left text-stone-600">
+          <tr>
+            <th class="px-4 py-3">Condition</th>
+            <th class="px-4 py-3">Selection</th>
+            <th class="px-4 py-3">GAN</th>
+            <th class="px-4 py-3">Model</th>
+            <th class="px-4 py-3">MAE</th>
+            <th class="px-4 py-3">Accuracy</th>
+            <th class="px-4 py-3">F1</th>
+            <th class="px-4 py-3">Specificity</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-stone-200">
+          {% for row in conditions %}
+            <tr>
+              <td class="px-4 py-3 font-semibold">{{ row.condition }}</td>
+              <td class="px-4 py-3">{{ row.selection }}</td>
+              <td class="px-4 py-3">{% if row.gan %}ON{% else %}OFF{% endif %}</td>
+              <td class="px-4 py-3">{{ row.model|upper }}</td>
+              <td class="px-4 py-3">{{ row.val_mae|floatformat:3|default:"n/a" }}</td>
+              <td class="px-4 py-3">{{ row.accuracy|floatformat:3|default:"n/a" }}</td>
+              <td class="px-4 py-3">{{ row.macro_f1|floatformat:3|default:"n/a" }}</td>
+              <td class="px-4 py-3">{{ row.specificity|floatformat:3|default:"n/a" }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8" class="px-4 py-8 text-center text-stone-500">No condition metrics were stored.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6">
+    <h2 class="text-xl font-bold text-stone-900">Metric and Threshold Graphs</h2>
+    <p class="mt-1 text-sm text-stone-600 break-all">Artifact folder: {{ run.artifact_dir|default:"n/a" }}</p>
+    <div class="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {% for plot in plot_files %}
+        <div class="rounded-lg border border-stone-200 bg-stone-50 p-3">
+          <img src="{{ plot.url }}" alt="{{ plot.name }}" class="w-full rounded border border-stone-200 bg-white">
+          <div class="mt-2 text-sm font-semibold text-stone-700">{{ plot.name }}</div>
+        </div>
+      {% empty %}
+        <div class="text-stone-500">No plot files found for this run.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

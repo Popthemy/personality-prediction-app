@@ -25,6 +25,13 @@ PIPELINE_STATUS_CHOICES = [
     ('error', 'Error'),
 ]
 
+EXPERIMENT_STATUS_CHOICES = [
+    ('queued', 'Queued'),
+    ('running', 'Running'),
+    ('completed', 'Completed'),
+    ('error', 'Error'),
+]
+
 
 class VOLUNTEER(models.Model):
     """Research participant."""
@@ -385,6 +392,115 @@ class COHORT_MODEL(models.Model):
 
     def __str__(self):
         return f"Cohort model {self.name} ({self.version})"
+
+
+class PANDORA_EXPERIMENT_RUN(models.Model):
+    """One dashboard-visible PANDORA 8-condition experiment run."""
+
+    id = models.BigAutoField(primary_key=True)
+    researcher = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='pandora_experiment_runs')
+    run_id = models.CharField(max_length=80, unique=True, db_index=True)
+    label = models.CharField(max_length=160, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=EXPERIMENT_STATUS_CHOICES,
+        default='queued',
+        db_index=True,
+    )
+
+    dataset_path = models.CharField(max_length=500, blank=True)
+    sample_size = models.IntegerField(default=0)
+    seed = models.IntegerField(default=42)
+    max_comments_per_user = models.IntegerField(null=True, blank=True)
+    refresh_prepared_cache = models.BooleanField(default=False)
+    allow_reuse = models.BooleanField(default=False)
+
+    artifact_dir = models.CharField(max_length=500, blank=True)
+    best_condition = models.CharField(max_length=80, blank=True)
+    best_accuracy = models.FloatField(null=True, blank=True)
+    best_f1 = models.FloatField(null=True, blank=True)
+    best_specificity = models.FloatField(null=True, blank=True)
+    audit_status = models.CharField(max_length=20, blank=True)
+    findings = models.JSONField(default=list, blank=True)
+    summary = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'pandora_experiment_run'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.label or self.run_id
+
+
+class PANDORA_CONDITION_RESULT(models.Model):
+    """Metrics for one condition inside a PANDORA experiment run."""
+
+    id = models.BigAutoField(primary_key=True)
+    run = models.ForeignKey(
+        PANDORA_EXPERIMENT_RUN, on_delete=models.CASCADE, related_name='condition_results')
+    condition = models.CharField(max_length=80, db_index=True)
+    description = models.CharField(max_length=200, blank=True)
+    selection = models.CharField(max_length=40, blank=True)
+    gan = models.BooleanField(default=False)
+    model = models.CharField(max_length=40, blank=True)
+    val_mae = models.FloatField(null=True, blank=True)
+    accuracy = models.FloatField(null=True, blank=True)
+    macro_f1 = models.FloatField(null=True, blank=True)
+    specificity = models.FloatField(null=True, blank=True)
+    precision = models.FloatField(null=True, blank=True)
+    recall = models.FloatField(null=True, blank=True)
+    metrics = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'pandora_condition_result'
+        unique_together = ['run', 'condition']
+        ordering = ['condition']
+
+
+class PANDORA_THRESHOLD_RESULT(models.Model):
+    """Long-form metric row for threshold sweep charts."""
+
+    id = models.BigAutoField(primary_key=True)
+    run = models.ForeignKey(
+        PANDORA_EXPERIMENT_RUN, on_delete=models.CASCADE, related_name='threshold_results')
+    condition = models.CharField(max_length=80, db_index=True)
+    split = models.CharField(max_length=40, default='validation')
+    trait = models.CharField(max_length=30)
+    threshold = models.FloatField()
+    accuracy = models.FloatField(null=True, blank=True)
+    f1_score = models.FloatField(null=True, blank=True)
+    specificity = models.FloatField(null=True, blank=True)
+    precision = models.FloatField(null=True, blank=True)
+    recall = models.FloatField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'pandora_threshold_result'
+        indexes = [
+            models.Index(fields=['run', 'condition', 'trait']),
+        ]
+
+
+class PANDORA_DATASET_ALLOCATION(models.Model):
+    """Internal PANDORA sample IDs consumed by experiment runs."""
+
+    id = models.BigAutoField(primary_key=True)
+    pandora_user_id = models.CharField(max_length=120, db_index=True)
+    source_split = models.CharField(max_length=40, blank=True)
+    row_hash = models.CharField(max_length=128, blank=True, db_index=True)
+    run = models.ForeignKey(
+        PANDORA_EXPERIMENT_RUN, on_delete=models.CASCADE, related_name='dataset_allocations')
+    consumed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pandora_dataset_allocation'
+        unique_together = ['pandora_user_id', 'run']
 
 
 class PSYCHOMETRIC_PROFILE(models.Model):

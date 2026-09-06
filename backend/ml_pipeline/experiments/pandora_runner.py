@@ -48,32 +48,31 @@ import numpy as np
 # will produce once the ML side is finalized:
 #   qlearning_agent.QLearningAgent / run_training_loop  -> comment selection
 #   bert_encoder.BERTEncoder                            -> 768-d embeddings
-#   augmentation.gan.GANAugmenter                       -> REAL adversarial GAN
+#   gan_augmenter.GANAugmenter                          -> paired GAN augmentation
 #   lasso_regressor.LassoTrainer                        -> per-trait ElasticNet
 #   lstm_classifier.LSTMTrainer                         -> per-trait 3-class LSTM
 #   metrics_engine.evaluate (+ component fns)           -> canonical metrics
 #
-# GAN note: there are two GANAugmenter classes in the tree. The Django
-# orchestrator today calls the simplified MVP one (services/gan_augmenter.py:
-# Gaussian noise + z-norm). The experiments instead bind to the *real*
-# adversarial GAN in services/augmentation/gan.py (Generator/Discriminator,
-# fit(X_train) -> generate(n)), because the point of the sweep is to measure
-# the effect of a genuine GAN before wiring it into Django. The augmentation
-# package __init__ is empty, so we import the submodule directly.
-from backend.ml_pipeline.services.data.pandora import PreparedUserComments
+from backend.ml_pipeline.cleaning.cleaner import CleanedContent, ExtractedSignals
+from backend.ml_pipeline.services.data.pandora import (
+    PreparedUserComments,
+    UserTraits,
+    load_pandora_comments,
+)
 from backend.ml_pipeline.services.qlearning_agent import QLearningAgent, run_training_loop
 from backend.ml_pipeline.services.bert_encoder import BERTEncoder
-from backend.ml_pipeline.services.augmentation.gan import GANAugmenter
+from backend.ml_pipeline.services.gan_augmenter import GANAugmenter
 from backend.ml_pipeline.services.lasso_regressor import LassoTrainer
 from backend.ml_pipeline.services.lstm_classifier import (
     LSTMTrainer,
     OCEAN_TRAITS,
-    TRAIT_KEYS,
     set_seed,
 )
 from backend.ml_pipeline.services import metrics_engine as me
 
 logger = logging.getLogger("ml_pipeline")
+
+TRAIT_KEYS: Tuple[str, ...] = ("O", "C", "E", "A", "N")
 
 PRESENTATION_METRICS: Tuple[str, ...] = (
     "accuracy",
@@ -369,7 +368,7 @@ def train_qlearning_agent(sample: Sample, cfg: ExperimentConfig) -> QLearningAge
         return agent
 
     set_seed(cfg.seed)
-run_training_loop(
+    run_training_loop(
         agent,
         comment_batches=sample.texts,
         n_epochs=cfg.qlearning_train_epochs,
@@ -464,7 +463,7 @@ def _make_gan(embedding_dim: int, cfg: ExperimentConfig) -> GANAugmenter:
     )
 
 
-def _augment_pooled_gan(X_tr: np.ndarray, cfg: ExperimentConfig) -> np.ndarray:
+def _augment_pooled_gan(X_tr: np.ndarray, y_tr: np.ndarray, cfg: ExperimentConfig) -> np.ndarray:
     """
     Fit the adversarial GAN on the pooled TRAIN vectors only, then generate one
     synthetic pooled vector per real training user. Used by the Lasso path.
@@ -474,12 +473,12 @@ def _augment_pooled_gan(X_tr: np.ndarray, cfg: ExperimentConfig) -> np.ndarray:
     if len(X_tr) < 2:  # GAN needs >= 2 real samples to fit
         logger.warning("Too few train users (%d) to fit the GAN; skipping augmentation.", len(X_tr))
         return np.empty((0, X_tr.shape[1]), dtype=np.float32)
-    gan = _make_gan(X_tr.shape[1], cfg).fit(X_tr)
+    gan = _make_gan(X_tr.shape[1], cfg).fit(X_tr, ocean_scores=y_tr)
     synth, _, _ = gan.generate(len(X_tr))
     return np.asarray(synth, dtype=np.float32)
 
 
-def _augment_sequences_gan(train_seqs: List[np.ndarray], cfg: ExperimentConfig) -> List[np.ndarray]:
+def _augment_sequences_gan(train_seqs: List[np.ndarray], y_tr: np.ndarray, cfg: ExperimentConfig) -> List[np.ndarray]:
     """
     LSTM path: fit the adversarial GAN on *all* real TRAIN timestep vectors
     (never val), then generate one same-length synthetic sequence per real
@@ -491,7 +490,11 @@ def _augment_sequences_gan(train_seqs: List[np.ndarray], cfg: ExperimentConfig) 
     if len(all_vecs) < 2:
         logger.warning("Too few train timesteps (%d) to fit the GAN; reusing real sequences.", len(all_vecs))
         return [np.asarray(s, dtype=np.float32) for s in train_seqs]
-    gan = _make_gan(all_vecs.shape[1], cfg).fit(all_vecs)
+    repeated_y = np.vstack([
+        np.repeat(y_tr[i:i + 1], len(seq), axis=0)
+        for i, seq in enumerate(train_seqs)
+    ]).astype(np.float32)
+    gan = _make_gan(all_vecs.shape[1], cfg).fit(all_vecs, ocean_scores=repeated_y)
     total = int(sum(len(s) for s in train_seqs))
     synth_all, _, _ = gan.generate(total)
     synth_all = np.asarray(synth_all, dtype=np.float32)
@@ -510,7 +513,7 @@ def _augment_sequences_gan(train_seqs: List[np.ndarray], cfg: ExperimentConfig) 
 
 def _run_lasso(
     features: Features,
-    y_train: np.ndarray,
+    sample: Sample,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
     cfg: ExperimentConfig,
@@ -556,7 +559,8 @@ def _run_lasso(
     synth_scaled = None
     sample_weight = None
     if use_gan:
-        synth = _augment_pooled_gan(X_tr, cfg)
+        y_tr_all = sample.labels_unit[train_idx].astype(np.float32)
+        synth = _augment_pooled_gan(X_tr, y_tr_all, cfg)
         if len(synth) > 0:
             synth_scaled = trainer.transform_features(synth)
             sample_weight = np.concatenate([
@@ -639,46 +643,32 @@ def _run_lasso(
 
 def _run_lstm(
     features: Features,
-    y_train: np.ndarray,
+    sample: Sample,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
     cfg: ExperimentConfig,
     use_gan: bool,
 ) -> Tuple[Dict[str, Any], LSTMTrainer, Dict[str, np.ndarray]]:
-    """
-    Per-trait 3-class LSTM on the ordered selected-comment sequences. Tertile
-    labels are derived from TRAIN labels only and applied identically to val
-    (fixed class boundaries decided before evaluation).
-
-    Predictions come from the trainer's own ``predict_trait`` (raw argmax
-    classes on the val fold); every reported number is then computed by
-    ``metrics_engine.compute_multiclass_metrics`` (accuracy, macro P/R/F1,
-    confusion matrix over labels [0,1,2]) -- the same canonical module the
-    Django orchestrator evaluates through, so the runner re-derives no metric.
-
-    With ``use_gan`` the training fold is augmented with one synthetic sequence
-    per real training participant (same real adversarial GAN as the Lasso path),
-    appended to the real sequences and down-weighted by ``synthetic_weight`` via
-    the LSTM's ``sample_weights``. Augmentation is trait-agnostic so it's
-    generated once.
-
-    Also returns the held-out val-fold arrays (continuous truth, predicted
-    classes, tertile-truth classes) so ``run_all`` can pair them with the
-    matched Lasso cell through ``metrics_engine.evaluate``.
-    """
+    """Train the current joint 5-output LSTM and score validation Low/High metrics."""
     seqs = features.sequences
     tr_seqs = [seqs[i] for i in train_idx]
     val_seqs = [seqs[i] for i in val_idx]
+    y_tr = sample.labels_unit[train_idx].astype(np.float32)
+    y_val = sample.labels_unit[val_idx].astype(np.float32)
 
-    # Trait-agnostic synthetic sequences (generated once, reused per trait).
     synth_seqs: Optional[List[np.ndarray]] = None
     sample_weights = None
     if use_gan:
-        synth_seqs = _augment_sequences_gan(tr_seqs, cfg)
+        synth_seqs = _augment_sequences_gan(tr_seqs, y_tr, cfg)
+        fit_targets = np.concatenate([y_tr, y_tr], axis=0)
         sample_weights = np.concatenate([
             np.ones(len(tr_seqs), dtype=float),
             np.full(len(synth_seqs), cfg.synthetic_weight, dtype=float),
         ])
+        fit_seqs = tr_seqs + synth_seqs
+    else:
+        fit_seqs = tr_seqs
+        fit_targets = y_tr
 
     trainer = LSTMTrainer(
         hidden_dim=cfg.lstm_hidden_dim,
@@ -686,62 +676,46 @@ def _run_lstm(
         dropout=cfg.lstm_dropout,
         learning_rate=cfg.lstm_learning_rate,
     )
-
-    n_val = len(val_idx)
-    n_traits = len(OCEAN_TRAITS)
-    true_unit = np.zeros((n_val, n_traits), dtype=float)
-    pred_classes_mat = np.zeros((n_val, n_traits), dtype=int)
-    true_classes = np.zeros((n_val, n_traits), dtype=int)
+    trainer.train(
+        "OCEAN",
+        fit_seqs,
+        fit_targets,
+        val_sequences=val_seqs,
+        val_targets=y_val,
+        epochs=cfg.lstm_epochs,
+        batch_size=cfg.lstm_batch_size,
+        sample_weights=sample_weights,
+        seed=cfg.seed,
+    )
+    val_pred = np.clip(trainer.predict(val_seqs), 0.0, 1.0)
+    validation = me.evaluate_lstm_binary_classifier(
+        y_val,
+        val_pred,
+        trait_names=list(TRAIT_KEYS),
+        ground_truth_cutoff=cfg.ground_truth_cutoff,
+        candidate_thresholds=list(cfg.candidate_thresholds),
+    )
 
     per_trait: Dict[str, Any] = {}
-    for ti, trait in enumerate(OCEAN_TRAITS):
-        unit = sample.labels_unit[:, ti]
-        low_cut, high_cut = _tertile_cuts(unit[train_idx])
-        tr_labels = to_tertile_classes(unit[train_idx], low_cut, high_cut)
-        val_labels = to_tertile_classes(unit[val_idx], low_cut, high_cut)
-
-        if use_gan:
-            fit_seqs = tr_seqs + synth_seqs
-            fit_labels = np.concatenate([tr_labels, tr_labels])
-        else:
-            fit_seqs = tr_seqs
-            fit_labels = tr_labels
-
-        set_seed(cfg.seed)
-        trainer.train_trait_model(
-            trait, fit_seqs, None,  # targets ignored — precomputed_labels drives it
-            val_sequences=val_seqs,
-            precomputed_labels=fit_labels,
-            val_precomputed_labels=val_labels,
-            epochs=cfg.lstm_epochs,
-            batch_size=cfg.lstm_batch_size,
-            sample_weights=sample_weights,
-            seed=cfg.seed,
-        )
-        # Raw predictions from the trainer; metrics from metrics_engine.
-        _probs, pred_cls, _labels = trainer.predict_trait(trait, val_seqs)
-        cls = me.compute_multiclass_metrics(val_labels, pred_cls, labels=[0, 1, 2])
-
-        true_unit[:, ti] = unit[val_idx]
-        pred_classes_mat[:, ti] = pred_cls
-        true_classes[:, ti] = val_labels
-
+    for trait in TRAIT_KEYS:
+        block = validation["per_trait"][trait]
         per_trait[trait] = {
-            "val_mae": None,  # classification model — no regression MAE
-            "accuracy": _f(cls["accuracy"]),
-            "macro_f1": _f(cls["f1"]),
-            "macro_precision": _f(cls["precision"]),
-            "macro_recall": _f(cls["recall"]),
-            "confusion_matrix": cls["confusion_matrix"],
-            "tertile_cuts": [low_cut, high_cut],
+            "val_mae": None,
+            "accuracy": block["accuracy"],
+            "macro_f1": block["f1"],
+            "macro_precision": block["precision"],
+            "macro_recall": block["recall"],
+            "specificity": block["specificity"],
+            "threshold_sweep": block["threshold_sweep"],
         }
 
     overall = {
         "val_mae": None,
-        "accuracy": _mean([per_trait[t]["accuracy"] for t in OCEAN_TRAITS]),
-        "macro_f1": _mean([per_trait[t]["macro_f1"] for t in OCEAN_TRAITS]),
+        "accuracy": validation["aggregate"]["accuracy"],
+        "macro_f1": validation["aggregate"]["f1"],
+        "specificity": validation["aggregate"]["specificity"],
     }
-    raw = {"true_unit": true_unit, "lstm_pred_classes": pred_classes_mat, "true_classes": true_classes}
+    raw = {"true_unit": y_val, "lstm_pred": val_pred}
     return {"per_trait": per_trait, "overall": overall}, trainer, raw
 
 
@@ -1017,17 +991,31 @@ def threshold_sweep_table(results: Dict[str, Any]):
             sweep = (block or {}).get("threshold_sweep") or {}
             if not sweep:
                 continue
-            rows.append({
-                "condition": exp_id,
-                "split": "validation",
-                "trait": trait,
-                "threshold": sweep.get("best_threshold"),
-                "accuracy": (block or {}).get("accuracy"),
-                "f1_score": sweep.get("best_f1"),
-                "specificity": None,
-                "precision": (block or {}).get("macro_precision"),
-                "recall": (block or {}).get("macro_recall"),
-            })
+            if isinstance(sweep, list):
+                for item in sweep:
+                    rows.append({
+                        "condition": exp_id,
+                        "split": "validation",
+                        "trait": trait,
+                        "threshold": item.get("threshold"),
+                        "accuracy": item.get("accuracy"),
+                        "f1_score": item.get("f1_score"),
+                        "specificity": item.get("specificity"),
+                        "precision": item.get("precision"),
+                        "recall": item.get("recall"),
+                    })
+            else:
+                rows.append({
+                    "condition": exp_id,
+                    "split": "validation",
+                    "trait": trait,
+                    "threshold": sweep.get("best_threshold"),
+                    "accuracy": (block or {}).get("accuracy"),
+                    "f1_score": sweep.get("best_f1"),
+                    "specificity": sweep.get("specificity"),
+                    "precision": (block or {}).get("macro_precision"),
+                    "recall": (block or {}).get("macro_recall"),
+                })
     return pd.DataFrame(rows)
 
 
@@ -1113,52 +1101,58 @@ def audit_classification_metrics(results: Dict[str, Any]) -> Dict[str, Any]:
         evidence = result.get("prediction_evidence", {})
         for split in ("validation", "test"):
             split_rows = evidence.get(split, [])
+            split_result = result.get(split, result if split == "validation" else {})
+            per_trait = split_result.get("per_trait") or {}
+            if not per_trait:
+                continue
             for trait in TRAIT_KEYS:
+                if trait not in per_trait:
+                    continue
                 trait_rows = [r for r in split_rows if r["trait"] == trait]
-                recomputed = _recompute_binary_metrics_from_evidence(trait_rows)
-                stored = result[split]["per_trait"][trait]
+                recomputed = _recompute_binary_metrics_from_evidence(trait_rows) if trait_rows else None
+                stored = per_trait[trait]
                 audit_row = {
                     "condition": exp_id,
                     "split": split,
                     "trait": trait,
                     "stored_accuracy": stored.get("accuracy"),
-                    "recomputed_accuracy": recomputed["accuracy"],
-                    "stored_f1": stored.get("f1"),
-                    "recomputed_f1": recomputed["f1"],
+                    "recomputed_accuracy": recomputed["accuracy"] if recomputed else None,
+                    "stored_f1": stored.get("f1", stored.get("macro_f1")),
+                    "recomputed_f1": recomputed["f1"] if recomputed else None,
                     "stored_specificity": stored.get("specificity"),
-                    "recomputed_specificity": recomputed["specificity"],
-                    "tp": recomputed["tp"],
-                    "fp": recomputed["fp"],
-                    "tn": recomputed["tn"],
-                    "fn": recomputed["fn"],
+                    "recomputed_specificity": recomputed["specificity"] if recomputed else None,
+                    "tp": recomputed["tp"] if recomputed else None,
+                    "fp": recomputed["fp"] if recomputed else None,
+                    "tn": recomputed["tn"] if recomputed else None,
+                    "fn": recomputed["fn"] if recomputed else None,
                 }
                 rows.append(audit_row)
-                for metric in ("accuracy", "precision", "recall", "f1", "specificity"):
-                    stored_value = stored.get(metric)
-                    if stored_value is None:
-                        continue
-                    if abs(float(stored_value) - float(recomputed[metric])) > tolerance:
-                        mismatches.append({
+                if recomputed is not None:
+                    for metric in ("accuracy", "precision", "recall", "f1", "specificity"):
+                        stored_value = stored.get(metric)
+                        if stored_value is None:
+                            continue
+                        if abs(float(stored_value) - float(recomputed[metric])) > tolerance:
+                            mismatches.append({
+                                "condition": exp_id,
+                                "split": split,
+                                "trait": trait,
+                                "metric": metric,
+                                "stored": stored_value,
+                                "recomputed": recomputed[metric],
+                            })
+
+                sweep = stored.get("threshold_sweep", [])
+                if isinstance(sweep, list):
+                    thresholds = [round(float(item.get("threshold")), 2) for item in sweep]
+                    if thresholds != [round(t, 2) for t in expected_thresholds]:
+                        threshold_issues.append({
                             "condition": exp_id,
                             "split": split,
                             "trait": trait,
-                            "metric": metric,
-                            "stored": stored_value,
-                            "recomputed": recomputed[metric],
+                            "thresholds": thresholds,
+                            "expected": expected_thresholds,
                         })
-
-                thresholds = [
-                    round(float(item.get("threshold")), 2)
-                    for item in stored.get("threshold_sweep", [])
-                ]
-                if thresholds != [round(t, 2) for t in expected_thresholds]:
-                    threshold_issues.append({
-                        "condition": exp_id,
-                        "split": split,
-                        "trait": trait,
-                        "thresholds": thresholds,
-                        "expected": expected_thresholds,
-                    })
 
     return {
         "status": "PASS" if not mismatches and not threshold_issues else "FAIL",
@@ -1195,6 +1189,8 @@ def _save_plot_file(fig: Any, target: Path, *, dpi: int = 180) -> Path:
 
 def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
     """Create report-ready metric and threshold figures."""
+    import matplotlib
+    matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
 
     plot_dir = (out / "plots").resolve()
@@ -1204,24 +1200,39 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
     if len(comparison):
         x = np.arange(len(comparison))
         labels = comparison["condition"].tolist()
-        for metric in ("test_accuracy", "test_f1", "test_specificity", "test_precision", "test_recall"):
+        plot_metrics = [
+            ("test_accuracy" if "test_accuracy" in comparison else "accuracy", "accuracy"),
+            ("test_f1" if "test_f1" in comparison else "macro_f1", "f1"),
+            ("test_specificity" if "test_specificity" in comparison else "specificity", "specificity"),
+            ("test_precision" if "test_precision" in comparison else "macro_precision", "precision"),
+            ("test_recall" if "test_recall" in comparison else "macro_recall", "recall"),
+        ]
+        for metric, label in plot_metrics:
+            if metric not in comparison:
+                continue
             fig, ax = plt.subplots(figsize=(12, 5))
             colors = ["#4C78A8" if model == "lasso" else "#F58518" for model in comparison["model"]]
             ax.bar(x, comparison[metric].astype(float), color=colors)
-            ax.set_title(metric.replace("_", " ").title())
+            ax.set_title(label.replace("_", " ").title())
             ax.set_ylabel("Score")
             ax.set_ylim(0, 1)
             ax.set_xticks(x)
             ax.set_xticklabels(labels, rotation=35, ha="right")
             ax.grid(axis="y", alpha=0.25)
             fig.tight_layout()
-            _save_plot_file(fig, plot_dir / f"{metric}_by_condition.png")
+            _save_plot_file(fig, plot_dir / f"{label}_by_condition.png")
             plt.close(fig)
 
     thresholds = threshold_sweep_table(results)
     if len(thresholds):
         test_thresholds = thresholds[thresholds["split"] == "test"]
+        threshold_split = "test"
+        if not len(test_thresholds):
+            test_thresholds = thresholds[thresholds["split"] == "validation"]
+            threshold_split = "validation"
         for metric in THRESHOLD_PLOT_METRICS:
+            if metric not in test_thresholds:
+                continue
             grouped = (
                 test_thresholds
                 .groupby(["condition", "threshold"], as_index=False)[metric]
@@ -1236,14 +1247,14 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
                     linewidth=1.6,
                     label=condition,
                 )
-            ax.set_title(f"Test Threshold Sweep - {metric.replace('_', ' ').title()}")
+            ax.set_title(f"{threshold_split.title()} Threshold Sweep - {metric.replace('_', ' ').title()}")
             ax.set_xlabel("Decision threshold")
             ax.set_ylabel("Score")
             ax.set_ylim(0, 1)
             ax.grid(alpha=0.25)
             ax.legend(fontsize=7, ncol=2)
             fig.tight_layout()
-            _save_plot_file(fig, plot_dir / f"threshold_sweep_test_{metric}.png")
+            _save_plot_file(fig, plot_dir / f"threshold_sweep_{threshold_split}_{metric}.png")
             plt.close(fig)
 
         for condition, condition_df in test_thresholds.groupby("condition"):
@@ -1386,9 +1397,9 @@ def summarize_findings(results: Dict[str, Any]) -> Dict[str, Any]:
         r = results[best_id]
         best = {
             "condition": best_id,
-            "label": b["label"],
-            "accuracy": b["overall"]["accuracy"],
-            "macro_f1": b["overall"]["macro_f1"],
+            "label": r["label"],
+            "accuracy": r["overall"]["accuracy"],
+            "macro_f1": r["overall"]["macro_f1"],
         }
 
     lasso_acc, lstm_acc = _model_mean("lasso", "accuracy"), _model_mean("lstm", "accuracy")
@@ -1541,7 +1552,15 @@ def save_artifacts(
             with (exp_dir / "lasso_state.json").open("w", encoding="utf-8") as fh:
                 json.dump(model.save_state(), fh, ensure_ascii=False, indent=2)
         else:
-            torch.save(model.save_state(), exp_dir / "lstm_state.pt")
+            lstm_state = {
+                "state_dict": model.model.state_dict() if getattr(model, "model", None) is not None else None,
+                "hidden_dim": getattr(model, "hidden_dim", None),
+                "num_layers": getattr(model, "num_layers", None),
+                "dropout": getattr(model, "dropout", None),
+                "learning_rate": getattr(model, "learning_rate", None),
+                "trait_keys": list(TRAIT_KEYS),
+            }
+            torch.save(lstm_state, exp_dir / "lstm_state.pt")
 
     if bundle["audit"]["status"] != "PASS":
         raise RuntimeError(
@@ -1594,7 +1613,13 @@ def load_or_prepare_pandora(
     prepared_path = Path(prepared_json)
     if prepared_path.exists() and not refresh_prepared:
         logger.info("Loading cached prepared PANDORA data from %s.", prepared_path)
-        return load_prepared_cache(prepared_path)
+        try:
+            return load_prepared_cache(prepared_path)
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "Prepared PANDORA cache is not valid JSON (%s); rebuilding it from parquet.",
+                exc,
+            )
     return load_pandora_comments(
         pandora_file,
         output_path=prepared_path,

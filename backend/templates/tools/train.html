@@ -1,101 +1,120 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Cohort Training Lab{% endblock %}
+{% block title %}PANDORA Experiment Training{% endblock %}
 
 {% block content %}
-<div class="min-h-screen bg-gradient-to-br from-stone-50 via-emerald-50 to-stone-100">
+<div class="min-h-screen bg-stone-50">
   <div class="max-w-7xl mx-auto px-6 py-10">
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      <div class="lg:col-span-7 bg-white rounded-3xl border border-stone-200 shadow-sm p-8">
-        <p class="text-xs font-semibold uppercase tracking-[0.25em] text-emerald-700">Training workspace</p>
-        <h1 class="mt-3 text-4xl font-black text-stone-900">Cohort Training Lab</h1>
+      <div class="lg:col-span-7 bg-white rounded-lg border border-stone-200 shadow-sm p-8">
+        <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Training workspace</p>
+        <h1 class="mt-3 text-3xl font-bold text-stone-900">PANDORA 8-Condition Experiment</h1>
         <p class="mt-4 text-stone-600 leading-7">
-          Train one reusable cohort model on 80% of the labeled volunteers, validate it on the 20% holdout,
-          and save the frozen artifact for prediction-only runs.
+          Run the frozen research pipeline from the local PANDORA dataset. Each run creates a timestamped artifact folder with comparison tables, audit data, model states, and presentation graphs.
         </p>
 
         <form method="post" class="mt-8 space-y-5">
           {% csrf_token %}
-          <label class="flex items-start gap-3 rounded-2xl border border-stone-200 bg-stone-50 p-4">
-            <div class="pt-1">
-              {{ form.confirm }}
+          <div>
+            <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ form.run_label.id_for_label }}">{{ form.run_label.label }}</label>
+            {{ form.run_label }}
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ form.sample_size.id_for_label }}">{{ form.sample_size.label }}</label>
+              {{ form.sample_size }}
             </div>
             <div>
-              <div class="font-semibold text-stone-900">{{ form.confirm.label }}</div>
-              <p class="text-sm text-stone-600 mt-1">
-                This will use the current labeled volunteer pool, create the 80/20 split, and persist the best model for later prediction.
-              </p>
+              <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ form.seed.id_for_label }}">{{ form.seed.label }}</label>
+              {{ form.seed }}
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ form.max_comments_per_user.id_for_label }}">{{ form.max_comments_per_user.label }}</label>
+              {{ form.max_comments_per_user }}
+            </div>
+          </div>
+
+          <label class="flex items-start gap-3 rounded-lg border border-stone-200 bg-stone-50 p-4">
+            <div class="pt-1">{{ form.refresh_prepared_cache }}</div>
+            <div>
+              <div class="font-semibold text-stone-900">{{ form.refresh_prepared_cache.label }}</div>
+              <p class="text-sm text-stone-600 mt-1">Use this only when the PANDORA parquet files changed or the prepared cache needs rebuilding.</p>
             </div>
           </label>
 
-          <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-emerald-700">
-            Train Cohort Model
+          <label class="flex items-start gap-3 rounded-lg border border-stone-200 bg-stone-50 p-4">
+            <div class="pt-1">{{ form.allow_reuse }}</div>
+            <div>
+              <div class="font-semibold text-stone-900">{{ form.allow_reuse.label }}</div>
+              <p class="text-sm text-stone-600 mt-1">Keep this off for normal sessions; enable it only after the available dataset allocation has been exhausted or for repeatability checks.</p>
+            </div>
+          </label>
+
+          <label class="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+            <div class="pt-1">{{ form.confirm }}</div>
+            <div>
+              <div class="font-semibold text-stone-900">{{ form.confirm.label }}</div>
+              <p class="text-sm text-stone-600 mt-1">Baseline/Lasso, Baseline/LSTM, Baseline+GAN/Lasso, Baseline+GAN/LSTM, Q-Learning/Lasso, Q-Learning/LSTM, Q-Learning+GAN/Lasso, and Q-Learning+GAN/LSTM.</p>
+            </div>
+          </label>
+
+          <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-emerald-700">
+            Start Training
           </button>
         </form>
       </div>
 
       <div class="lg:col-span-5 space-y-6">
         <div class="grid grid-cols-2 gap-4">
-          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
-            <div class="text-sm text-stone-500">Labeled volunteers</div>
-            <div class="mt-2 text-3xl font-bold text-stone-900">{{ labeled_volunteers_count }}</div>
+          <div class="rounded-lg bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">Dataset status</div>
+            <div class="mt-2 text-2xl font-bold {% if pandora_status.exists %}text-emerald-700{% else %}text-red-700{% endif %}">
+              {% if pandora_status.exists %}Found{% else %}Missing{% endif %}
+            </div>
           </div>
-          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
-            <div class="text-sm text-stone-500">With posts</div>
-            <div class="mt-2 text-3xl font-bold text-stone-900">{{ labeled_with_posts_count }}</div>
+          <div class="rounded-lg bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">Parquet files</div>
+            <div class="mt-2 text-3xl font-bold text-stone-900">{{ pandora_status.parquet_count }}</div>
           </div>
-          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
-            <div class="text-sm text-stone-500">Train split</div>
-            <div class="mt-2 text-3xl font-bold text-stone-900">{{ saved_train_count }}</div>
+          <div class="rounded-lg bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">Prepared cache</div>
+            <div class="mt-2 text-2xl font-bold text-stone-900">{% if pandora_status.prepared_cache_exists %}Ready{% else %}Not built{% endif %}</div>
           </div>
-          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
-            <div class="text-sm text-stone-500">Validation split</div>
-            <div class="mt-2 text-3xl font-bold text-stone-900">{{ saved_validation_count }}</div>
-          </div>
-          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
-            <div class="text-sm text-stone-500">Model status</div>
-            <div class="mt-2 text-2xl font-bold text-emerald-700">{% if active_model %}Saved{% else %}Not trained{% endif %}</div>
-          </div>
-          <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
-            <div class="text-sm text-stone-500">With embeddings</div>
-            <div class="mt-2 text-3xl font-bold text-stone-900">{{ labeled_with_embeddings_count }}</div>
+          <div class="rounded-lg bg-white border border-stone-200 p-5 shadow-sm">
+            <div class="text-sm text-stone-500">Used allocations</div>
+            <div class="mt-2 text-3xl font-bold text-stone-900">{{ consumed_sample_count }}</div>
           </div>
         </div>
 
-        <div class="rounded-3xl bg-stone-900 text-stone-100 p-6 shadow-lg">
-          <div class="text-xs uppercase tracking-[0.25em] text-emerald-300">Current model</div>
-          {% if active_model %}
-            <h2 class="mt-3 text-xl font-bold">{{ active_model.name }} / {{ active_model.version }}</h2>
-            <p class="mt-3 text-sm text-stone-300">Split seed: {{ active_model.split_seed }} | Train ratio: {{ active_model.train_ratio }} | Validation ratio: {{ active_model.validation_ratio }}</p>
-            <div class="mt-5 grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <div class="text-stone-400">Train handles</div>
-                <div class="mt-2 space-y-1 max-h-40 overflow-auto pr-2">
-                  {% for handle in active_model.train_handles %}
-                    <div class="rounded-lg bg-white/5 px-3 py-2">@{{ handle }}</div>
-                  {% empty %}
-                    <div class="text-stone-400">No saved train split yet.</div>
-                  {% endfor %}
-                </div>
-              </div>
-              <div>
-                <div class="text-stone-400">Validation handles</div>
-                <div class="mt-2 space-y-1 max-h-40 overflow-auto pr-2">
-                  {% for handle in active_model.validation_handles %}
-                    <div class="rounded-lg bg-white/5 px-3 py-2">@{{ handle }}</div>
-                  {% empty %}
-                    <div class="text-stone-400">No saved validation split yet.</div>
-                  {% endfor %}
-                </div>
-              </div>
-            </div>
-          {% else %}
-            <h2 class="mt-3 text-xl font-bold">No cohort model saved yet</h2>
-            <p class="mt-3 text-sm text-stone-300">
-              Fetch posts for your labeled volunteers first, then run training to create the shared model artifact and lock in the prediction split.
-            </p>
-          {% endif %}
+        <div class="rounded-lg bg-stone-900 text-stone-100 p-6 shadow-lg">
+          <div class="text-xs uppercase tracking-widest text-emerald-300">Dataset folder</div>
+          <p class="mt-3 text-sm text-stone-300 break-all">{{ pandora_status.path }}</p>
+          <div class="mt-5 space-y-2 text-sm">
+            {% for file in pandora_status.parquet_files %}
+              <div class="rounded bg-white/5 px-3 py-2">{{ file }}</div>
+            {% empty %}
+              <div class="text-stone-400">No parquet files detected.</div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="rounded-lg bg-white border border-stone-200 p-6 shadow-sm">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold text-stone-900">Recent Runs</h2>
+            <a href="{% url 'tools:experiment_history' %}" class="text-sm font-semibold text-emerald-700 hover:text-emerald-800">View all</a>
+          </div>
+          <div class="mt-4 divide-y divide-stone-200">
+            {% for run in runs %}
+              <a href="{% url 'tools:experiment_detail' pk=run.pk %}" class="block py-3 hover:bg-stone-50">
+                <div class="font-semibold text-stone-900">{{ run.label|default:run.run_id }}</div>
+                <div class="text-sm text-stone-500">{{ run.status }} · {{ run.sample_size }} samples · {{ run.created_at|date:"M d, Y H:i" }}</div>
+              </a>
+            {% empty %}
+              <div class="py-4 text-sm text-stone-500">No PANDORA runs recorded yet.</div>
+            {% endfor %}
+          </div>
         </div>
       </div>
     </div>

@@ -6,11 +6,13 @@ predictions remain reproducible across runs.
 """
 import json
 import logging
+import warnings
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from sklearn.linear_model import ElasticNet, ElasticNetCV, Lasso, LassoCV
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.exceptions import ConvergenceWarning
 
 logger = logging.getLogger('ml_pipeline')
 
@@ -89,6 +91,7 @@ class LassoTrainer:
     def _create_model(self, trait: str, n_samples: int):
         alpha = self._resolve_alpha(trait)
         l1_ratio = self._resolve_l1_ratio(trait)
+        max_iter = max(int(self.max_iter), 50000)
 
         if self.regularization == 'elasticnet':
             if n_samples >= 5:
@@ -96,13 +99,13 @@ class LassoTrainer:
                     alphas=np.logspace(-4, 0, 25),
                     l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9],
                     cv=min(5, n_samples),
-                    max_iter=self.max_iter,
+                    max_iter=max_iter,
                     random_state=42,
                 )
             return ElasticNet(
                 alpha=alpha,
                 l1_ratio=l1_ratio,
-                max_iter=self.max_iter,
+                max_iter=max_iter,
                 random_state=42,
             )
 
@@ -110,19 +113,28 @@ class LassoTrainer:
             return LassoCV(
                 alphas=np.logspace(-4, 0, 25),
                 cv=min(5, n_samples),
-                max_iter=self.max_iter,
+                max_iter=max_iter,
                 random_state=42,
             )
-        return Lasso(alpha=alpha, max_iter=self.max_iter, random_state=42)
+        return Lasso(alpha=alpha, max_iter=max_iter, random_state=42)
 
     def _fit_model(self, model, X: np.ndarray, y: np.ndarray, sample_weight=None):
-        try:
-            if sample_weight is not None:
-                model.fit(X, y, sample_weight=sample_weight)
-            else:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConvergenceWarning)
+            try:
+                if sample_weight is not None:
+                    model.fit(X, y, sample_weight=sample_weight)
+                else:
+                    model.fit(X, y)
+            except TypeError:
                 model.fit(X, y)
-        except TypeError:
-            model.fit(X, y)
+        convergence_warnings = [w for w in caught if issubclass(w.category, ConvergenceWarning)]
+        if convergence_warnings:
+            logger.warning(
+                "Lasso/ElasticNet fit reached the iteration limit for this fold; "
+                "continuing with the fitted coefficients. warning_count=%d",
+                len(convergence_warnings),
+            )
         return model
 
     def train_trait_model(

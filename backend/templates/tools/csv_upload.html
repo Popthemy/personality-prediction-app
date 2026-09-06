@@ -1,27 +1,27 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Import BFI-44 Survey{% endblock %}
+{% block title %}Import BFI Baseline{% endblock %}
 
 {% block content %}
 <div class="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100">
   <!-- Header -->
   <div class="bg-white border-b border-stone-200">
     <div class="max-w-4xl mx-auto px-6 py-8">
-      <h1 class="text-3xl font-bold text-stone-900">Import BFI-44 Survey Data</h1>
-      <p class="text-stone-600 mt-2">Upload Google Form CSV responses as ground truth</p>
+      <h1 class="text-3xl font-bold text-stone-900">Import BFI Baseline Data</h1>
+      <p class="text-stone-600 mt-2">Upload BFI-44 responses for optional prediction evaluation. PANDORA training does not use this importer.</p>
     </div>
   </div>
 
   <div class="max-w-4xl mx-auto px-6 py-8">
     <!-- Instructions -->
     <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-8">
-      <h3 class="font-bold text-blue-900 mb-3">CSV Format Requirements</h3>
+      <h3 class="font-bold text-blue-900 mb-3">Prediction Evaluation CSV Requirements</h3>
       <ul class="text-blue-800 text-sm space-y-2">
         <li>• Column 1: <code class="bg-blue-100 px-2 py-1 rounded">twitter_handle</code> (required)</li>
         <li>• Columns 2-45: <code class="bg-blue-100 px-2 py-1 rounded">q1, q2, ..., q44</code> (BFI-44 responses, 1-5 scale)</li>
         <li>• Export directly from Google Forms or compatible survey tool</li>
-        <li>• Minimum 90% response rate per volunteer</li>
+        <li>• Minimum 90% response rate per evaluation profile</li>
       </ul>
     </div>
 
@@ -64,7 +64,7 @@
             type="submit"
             class="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition"
           >
-            Import CSV
+            Import Baseline CSV
           </button>
           <a href="{% url 'tools:index' %}" class="px-6 py-2 border border-stone-300 text-stone-900 font-medium rounded-lg hover:bg-stone-50 transition">
             Cancel

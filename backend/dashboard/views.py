@@ -5,7 +5,8 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models import Avg, Count
 from backend.core.models import (
     VOLUNTEER, PSYCHOMETRIC_PROFILE, BFI_SURVEY,
-    LASSO_MODEL, Q_LEARNING_LOG
+    LASSO_MODEL, Q_LEARNING_LOG, PANDORA_EXPERIMENT_RUN,
+    PANDORA_DATASET_ALLOCATION,
 )
 from backend.ml_pipeline.services.insight_engine import build_domain_insights
 
@@ -47,6 +48,15 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         context['q_learning_actions'] = Q_LEARNING_LOG.objects.filter(
             volunteer__researcher=self.request.user
         ).count()
+        pandora_runs = PANDORA_EXPERIMENT_RUN.objects.filter(researcher=self.request.user)
+        latest_run = pandora_runs.order_by('-created_at').first()
+        context['pandora_runs_count'] = pandora_runs.count()
+        context['latest_pandora_run'] = latest_run
+        context['best_pandora_run'] = pandora_runs.exclude(best_accuracy__isnull=True).order_by('-best_accuracy').first()
+        context['consumed_pandora_samples'] = PANDORA_DATASET_ALLOCATION.objects.values(
+            'pandora_user_id'
+        ).distinct().count()
+        context['recent_pandora_runs'] = pandora_runs.order_by('-created_at')[:5]
 
         return context
 

@@ -218,8 +218,6 @@ class StackedLSTMRegressor(nn.Module):
         self.num_layers = num_layers
         self.num_outputs = num_outputs
         self.bidirectional = bidirectional
-        self.num_traits = num_traits
-        self.auxiliary_dim = auxiliary_dim
         self.num_directions = 2 if bidirectional else 1
 
         # Stacked Bidirectional LSTM — identical to the previous architecture
@@ -273,7 +271,11 @@ class StackedLSTMRegressor(nn.Module):
                 enforce_sorted=False,
             )
             packed_output, _ = self.lstm(packed_input)
-            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
+            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
+                packed_output,
+                batch_first=True,
+                total_length=seq_len,
+            )
         else:
             lstm_out, (hn, cn) = self.lstm(x)
 
@@ -448,13 +450,12 @@ class LSTMTrainer:
         best_state_dict = None
 
         for _epoch in range(epochs):
-            self.model.train()
+            model.train()
             epoch_loss = 0.0
 
             for batch_x, batch_len, batch_y, batch_w in dataloader:
                 batch_x = batch_x.to(device)
                 batch_len = batch_len.to(device)
-                batch_aux = batch_aux.to(device)
                 batch_y = batch_y.to(device)
                 batch_w = batch_w.to(device)
 
@@ -466,11 +467,11 @@ class LSTMTrainer:
                 loss = (per_sample_loss * batch_w).mean()
 
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
                 epoch_loss += float(loss.detach().cpu())
 
-            train_loss_history.append(epoch_loss / max(1, len(loader)))
+            train_loss_history.append(epoch_loss / max(1, len(dataloader)))
 
             # --- Validation monitoring ------------------------------------
             if has_val:

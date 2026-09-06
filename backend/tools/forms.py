@@ -204,10 +204,54 @@ class PipelineControlForm(forms.Form):
 
 
 class CohortTrainingForm(forms.Form):
-    """Form for training the shared cohort model."""
+    """Form for running the PANDORA 8-condition experiment."""
+
+    run_label = forms.CharField(
+        label="Run label",
+        required=False,
+        max_length=160,
+        widget=forms.TextInput(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200',
+            'placeholder': 'Example: supervisor-demo-01',
+        })
+    )
+    sample_size = forms.IntegerField(
+        label="PANDORA samples for this run",
+        min_value=8,
+        initial=128,
+        widget=forms.NumberInput(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200',
+        })
+    )
+    seed = forms.IntegerField(
+        label="Random seed",
+        initial=42,
+        widget=forms.NumberInput(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200',
+        })
+    )
+    max_comments_per_user = forms.IntegerField(
+        label="Max comments per PANDORA user",
+        required=False,
+        min_value=1,
+        widget=forms.NumberInput(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200',
+            'placeholder': 'Use runner default',
+        })
+    )
+    refresh_prepared_cache = forms.BooleanField(
+        label="Refresh prepared cache before training",
+        required=False,
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
+    )
+    allow_reuse = forms.BooleanField(
+        label="Allow reuse of PANDORA samples already used in previous runs",
+        required=False,
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
+    )
 
     confirm = forms.BooleanField(
-        label="I understand this will train the shared cohort model on the selected 80% split",
+        label="I understand this will run all 8 PANDORA experiment conditions",
         required=True,
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
     )

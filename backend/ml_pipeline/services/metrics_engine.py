@@ -1,7 +1,6 @@
 """
 Metrics engine for Big Five personality classification.
 
-<<<<<<< HEAD
 The current PANDORA experiment path treats LSTM as the final classifier. The
 LSTM emits five probabilities, one P(High) for each OCEAN trait, and this
 module selects/applies binary Low/High decision thresholds.
@@ -14,34 +13,6 @@ Primary PANDORA evaluation:
 
 There is no Medium class in the active PANDORA path. Older regression and
 hybrid helpers remain below only for leftover callers outside the new runner.
-=======
-Plug-and-play evaluation service. The PANDORA runner and PipelineOrchestrator
-call `evaluate()` after Lasso and LSTM produce continuous predictions on the
-same held-out participant-level test users. This module has no knowledge of
-training, data loading, splitting, experiment identity, GAN, Q-learning, or
-BERT.
-
-Primary evaluation (both models are continuous 5-output OCEAN regression)
--------------------------------------------------------------------------
-- Per-trait MAE, MSE, RMSE, R^2, Pearson r on normalized [0, 1] scores
-- Binary High/Low threshold sweep on continuous scores (no Medium class)
-- ROC and Precision-Recall from continuous scores (not binarized labels)
-- Trait-specific O/C/E/A/N plus aggregate means
-- Model confidence/certainty heuristic (not calibrated uncertainty)
-
-`evaluate()` keeps its original keys (`lasso`, `lstm`, `threshold`, `roc`,
-`precision_recall`) and also exposes a reporting contract that groups the
-same numbers for a downstream interpretation layer:
-
-    A. continuous_regression
-    B. binary_interpretation
-    C. threshold_analysis
-    D. confidence
-
-There is no final Low/Medium/High LSTM classification stage. 3-class helpers
-below are retained only for leftover legacy callers; `evaluate()` does not
-use them.
->>>>>>> 03204756263ea3f3e10d1b190530c815f4c2c272
 """
 
 import logging
@@ -478,18 +449,11 @@ def sweep_thresholds_on_scores(
     decision boundary. The runner must supply a train/validation-selected
     cutoff via `derive_binary_ground_truth` / `evaluate(ground_truth_cutoff=...)`.
 
-<<<<<<< HEAD
     Default candidates are the supervisor-facing five-threshold sweep:
     0.30, 0.40, 0.50, 0.60, 0.70.
     """
     if candidate_thresholds is None:
         candidate_thresholds = list(CANDIDATE_THRESHOLDS)
-=======
-    Default candidates are 0.00, 0.01, ..., 1.00 (normalized OCEAN scale).
-    """
-    if candidate_thresholds is None:
-        candidate_thresholds = list(DEFAULT_NORMALIZED_THRESHOLDS)
->>>>>>> 03204756263ea3f3e10d1b190530c815f4c2c272
 
     results = []
     best = None
@@ -511,7 +475,6 @@ def sweep_thresholds_on_scores(
     }
 
 
-<<<<<<< HEAD
 def _aggregate_metric(per_trait: Dict[str, Dict[str, Any]], key: str) -> Optional[float]:
     vals = [v.get(key) for v in per_trait.values() if v.get(key) is not None]
     return round(float(np.mean(vals)), 4) if vals else None
@@ -671,9 +634,6 @@ def evaluate_lstm_binary_with_thresholds(
 calculate_binary_classification_metrics = compute_classification_metrics_at_threshold
 calculate_model_confidence = compute_model_confidence
 
-
-=======
->>>>>>> 03204756263ea3f3e10d1b190530c815f4c2c272
 def compute_roc_curve_metrics(y_true_binary: np.ndarray, scores: np.ndarray) -> Dict[str, Any]:
     """ROC curve points and ROC-AUC from continuous scores (not High/Low labels)."""
     y_true_binary = np.asarray(y_true_binary).astype(int)
@@ -779,53 +739,7 @@ def evaluate(
     candidate_thresholds: Optional[List[float]] = None,
     decision_thresholds: Optional[Union[float, Dict[str, float]]] = None,
 ) -> Dict[str, Any]:
-    """
-    Plug-and-play evaluation of continuous (N, 5) Lasso and LSTM predictions.
-
-    Both models are treated as 5-output OCEAN regressors on the same held-out
-    participants. Predictions and ground truth are evaluated on the normalized
-    [0, 1] scale. This path does not require or derive Low/Medium/High classes.
-
-    Parameters
-    ----------
-    y_true, lasso_predictions, lstm_predictions
-        Continuous OCEAN arrays with shape (N, 5) in O,C,E,A,N order.
-        A mismatch raises ValueError; values are never reshaped, truncated,
-        or padded.
-    trait_names
-        Optional column labels. Defaults to ['O', 'C', 'E', 'A', 'N'].
-    ground_truth_cutoff
-        Explicit High/Low rule: y >= cutoff -> High (1), else Low (0).
-        A single float applies to every trait, or {trait: cutoff}.
-        Defaults to 0.5 (midpoint of [0, 1]). Never inferred from the
-        evaluation set -- the runner must pass a train/validation-selected
-        boundary if one was learned.
-    candidate_thresholds
-        Thresholds to sweep on continuous predictions. Defaults to
-        0.00, 0.01, ..., 1.00. The sweep reports every point plus the
-        highest-F1 threshold; that best-of-sweep is descriptive only.
-    decision_thresholds
-        Optional frozen High/Low decision threshold(s) chosen outside this
-        function (typically on validation). A single float applies to every
-        trait, or {trait: tau}. When supplied, binary_interpretation reports
-        those thresholds as the ones used. evaluate() still does not learn
-        a test-set decision boundary.
-
-    lstm_probabilities, lstm_true_classes, class_cutoffs
-        Accepted for call-site compatibility. Ignored. 3-class evaluation
-        is not part of this path.
-
-    Returns
-    -------
-    dict with the original keys 'lasso', 'lstm', 'threshold', 'roc',
-    'precision_recall' (each {'per_trait': {O/C/E/A/N: ...}, 'aggregate': ...})
-    plus the reporting contract:
-
-        continuous_regression  -- same regression blocks as 'lasso' / 'lstm'
-        binary_interpretation  -- threshold used, P/R/F1/accuracy, ROC-AUC, PR-AUC
-        threshold_analysis     -- thresholds tested, metric values, selected tau
-        confidence             -- heuristic certainty, not calibrated uncertainty
-    """
+    """Legacy continuous evaluator retained for older callers."""
     if lstm_probabilities is not None or lstm_true_classes is not None or class_cutoffs is not None:
         logger.debug(
             "evaluate() ignores lstm_probabilities/lstm_true_classes/class_cutoffs; "
@@ -1070,8 +984,4 @@ def evaluate(
                 },
             },
         },
-<<<<<<< HEAD
     }
-=======
-    }
->>>>>>> 03204756263ea3f3e10d1b190530c815f4c2c272

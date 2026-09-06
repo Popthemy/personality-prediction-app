@@ -11,15 +11,14 @@
         <p class="text-xs font-semibold uppercase tracking-[0.25em] text-amber-700">Prediction workspace</p>
         <h1 class="mt-3 text-4xl font-black text-stone-900">Prediction Console</h1>
         <p class="mt-4 text-stone-600 leading-7">
-          Pick a volunteer from the held-out split and run prediction using the saved cohort model only.
-          No fitting, retraining, or augmentation happens here.
+          Test trained model behavior on X-based posts. BFI CSV data can still be imported as an optional baseline for comparison, but PANDORA remains the training dataset.
         </p>
 
         <form method="post" class="mt-8 space-y-5">
           {% csrf_token %}
           <div>
             <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ form.volunteer_id.id_for_label }}">
-              Volunteer from holdout split
+              Prediction evaluation profile
             </label>
             {{ form.volunteer_id }}
           </div>
@@ -28,12 +27,17 @@
             Run Prediction
           </button>
         </form>
+
+        <div class="mt-6 flex flex-wrap gap-3">
+          <a href="{% url 'tools:analyze' %}" class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50">Analyze X Handle</a>
+          <a href="{% url 'tools:csv_upload' %}" class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50">Import BFI Baseline</a>
+        </div>
       </div>
 
       <div class="lg:col-span-7 space-y-6">
         <div class="grid grid-cols-2 gap-4">
           <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
-            <div class="text-sm text-stone-500">Prediction volunteers</div>
+            <div class="text-sm text-stone-500">Evaluation profiles</div>
             <div class="mt-2 text-3xl font-bold text-stone-900">{{ available_count }}</div>
           </div>
           <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
@@ -43,12 +47,12 @@
         </div>
 
         <div class="rounded-3xl bg-stone-900 text-stone-100 p-6 shadow-lg">
-          <div class="text-xs uppercase tracking-[0.25em] text-amber-300">Held-out handles</div>
+          <div class="text-xs uppercase tracking-[0.25em] text-amber-300">Available X handles</div>
           <div class="mt-4 flex flex-wrap gap-2">
             {% for volunteer in prediction_volunteers %}
               <span class="rounded-full bg-white/10 px-3 py-1 text-sm">@{{ volunteer.x_handle }}</span>
             {% empty %}
-              <span class="text-stone-400">No volunteers available for prediction yet.</span>
+              <span class="text-stone-400">No prediction evaluation profiles available yet. Import optional BFI baselines or analyze an X handle first.</span>
             {% endfor %}
           </div>
         </div>

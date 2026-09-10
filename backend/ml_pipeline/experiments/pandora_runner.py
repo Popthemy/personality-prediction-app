@@ -60,6 +60,7 @@ from backend.ml_pipeline.services.data.pandora import (
     get_last_ingestion_quality,
     load_ingestion_quality,
     load_pandora_comments,
+    quality_sidecar_path,
 )
 from backend.ml_pipeline.services.data.quality import (
     build_experiment_data_quality,
@@ -220,6 +221,15 @@ class Sample:
 
 
 @dataclass
+class DatasetSplits:
+    sample: Sample
+    train_idx: np.ndarray
+    val_idx: np.ndarray
+    test_idx: np.ndarray
+    sources: Dict[str, str]
+
+
+@dataclass
 class Features:
     """Selected comment embeddings under one selection policy."""
 
@@ -327,6 +337,32 @@ def prepare_sample(prepared: List[PreparedUserComments], cfg: ExperimentConfig) 
     return sample_users(prepared, cfg)
 
 
+def combine_split_samples(train: Sample, validation: Sample, test: Sample) -> DatasetSplits:
+    """Combine file-defined train/validation/test samples with explicit indexes."""
+    if train.scale != validation.scale or train.scale != test.scale:
+        logger.warning(
+            "PANDORA split label scales differ: train=%s validation=%s test=%s.",
+            train.scale, validation.scale, test.scale,
+        )
+    user_ids = train.user_ids + validation.user_ids + test.user_ids
+    texts = train.texts + validation.texts + test.texts
+    labels_raw = np.vstack([train.labels_raw, validation.labels_raw, test.labels_raw])
+    labels_unit = np.vstack([train.labels_unit, validation.labels_unit, test.labels_unit])
+    sample = Sample(
+        user_ids=user_ids,
+        texts=texts,
+        labels_raw=labels_raw,
+        labels_unit=labels_unit,
+        scale=train.scale,
+    )
+    n_train = train.n_users
+    n_val = validation.n_users
+    train_idx = np.arange(0, n_train)
+    val_idx = np.arange(n_train, n_train + n_val)
+    test_idx = np.arange(n_train + n_val, sample.n_users)
+    return DatasetSplits(sample, train_idx, val_idx, test_idx, sources={})
+
+
 def get_encoder() -> BERTEncoder:
     """Create the BERT encoder lazily."""
     return BERTEncoder()
@@ -359,12 +395,13 @@ def _embed_one(encoder: Any, text: str, cfg: ExperimentConfig) -> np.ndarray:
     return vec
 
 
-def _baseline_select(texts: List[str], top_k: int) -> List[str]:
-    return texts[:top_k]
+def _baseline_select(texts: List[str], top_k: Optional[int] = None) -> List[str]:
+    """Full-history baseline: embed every available comment for the author."""
+    return list(texts)
 
 
-def _qlearning_select(agent: QLearningAgent, texts: List[str], top_k: int) -> List[str]:
-    selected = [c["text"] for c in agent.select_comments(texts, top_k=top_k, training=False)]
+def _qlearning_select(agent: QLearningAgent, texts: List[str]) -> List[str]:
+    selected = [c["text"] for c in agent.select_comments(texts, top_k=None, training=False)]
     return selected or texts[:1]
 
 
@@ -380,10 +417,250 @@ def train_qlearning_agent(sample: Sample, cfg: ExperimentConfig) -> QLearningAge
         agent,
         comment_batches=sample.texts,
         n_epochs=cfg.qlearning_train_epochs,
-        max_selected=cfg.top_k,
+        max_selected=None,
     )
     logger.info("Q-learning trained with %d Q-table states.", len(agent.q_table))
     return agent
+
+
+def subset_sample(sample: Sample, indices: Sequence[int]) -> Sample:
+    """Return a participant subset while preserving the sampled label scale."""
+    idx = [int(i) for i in indices]
+    return Sample(
+        user_ids=[sample.user_ids[i] for i in idx],
+        texts=[sample.texts[i] for i in idx],
+        labels_raw=sample.labels_raw[idx],
+        labels_unit=sample.labels_unit[idx],
+        scale=sample.scale,
+    )
+
+
+def trait_band_distribution(
+    sample: Sample,
+    indices: Sequence[int],
+    trait_label_thresholds: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """Count Low/Medium/High and binary Low/High bands for each OCEAN trait."""
+    idx = np.asarray([int(i) for i in indices], dtype=int)
+    labels = sample.labels_unit[idx] if len(idx) else np.empty((0, len(TRAIT_KEYS)))
+    out: Dict[str, Any] = {
+        "n_users": int(len(idx)),
+        "band_cutoffs": {"low_max": 1.0 / 3.0, "high_min": 2.0 / 3.0},
+        "binary_cutoff_source": "train_split_median_per_trait" if trait_label_thresholds else "configured_default",
+        "traits": {},
+    }
+    for ti, trait in enumerate(TRAIT_KEYS):
+        values = labels[:, ti] if len(labels) else np.asarray([], dtype=float)
+        binary_cutoff = (
+            _cutoff_for_trait(trait_label_thresholds, str(trait), ti)
+            if trait_label_thresholds is not None
+            else float(me.DEFAULT_GROUND_TRUTH_CUTOFF)
+        )
+        low = int(np.sum(values < (1.0 / 3.0)))
+        medium = int(np.sum((values >= (1.0 / 3.0)) & (values < (2.0 / 3.0))))
+        high = int(np.sum(values >= (2.0 / 3.0)))
+        bin_low = int(np.sum(values < binary_cutoff))
+        bin_high = int(np.sum(values >= binary_cutoff))
+        nonzero = [x for x in (low, medium, high) if x > 0]
+        out["traits"][trait] = {
+            "mean": _f(float(np.mean(values)) if len(values) else None),
+            "low": low,
+            "medium": medium,
+            "high": high,
+            "low_medium_high": [low, medium, high],
+            "imbalance_ratio": _f(max(nonzero) / min(nonzero) if nonzero else None),
+            "binary_cutoff": _f(binary_cutoff),
+            "binary_low": bin_low,
+            "binary_high": bin_high,
+        }
+    return out
+
+
+def derive_trait_label_thresholds(sample: Sample, train_idx: Sequence[int]) -> Dict[str, float]:
+    """
+    Learn the Low/High ground-truth boundary from TRAIN labels only.
+
+    The saved dict includes both short keys (O/C/E/A/N) and full trait names so
+    older reporting paths can read the same locked cutoffs without translation.
+    """
+    idx = np.asarray([int(i) for i in train_idx], dtype=int)
+    labels = sample.labels_unit[idx] if len(idx) else sample.labels_unit
+    thresholds: Dict[str, float] = {}
+    for ti, short in enumerate(TRAIT_KEYS):
+        value = float(np.median(labels[:, ti])) if len(labels) else float(me.DEFAULT_GROUND_TRUTH_CUTOFF)
+        thresholds[str(short)] = value
+        thresholds[str(OCEAN_TRAITS[ti])] = value
+    return thresholds
+
+
+def _cutoff_for_trait(thresholds: Dict[str, float], trait: str, ti: int) -> float:
+    return float(thresholds.get(trait, thresholds.get(str(TRAIT_KEYS[ti]), me.DEFAULT_GROUND_TRUTH_CUTOFF)))
+
+
+def build_imbalance_report(
+    sample: Sample,
+    train_idx: Sequence[int],
+    val_idx: Sequence[int],
+    test_idx: Sequence[int],
+    trait_label_thresholds: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """Persist run-level imbalance evidence for each file-defined split."""
+    return {
+        "kind": "trait_band_distribution",
+        "scale": sample.scale,
+        "splits": {
+            "train": trait_band_distribution(sample, train_idx, trait_label_thresholds),
+            "validation": trait_band_distribution(sample, val_idx, trait_label_thresholds),
+            "test": trait_band_distribution(sample, test_idx, trait_label_thresholds),
+        },
+        "notes": [
+            "Low/Medium/High uses fixed normalized cut points 0.333 and 0.667.",
+            "Binary Low/High uses train-derived per-trait label cutoffs when available.",
+            "Training weights are derived from train split trait bands only.",
+        ],
+    }
+
+
+def training_sample_weights(sample: Sample, train_idx: Sequence[int]) -> np.ndarray:
+    """Average inverse-frequency band weights across the five traits."""
+    idx = np.asarray([int(i) for i in train_idx], dtype=int)
+    if len(idx) == 0:
+        return np.asarray([], dtype=float)
+    labels = sample.labels_unit[idx]
+    weights = np.zeros(len(idx), dtype=float)
+    for ti in range(labels.shape[1]):
+        bands = to_tertile_classes(labels[:, ti], 1.0 / 3.0, 2.0 / 3.0)
+        counts = np.bincount(bands, minlength=3).astype(float)
+        counts[counts == 0] = 1.0
+        trait_weights = len(bands) / (3.0 * counts)
+        weights += trait_weights[bands]
+    weights = weights / labels.shape[1]
+    return weights / max(float(np.mean(weights)), 1e-12)
+
+
+def targeted_gan_training_positions(sample: Sample, train_idx: Sequence[int]) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Pick train-row positions that sit in underrepresented Low/Medium/High bands.
+
+    This keeps GAN augmentation focused on scarce trait regions while the final
+    classifier remains binary Low/High.
+    """
+    idx = np.asarray([int(i) for i in train_idx], dtype=int)
+    labels = sample.labels_unit[idx] if len(idx) else np.empty((0, len(TRAIT_KEYS)))
+    if len(labels) == 0:
+        return np.asarray([], dtype=int), {"enabled": False, "reason": "empty_train_split"}
+
+    weights = np.zeros(len(labels), dtype=float)
+    traits: Dict[str, Any] = {}
+    band_names = ["low", "medium", "high"]
+    for ti, trait in enumerate(TRAIT_KEYS):
+        bands = to_tertile_classes(labels[:, ti], 1.0 / 3.0, 2.0 / 3.0)
+        counts = np.bincount(bands, minlength=3).astype(float)
+        target = float(np.max(counts)) if len(counts) else 0.0
+        deficits = np.maximum(target - counts, 0.0)
+        if target > 0:
+            weights += deficits[bands] / target
+        traits[str(trait)] = {
+            "counts": {band_names[i]: int(counts[i]) for i in range(3)},
+            "target_count": int(target),
+            "deficits": {band_names[i]: int(deficits[i]) for i in range(3)},
+        }
+
+    selected = np.flatnonzero(weights > 0)
+    if len(selected) < 2:
+        return np.asarray([], dtype=int), {
+            "enabled": False,
+            "reason": "no_minority_band_with_enough_rows",
+            "traits": traits,
+            "selected_train_rows": int(len(selected)),
+        }
+    return selected.astype(int), {
+        "enabled": True,
+        "strategy": "train_gan_on_rows_from_underrepresented_fixed_trait_bands",
+        "band_cutoffs": {"low_max": 1.0 / 3.0, "high_min": 2.0 / 3.0},
+        "selected_train_rows": int(len(selected)),
+        "traits": traits,
+    }
+
+
+def selection_efficiency_report(
+    sample: Sample,
+    features: Dict[str, Features],
+    cfg: ExperimentConfig,
+    qlearning_effect: Any = None,
+    feature_build_seconds: Optional[Dict[str, float]] = None,
+    results: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Record the practical cost/saving of selection before BERT/model training."""
+    total_comments = np.asarray([len(texts) for texts in sample.texts], dtype=float)
+    total_available = int(np.sum(total_comments))
+    out: Dict[str, Any] = {
+        "kind": "selection_efficiency",
+        "selection_unit": "author_profile_comments",
+        "expensive_step": "BERT embedding is run only on selected comments.",
+        "qlearning_extra_work": (
+            "Q-learning scores candidate comments with cheap lexical features before BERT; "
+            "it does not call BERT while selecting."
+        ),
+        "baseline_policy": "use_all_available_comments",
+        "qlearning_policy": "learned_select_skip_over_all_comments_without_fixed_selection_budget",
+        "qlearning_selection_budget": None,
+        "total_profiles": int(sample.n_users),
+        "total_available_comments": total_available,
+        "by_selection": {},
+        "feature_build_seconds": {
+            str(k): _f(v)
+            for k, v in (feature_build_seconds or {}).items()
+        },
+        "condition_training_seconds": {},
+    }
+    for mode, block in features.items():
+        selected = np.asarray(block.n_selected, dtype=float)
+        selected_total = int(np.sum(selected))
+        saved = max(0, total_available - selected_total)
+        out["by_selection"][mode] = {
+            "profiles": int(len(selected)),
+            "selected_comments_total": selected_total,
+            "mean_comments_selected": _f(float(np.mean(selected)) if len(selected) else None),
+            "median_comments_selected": _f(float(np.median(selected)) if len(selected) else None),
+            "max_comments_selected": int(np.max(selected)) if len(selected) else 0,
+            "bert_embedding_calls_saved_vs_full_history": int(saved),
+            "bert_embedding_reduction_vs_full_history": _f(saved / total_available if total_available else None),
+        }
+
+    baseline = out["by_selection"].get("baseline") or {}
+    qlearn = out["by_selection"].get("qlearning") or {}
+    if baseline and qlearn:
+        baseline_total = max(1, int(baseline["selected_comments_total"]))
+        saved_vs_baseline = int(baseline["selected_comments_total"] - qlearn["selected_comments_total"])
+        out["qlearning_vs_baseline"] = {
+            "delta_selected_comments_total": int(
+                qlearn["selected_comments_total"] - baseline["selected_comments_total"]
+            ),
+            "delta_mean_comments_selected": _f(
+                (qlearn["mean_comments_selected"] or 0.0) - (baseline["mean_comments_selected"] or 0.0)
+            ),
+            "bert_embedding_calls_saved_vs_baseline": saved_vs_baseline,
+            "bert_embedding_reduction_vs_baseline": _f(saved_vs_baseline / baseline_total),
+            "selection_time_delta_seconds": _f(
+                (out["feature_build_seconds"].get("qlearning") or 0.0) -
+                (out["feature_build_seconds"].get("baseline") or 0.0)
+            ),
+            "interpretation": (
+                "Baseline embeds every available author comment. Q-learning sees the same candidate pool, "
+                "then selects a smaller learned subset before BERT. The compute tradeoff is the saved "
+                "BERT calls versus any accuracy/F1 change in quality_effect_by_matched_cell."
+            ),
+        }
+    if qlearning_effect is not None:
+        try:
+            out["quality_effect_by_matched_cell"] = qlearning_effect.to_dict("records")
+        except AttributeError:
+            out["quality_effect_by_matched_cell"] = qlearning_effect
+    if results:
+        for exp_id, result in results.items():
+            out["condition_training_seconds"][exp_id] = _f(result.get("training_seconds"))
+    return out
 
 
 def build_features(
@@ -404,7 +681,7 @@ def build_features(
         if mode == "baseline":
             selected = _baseline_select(user_texts, cfg.top_k)
         elif mode == "qlearning":
-            selected = _qlearning_select(agent, user_texts, cfg.top_k)  # type: ignore[arg-type]
+            selected = _qlearning_select(agent, user_texts)  # type: ignore[arg-type]
         else:
             raise ValueError(f"Unknown selection mode: {mode!r}")
 
@@ -471,22 +748,50 @@ def _make_gan(embedding_dim: int, cfg: ExperimentConfig) -> GANAugmenter:
     )
 
 
-def _augment_pooled_gan(X_tr: np.ndarray, y_tr: np.ndarray, cfg: ExperimentConfig) -> np.ndarray:
+def _augment_pooled_gan(
+    X_tr: np.ndarray,
+    y_tr: np.ndarray,
+    cfg: ExperimentConfig,
+    minority_positions: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Fit the adversarial GAN on the pooled TRAIN vectors only, then generate one
     synthetic pooled vector per real training user. Used by the Lasso path.
     Deterministic given ``cfg.seed`` (the GAN seeds training and generation).
     """
     X_tr = np.asarray(X_tr, dtype=np.float32)
-    if len(X_tr) < 2:  # GAN needs >= 2 real samples to fit
-        logger.warning("Too few train users (%d) to fit the GAN; skipping augmentation.", len(X_tr))
-        return np.empty((0, X_tr.shape[1]), dtype=np.float32)
-    gan = _make_gan(X_tr.shape[1], cfg).fit(X_tr, ocean_scores=y_tr)
-    synth, _, _ = gan.generate(len(X_tr))
-    return np.asarray(synth, dtype=np.float32)
+    y_tr = np.asarray(y_tr, dtype=np.float32)
+    positions = np.asarray(minority_positions if minority_positions is not None else [], dtype=int)
+    if len(positions) >= 2:
+        fit_X = X_tr[positions]
+        fit_y = y_tr[positions]
+        n_generate = len(positions)
+        targeted = True
+    else:
+        fit_X = X_tr
+        fit_y = y_tr
+        n_generate = len(X_tr)
+        targeted = False
+    if len(fit_X) < 2:  # GAN needs >= 2 real samples to fit
+        logger.warning("Too few train users (%d) to fit the GAN; skipping augmentation.", len(fit_X))
+        empty_x = np.empty((0, X_tr.shape[1]), dtype=np.float32)
+        empty_y = np.empty((0, y_tr.shape[1]), dtype=np.float32)
+        return empty_x, empty_y, {"generated_rows": 0, "targeted": targeted, "reason": "too_few_rows"}
+    gan = _make_gan(X_tr.shape[1], cfg).fit(fit_X, ocean_scores=fit_y)
+    synth_x, synth_y, _ = gan.generate(n_generate)
+    return (
+        np.asarray(synth_x, dtype=np.float32),
+        np.asarray(synth_y, dtype=np.float32),
+        {"generated_rows": int(n_generate), "fit_rows": int(len(fit_X)), "targeted": targeted},
+    )
 
 
-def _augment_sequences_gan(train_seqs: List[np.ndarray], y_tr: np.ndarray, cfg: ExperimentConfig) -> List[np.ndarray]:
+def _augment_sequences_gan(
+    train_seqs: List[np.ndarray],
+    y_tr: np.ndarray,
+    cfg: ExperimentConfig,
+    minority_positions: Optional[np.ndarray] = None,
+) -> Tuple[List[np.ndarray], np.ndarray, Dict[str, Any]]:
     """
     LSTM path: fit the adversarial GAN on *all* real TRAIN timestep vectors
     (never val), then generate one same-length synthetic sequence per real
@@ -494,25 +799,46 @@ def _augment_sequences_gan(train_seqs: List[np.ndarray], y_tr: np.ndarray, cfg: 
     call keeps the synthetic timesteps distinct across sequences.
     Deterministic given ``cfg.seed``.
     """
-    all_vecs = np.vstack(train_seqs).astype(np.float32) if train_seqs else np.empty((0, 768), np.float32)
+    positions = np.asarray(minority_positions if minority_positions is not None else [], dtype=int)
+    if len(positions) >= 2:
+        selected_seqs = [train_seqs[int(i)] for i in positions]
+        selected_y = y_tr[positions]
+        targeted = True
+    else:
+        selected_seqs = train_seqs
+        selected_y = y_tr
+        targeted = False
+    all_vecs = np.vstack(selected_seqs).astype(np.float32) if selected_seqs else np.empty((0, 768), np.float32)
     if len(all_vecs) < 2:
         logger.warning("Too few train timesteps (%d) to fit the GAN; reusing real sequences.", len(all_vecs))
-        return [np.asarray(s, dtype=np.float32) for s in train_seqs]
+        return [], np.empty((0, y_tr.shape[1]), dtype=np.float32), {
+            "generated_sequences": 0,
+            "targeted": targeted,
+            "reason": "too_few_timesteps",
+        }
     repeated_y = np.vstack([
-        np.repeat(y_tr[i:i + 1], len(seq), axis=0)
-        for i, seq in enumerate(train_seqs)
+        np.repeat(selected_y[i:i + 1], len(seq), axis=0)
+        for i, seq in enumerate(selected_seqs)
     ]).astype(np.float32)
     gan = _make_gan(all_vecs.shape[1], cfg).fit(all_vecs, ocean_scores=repeated_y)
-    total = int(sum(len(s) for s in train_seqs))
-    synth_all, _, _ = gan.generate(total)
+    total = int(sum(len(s) for s in selected_seqs))
+    synth_all, synth_y_all, _ = gan.generate(total)
     synth_all = np.asarray(synth_all, dtype=np.float32)
+    synth_y_all = np.asarray(synth_y_all, dtype=np.float32)
     out: List[np.ndarray] = []
+    y_out: List[np.ndarray] = []
     pos = 0
-    for seq in train_seqs:
+    for seq in selected_seqs:
         k = len(seq)
         out.append(synth_all[pos:pos + k])
+        y_out.append(np.mean(synth_y_all[pos:pos + k], axis=0))
         pos += k
-    return out
+    return out, np.vstack(y_out).astype(np.float32), {
+        "generated_sequences": int(len(out)),
+        "fit_sequences": int(len(selected_seqs)),
+        "fit_timesteps": int(len(all_vecs)),
+        "targeted": targeted,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +852,8 @@ def _run_lasso(
     val_idx: np.ndarray,
     cfg: ExperimentConfig,
     use_gan: bool,
+    train_sample_weights: Optional[np.ndarray] = None,
+    trait_label_thresholds: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, Any], LassoTrainer, Dict[str, np.ndarray]]:
     """
     Per-trait ElasticNet on mean-pooled features, mirroring the orchestrator's
@@ -565,14 +893,23 @@ def _run_lasso(
     # (real-fit) scaler and are down-weighted by synthetic_weight. If the GAN
     # can't fit (too few train users) it returns no rows and we train unaugmented.
     synth_scaled = None
-    sample_weight = None
+    real_sample_weight = (
+        np.asarray(train_sample_weights, dtype=float)
+        if train_sample_weights is not None
+        else np.ones(len(X_tr_scaled), dtype=float)
+    )
+    sample_weight = real_sample_weight
+    synth_y_all: Optional[np.ndarray] = None
+    gan_report: Dict[str, Any] = {"used": False}
     if use_gan:
         y_tr_all = sample.labels_unit[train_idx].astype(np.float32)
-        synth = _augment_pooled_gan(X_tr, y_tr_all, cfg)
+        minority_positions, targeting = targeted_gan_training_positions(sample, train_idx)
+        synth, synth_y_all, augment_report = _augment_pooled_gan(X_tr, y_tr_all, cfg, minority_positions)
+        gan_report = {"used": len(synth) > 0, "targeting": targeting, "augmentation": augment_report}
         if len(synth) > 0:
             synth_scaled = trainer.transform_features(synth)
             sample_weight = np.concatenate([
-                np.ones(len(X_tr_scaled), dtype=float),
+                real_sample_weight,
                 np.full(len(synth_scaled), cfg.synthetic_weight, dtype=float),
             ])
 
@@ -590,7 +927,7 @@ def _run_lasso(
 
         if synth_scaled is not None:
             X_fit = np.vstack([X_tr_scaled, synth_scaled])
-            y_fit = np.concatenate([y_tr_unit, y_tr_unit])
+            y_fit = np.concatenate([y_tr_unit, synth_y_all[:, ti]])
         else:
             X_fit, y_fit = X_tr_scaled, y_tr_unit
 
@@ -610,7 +947,12 @@ def _run_lasso(
         # All metric formulas from metrics_engine (single source of truth).
         reg = me.compute_regression_metrics(y_val_unit, val_pred)
         cls = me.compute_multiclass_metrics(y_val_cls, pred_cls, labels=[0, 1, 2])
-        y_bin, gt_cut = me.derive_binary_ground_truth(y_val_unit)
+        gt_input = (
+            _cutoff_for_trait(trait_label_thresholds, trait, ti)
+            if trait_label_thresholds is not None
+            else cfg.ground_truth_cutoff
+        )
+        y_bin, gt_cut = me.derive_binary_ground_truth(y_val_unit, gt_input)
         sweep = me.sweep_thresholds_on_scores(y_bin, val_pred)
 
         true_unit[:, ti] = y_val_unit
@@ -646,7 +988,7 @@ def _run_lasso(
         "macro_f1": _mean([per_trait[t]["macro_f1"] for t in OCEAN_TRAITS]),
     }
     raw = {"true_unit": true_unit, "lasso_pred": lasso_pred_mat, "true_classes": true_classes}
-    return {"per_trait": per_trait, "overall": overall}, trainer, raw
+    return {"per_trait": per_trait, "overall": overall, "targeted_gan": gan_report}, trainer, raw
 
 
 def _run_lstm(
@@ -656,6 +998,8 @@ def _run_lstm(
     val_idx: np.ndarray,
     cfg: ExperimentConfig,
     use_gan: bool,
+    train_sample_weights: Optional[np.ndarray] = None,
+    trait_label_thresholds: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, Any], LSTMTrainer, Dict[str, np.ndarray]]:
     """Train the current joint 5-output LSTM and score validation Low/High metrics."""
     seqs = features.sequences
@@ -663,17 +1007,25 @@ def _run_lstm(
     val_seqs = [seqs[i] for i in val_idx]
     y_tr = sample.labels_unit[train_idx].astype(np.float32)
     y_val = sample.labels_unit[val_idx].astype(np.float32)
+    real_sample_weights = (
+        np.asarray(train_sample_weights, dtype=float)
+        if train_sample_weights is not None
+        else np.ones(len(tr_seqs), dtype=float)
+    )
 
     synth_seqs: Optional[List[np.ndarray]] = None
-    sample_weights = None
+    sample_weights = real_sample_weights
+    gan_report: Dict[str, Any] = {"used": False}
     if use_gan:
-        synth_seqs = _augment_sequences_gan(tr_seqs, y_tr, cfg)
-        fit_targets = np.concatenate([y_tr, y_tr], axis=0)
+        minority_positions, targeting = targeted_gan_training_positions(sample, train_idx)
+        synth_seqs, synth_y, augment_report = _augment_sequences_gan(tr_seqs, y_tr, cfg, minority_positions)
+        gan_report = {"used": len(synth_seqs) > 0, "targeting": targeting, "augmentation": augment_report}
+        fit_targets = np.concatenate([y_tr, synth_y], axis=0) if len(synth_seqs) else y_tr
         sample_weights = np.concatenate([
-            np.ones(len(tr_seqs), dtype=float),
+            real_sample_weights,
             np.full(len(synth_seqs), cfg.synthetic_weight, dtype=float),
-        ])
-        fit_seqs = tr_seqs + synth_seqs
+        ]) if len(synth_seqs) else real_sample_weights
+        fit_seqs = tr_seqs + synth_seqs if len(synth_seqs) else tr_seqs
     else:
         fit_seqs = tr_seqs
         fit_targets = y_tr
@@ -700,8 +1052,8 @@ def _run_lstm(
         y_val,
         val_pred,
         trait_names=list(TRAIT_KEYS),
-        ground_truth_cutoff=cfg.ground_truth_cutoff,
-        candidate_thresholds=list(cfg.candidate_thresholds),
+        ground_truth_cutoff=trait_label_thresholds or cfg.ground_truth_cutoff,
+        candidate_thresholds=None,
     )
 
     per_trait: Dict[str, Any] = {}
@@ -729,7 +1081,7 @@ def _run_lstm(
         "pr_auc": validation["aggregate"].get("pr_auc"),
     }
     raw = {"true_unit": y_val, "lstm_pred": val_pred}
-    return {"per_trait": per_trait, "overall": overall}, trainer, raw
+    return {"per_trait": per_trait, "overall": overall, "targeted_gan": gan_report}, trainer, raw
 
 
 # ---------------------------------------------------------------------------
@@ -743,6 +1095,9 @@ def _run_condition(
     features: Features,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
+    test_idx: Optional[np.ndarray] = None,
+    train_sample_weights: Optional[np.ndarray] = None,
+    trait_label_thresholds: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, Any], Any, Dict[str, np.ndarray]]:
     """
     Run a single condition and return ``(out_dict, fitted_model, raw_arrays)``.
@@ -756,11 +1111,139 @@ def _run_condition(
     logger.info("=== %s: %s ===", exp_id, spec["label"])
 
     if spec["model"] == "lasso":
-        result, model, raw = _run_lasso(features, sample, train_idx, val_idx, cfg, use_gan=spec["gan"])
+        result, model, raw = _run_lasso(
+            features, sample, train_idx, val_idx, cfg,
+            use_gan=spec["gan"],
+            train_sample_weights=train_sample_weights,
+            trait_label_thresholds=trait_label_thresholds,
+        )
     elif spec["model"] == "lstm":
-        result, model, raw = _run_lstm(features, sample, train_idx, val_idx, cfg, use_gan=spec["gan"])
+        result, model, raw = _run_lstm(
+            features, sample, train_idx, val_idx, cfg,
+            use_gan=spec["gan"],
+            train_sample_weights=train_sample_weights,
+            trait_label_thresholds=trait_label_thresholds,
+        )
     else:
         raise ValueError(f"Unknown model for {exp_id}: {spec['model']}")
+
+    validation_result = {
+        "per_trait": result["per_trait"],
+        "overall": _reporting_aliases(result["overall"]),
+    }
+    official_result = validation_result
+    raw["split"] = "validation"
+
+    if test_idx is not None and len(test_idx) > 0:
+        if spec["model"] == "lstm":
+            test_seqs = [features.sequences[int(i)] for i in test_idx]
+            y_test = sample.labels_unit[test_idx].astype(np.float32)
+            test_pred = np.clip(model.predict(test_seqs), 0.0, 1.0)
+            test_eval = me.evaluate_lstm_binary_with_thresholds(
+                y_test,
+                test_pred,
+                validation_result,
+                trait_names=list(TRAIT_KEYS),
+                ground_truth_cutoff=trait_label_thresholds or cfg.ground_truth_cutoff,
+                candidate_thresholds=None,
+            )
+            test_per_trait = {}
+            for trait in TRAIT_KEYS:
+                block = test_eval["per_trait"][trait]
+                test_per_trait[trait] = {
+                    "val_mae": None,
+                    "accuracy": block["accuracy"],
+                    "macro_f1": block["f1"],
+                    "f1": block["f1"],
+                    "macro_precision": block["precision"],
+                    "precision": block["precision"],
+                    "macro_recall": block["recall"],
+                    "recall": block["recall"],
+                    "specificity": block["specificity"],
+                    "roc_auc": block.get("roc_auc"),
+                    "pr_auc": block.get("pr_auc"),
+                    "selected_threshold": block.get("selected_threshold"),
+                    "threshold_source": "validation",
+                    "threshold_sweep": block["threshold_sweep"],
+                }
+            official_result = {
+                "per_trait": test_per_trait,
+                "overall": _reporting_aliases({
+                    "val_mae": None,
+                    "accuracy": test_eval["aggregate"]["accuracy"],
+                    "macro_f1": test_eval["aggregate"]["f1"],
+                    "specificity": test_eval["aggregate"]["specificity"],
+                    "roc_auc": test_eval["aggregate"].get("roc_auc"),
+                    "pr_auc": test_eval["aggregate"].get("pr_auc"),
+                }),
+            }
+            raw = {"true_unit": y_test, "lstm_pred": test_pred, "split": "test"}
+        else:
+            X_test = features.pooled[test_idx]
+            X_test_scaled = model.transform_features(X_test)
+            n_test = len(test_idx)
+            n_traits = len(OCEAN_TRAITS)
+            true_unit = np.zeros((n_test, n_traits), dtype=float)
+            pred_mat = np.zeros((n_test, n_traits), dtype=float)
+            true_classes = np.zeros((n_test, n_traits), dtype=int)
+            test_per_trait = {}
+            for ti, trait in enumerate(OCEAN_TRAITS):
+                unit = sample.labels_unit[:, ti]
+                y_tr_unit = unit[train_idx]
+                y_test_unit = unit[test_idx]
+                pred = model.predict_trait(trait, X_test_scaled)
+                low_cut, high_cut = _tertile_cuts(y_tr_unit)
+                y_cls = to_tertile_classes(y_test_unit, low_cut, high_cut)
+                pred_cls = to_tertile_classes(pred, low_cut, high_cut)
+                reg = me.compute_regression_metrics(y_test_unit, pred)
+                cls = me.compute_multiclass_metrics(y_cls, pred_cls, labels=[0, 1, 2])
+                selected_tau = validation_result["per_trait"][trait]["threshold_sweep"]["best_threshold"]
+                gt_input = (
+                    _cutoff_for_trait(trait_label_thresholds, trait, ti)
+                    if trait_label_thresholds is not None
+                    else cfg.ground_truth_cutoff
+                )
+                y_bin, gt_cut = me.derive_binary_ground_truth(y_test_unit, gt_input)
+                official = me.compute_classification_metrics_at_threshold(y_bin, pred, selected_tau)
+                sweep = me.sweep_thresholds_on_scores(y_bin, pred, None)
+                true_unit[:, ti] = y_test_unit
+                pred_mat[:, ti] = pred
+                true_classes[:, ti] = y_cls
+                test_per_trait[trait] = {
+                    "val_mae": _f(reg["mae"]),
+                    "val_rmse": _f(reg["rmse"]),
+                    "val_r2": _f(reg["r2"]),
+                    "val_pearson": _f(reg["correlation"]),
+                    "accuracy": _f(cls["accuracy"]),
+                    "macro_f1": _f(cls["f1"]),
+                    "macro_precision": _f(cls["precision"]),
+                    "macro_recall": _f(cls["recall"]),
+                    "specificity": official["specificity"],
+                    "precision": official["precision"],
+                    "recall": official["recall"],
+                    "f1": official["f1_score"],
+                    "selected_threshold": selected_tau,
+                    "threshold_source": "validation",
+                    "threshold_sweep": sweep["results"],
+                    "ground_truth_cutoff": _f(gt_cut),
+                    "tertile_cuts": [low_cut, high_cut],
+                }
+            official_result = {
+                "per_trait": test_per_trait,
+                "overall": _reporting_aliases({
+                    "val_mae": _mean([test_per_trait[t]["val_mae"] for t in OCEAN_TRAITS]),
+                    "val_rmse": _mean([test_per_trait[t]["val_rmse"] for t in OCEAN_TRAITS]),
+                    "val_r2": _mean([test_per_trait[t]["val_r2"] for t in OCEAN_TRAITS]),
+                    "val_pearson": _mean([test_per_trait[t]["val_pearson"] for t in OCEAN_TRAITS]),
+                    "accuracy": _mean([test_per_trait[t]["accuracy"] for t in OCEAN_TRAITS]),
+                    "macro_f1": _mean([test_per_trait[t]["macro_f1"] for t in OCEAN_TRAITS]),
+                    "specificity": _mean([test_per_trait[t]["specificity"] for t in OCEAN_TRAITS]),
+                    "precision": _mean([test_per_trait[t]["precision"] for t in OCEAN_TRAITS]),
+                    "recall": _mean([test_per_trait[t]["recall"] for t in OCEAN_TRAITS]),
+                    "f1": _mean([test_per_trait[t]["f1"] for t in OCEAN_TRAITS]),
+                }),
+            }
+            raw = {"true_unit": true_unit, "lasso_pred": pred_mat, "true_classes": true_classes, "split": "test"}
 
     out = {
         "experiment": exp_id,
@@ -770,13 +1253,20 @@ def _run_condition(
         "gan": bool(spec["gan"]),
         "n_train": int(len(train_idx)),
         "n_val": int(len(val_idx)),
-        "n_test": int(len(val_idx)),
+        "n_test": int(len(test_idx)) if test_idx is not None else int(len(val_idx)),
         "mean_comments_selected": float(np.mean(features.n_selected)),
-        "per_trait": result["per_trait"],
-        "overall": _reporting_aliases(result["overall"]),
+        "per_trait": official_result["per_trait"],
+        "overall": official_result["overall"],
         "validation": {
-            "candidate_thresholds": list(cfg.candidate_thresholds),
+            "candidate_thresholds": "validation_score_percentiles_per_trait",
             "split": "validation",
+            **validation_result,
+        },
+        "targeted_gan": result.get("targeted_gan"),
+        "test": {
+            "split": "test" if test_idx is not None and len(test_idx) > 0 else "validation",
+            **official_result,
+            "threshold_source": "validation",
         },
     }
     logger.info(
@@ -807,7 +1297,17 @@ def run_experiment(
     With ``return_model=True`` the return is ``(metrics_dict, fitted_model)`` so
     a caller can persist the trained model; the default is just the dict.
     """
-    out, model, _raw = _run_condition(sample, exp_id, cfg, features, train_idx, val_idx)
+    trait_label_thresholds = derive_trait_label_thresholds(sample, train_idx)
+    out, model, _raw = _run_condition(
+        sample,
+        exp_id,
+        cfg,
+        features,
+        train_idx,
+        val_idx,
+        test_idx,
+        trait_label_thresholds=trait_label_thresholds,
+    )
     return (out, model) if return_model else out
 
 
@@ -913,6 +1413,7 @@ def _assemble_data_quality(
     sample: Sample,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
+    test_idx: np.ndarray,
     cfg: ExperimentConfig,
 ) -> Dict[str, Any]:
     filt = _measure_experiment_filter(prepared, sample, cfg)
@@ -922,16 +1423,17 @@ def _assemble_data_quality(
         ingestion = load_ingestion_quality(prepared_json)
     train_counts = [len(sample.texts[int(i)]) for i in train_idx]
     val_counts = [len(sample.texts[int(i)]) for i in val_idx]
+    test_counts = [len(sample.texts[int(i)]) for i in test_idx]
     all_counts = [len(texts) for texts in sample.texts]
     volume = {
         "train": comment_volume(train_counts, split="train", population="sampled_train"),
         "val": comment_volume(val_counts, split="validation", population="sampled_held_out"),
-        "test": comment_volume(val_counts, split="held_out", population="sampled_held_out"),
+        "test": comment_volume(test_counts, split="test", population="sampled_test"),
         "sampled_all_folds": comment_volume(all_counts, split="all", population="sampled_all_folds"),
     }
     notes = [
         "Filter counts recount the same eligibility rules used by sample_users; they do not change sampling.",
-        "The current runner uses a train/validation split; val is the held-out eval fold.",
+        "The current runner uses file-defined train/validation/test splits when available.",
     ]
     if not ingestion or not ingestion.get("available"):
         notes.append("Ingestion/cleaning counts were not measured in this process.")
@@ -950,10 +1452,12 @@ def _build_experiment_data(
     sample: Sample,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
+    test_idx: np.ndarray,
     cfg: ExperimentConfig,
 ) -> Dict[str, Any]:
     train_ids = [sample.user_ids[int(i)] for i in train_idx]
     val_ids = [sample.user_ids[int(i)] for i in val_idx]
+    test_ids = [sample.user_ids[int(i)] for i in test_idx]
     return {
         "kind": "experiment_data",
         "dataset_source": "PANDORA",
@@ -961,15 +1465,15 @@ def _build_experiment_data(
         "n_users": sample.n_users,
         "n_train": int(len(train_idx)),
         "n_val": int(len(val_idx)),
-        "n_test": int(len(val_idx)),
-        "held_out_fold": "validation",
+        "n_test": int(len(test_idx)),
+        "held_out_fold": "test",
         "label_scale": sample.scale,
         "user_ids": list(sample.user_ids),
         "split": {
             "train_user_ids": train_ids,
             "validation_user_ids": val_ids,
-            "test_user_ids": [],
-            "held_out_fold": "validation",
+            "test_user_ids": test_ids,
+            "held_out_fold": "test",
         },
     }
 
@@ -978,6 +1482,7 @@ def _build_reproducibility(
     sample: Sample,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
+    test_idx: np.ndarray,
     cfg: ExperimentConfig,
     experiment_data: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -991,7 +1496,7 @@ def _build_reproducibility(
         "code_identity_reliable": repo.get("code_identity_reliable"),
         "train_participant_count": int(len(train_idx)),
         "validation_participant_count": int(len(val_idx)),
-        "test_participant_count": int(len(val_idx)),
+        "test_participant_count": int(len(test_idx)),
         "participant_sample_size": sample.n_users,
         "split": experiment_data["split"],
         "preprocessing": {"label_scale": sample.scale, "group_by": "traits"},
@@ -1036,45 +1541,84 @@ def _attach_interpretation(bundle: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def run_all(
-    prepared: List[PreparedUserComments],
+    prepared: Union[List[PreparedUserComments], DatasetSplits],
     cfg: ExperimentConfig,
     *,
     encoder: Any = None,
 ) -> Dict[str, Any]:
     """Run the full local PANDORA 2x2x2 experiment."""
     set_seed(cfg.seed)
-    sample = sample_users(prepared, cfg)
+    if isinstance(prepared, DatasetSplits):
+        sample = prepared.sample
+        train_idx = prepared.train_idx
+        val_idx = prepared.val_idx
+        test_idx = prepared.test_idx
+        split_sources = prepared.sources
+    else:
+        sample = sample_users(prepared, cfg)
+        train_idx, val_idx = make_split(sample.n_users, cfg)
+        test_idx = val_idx
+        split_sources = {}
     encoder = encoder or get_encoder()
-    agent = train_qlearning_agent(sample, cfg)
+    qlearning_train_sample = subset_sample(sample, train_idx)
+    agent = train_qlearning_agent(qlearning_train_sample, cfg)
+    sample_weights = training_sample_weights(sample, train_idx)
+    trait_label_thresholds = derive_trait_label_thresholds(sample, train_idx)
+    imbalance = build_imbalance_report(sample, train_idx, val_idx, test_idx, trait_label_thresholds)
 
+    feature_build_seconds: Dict[str, float] = {}
+    start = time.perf_counter()
+    baseline_features = build_features(sample, "baseline", cfg, encoder)
+    feature_build_seconds["baseline"] = time.perf_counter() - start
+    start = time.perf_counter()
+    qlearning_features = build_features(sample, "qlearning", cfg, encoder, agent=agent)
+    feature_build_seconds["qlearning"] = time.perf_counter() - start
     features = {
-        "baseline": build_features(sample, "baseline", cfg, encoder),
-        "qlearning": build_features(sample, "qlearning", cfg, encoder, agent=agent),
+        "baseline": baseline_features,
+        "qlearning": qlearning_features,
     }
-    train_idx, val_idx = make_split(sample.n_users, cfg)
 
     results: Dict[str, Any] = {}
     models: Dict[str, Union[LassoTrainer, LSTMTrainer]] = {}
     for exp_id, spec in EXPERIMENTS.items():
+        condition_start = time.perf_counter()
         out, model, _raw = _run_condition(
             sample, exp_id, cfg,
             features[spec["selection"]],
             train_idx, val_idx,
+            test_idx=test_idx,
+            train_sample_weights=sample_weights,
+            trait_label_thresholds=trait_label_thresholds,
         )
+        out["training_seconds"] = _f(time.perf_counter() - condition_start)
         results[exp_id] = out
         models[exp_id] = model
 
     comparison = comparison_table(results)
     effects = factor_effects(results)
+    qlearning_efficiency = selection_efficiency_report(
+        sample,
+        features,
+        cfg,
+        qlearning_effect=effects.get("qlearning_effect"),
+        feature_build_seconds=feature_build_seconds,
+        results=results,
+    )
     findings = summarize_findings(results)
     presentation_metrics = presentation_metric_table(results)
     threshold_sweeps = threshold_sweep_table(results)
     prediction_evidence = prediction_evidence_table(results)
     audit = audit_classification_metrics(results)
+    targeted_gan = {
+        exp_id: row.get("targeted_gan")
+        for exp_id, row in results.items()
+        if row.get("gan") and row.get("targeted_gan") is not None
+    }
 
-    experiment_data = _build_experiment_data(sample, train_idx, val_idx, cfg)
-    data_quality = _assemble_data_quality(prepared, sample, train_idx, val_idx, cfg)
-    reproducibility = _build_reproducibility(sample, train_idx, val_idx, cfg, experiment_data)
+    experiment_data = _build_experiment_data(sample, train_idx, val_idx, test_idx, cfg)
+    data_quality_source = [] if isinstance(prepared, DatasetSplits) else prepared
+    data_quality = _assemble_data_quality(data_quality_source, sample, train_idx, val_idx, test_idx, cfg)
+    reproducibility = _build_reproducibility(sample, train_idx, val_idx, test_idx, cfg, experiment_data)
 
     logger.info("Comparison:\n%s", comparison.to_string(index=False))
     for note in findings["notes"]:
@@ -1090,15 +1634,28 @@ def run_all(
             "label_scale": sample.scale,
             "n_train": int(len(train_idx)),
             "n_val": int(len(val_idx)),
-            "n_test": int(len(val_idx)),
+            "n_test": int(len(test_idx)),
             "seed": cfg.seed,
             "dataset_source": "PANDORA",
-            "held_out_fold": "validation",
+            "held_out_fold": "test",
             "split": experiment_data["split"],
+            "split_sources": split_sources,
         },
         "experiment_data": experiment_data,
         "data_quality": data_quality,
         "reproducibility": reproducibility,
+        "imbalance": imbalance,
+        "qlearning_efficiency": qlearning_efficiency,
+        "trait_label_thresholds": {
+            "source": "train_split_median_per_trait",
+            "thresholds": trait_label_thresholds,
+            "notes": [
+                "These cutoffs convert continuous OCEAN labels into binary Low/High labels.",
+                "They are learned only from the train split, then reused unchanged for validation and test.",
+                "Model decision thresholds are still selected on validation predictions and applied once to test.",
+            ],
+        },
+        "targeted_gan": targeted_gan,
         "results": results,
         "comparison": comparison,
         "presentation_metrics": presentation_metrics,
@@ -1230,8 +1787,8 @@ def comparison_table(results: Dict[str, Any]):
             "selection": r["selection"],
             "gan": r["gan"],
             "model": r["model"],
-            "selection": r["selection"],
-            "gan": r["gan"],
+            "mean_comments_selected": r.get("mean_comments_selected"),
+            "training_seconds": r.get("training_seconds"),
             "val_mae": o["val_mae"],
             "accuracy": o["accuracy"],
             "macro_f1": o["macro_f1"],
@@ -1265,7 +1822,8 @@ def threshold_sweep_table(results: Dict[str, Any]):
 
     rows = []
     for exp_id, row in results.items():
-        per_trait = row.get("per_trait") or {}
+        validation = row.get("validation") or {}
+        per_trait = validation.get("per_trait") or row.get("per_trait") or {}
         for trait, block in per_trait.items():
             sweep = (block or {}).get("threshold_sweep") or {}
             if not sweep:
@@ -1282,6 +1840,9 @@ def threshold_sweep_table(results: Dict[str, Any]):
                         "specificity": item.get("specificity"),
                         "precision": item.get("precision"),
                         "recall": item.get("recall"),
+                        "selection_score": item.get("selection_score"),
+                        "selection_policy": item.get("selection_policy"),
+                        "selected": item.get("threshold") == block.get("best_threshold"),
                     })
             else:
                 rows.append({
@@ -1294,6 +1855,9 @@ def threshold_sweep_table(results: Dict[str, Any]):
                     "specificity": sweep.get("specificity"),
                     "precision": (block or {}).get("macro_precision"),
                     "recall": (block or {}).get("macro_recall"),
+                    "selection_score": sweep.get("selection_score"),
+                    "selection_policy": sweep.get("selection_policy"),
+                    "selected": True,
                 })
     return pd.DataFrame(rows)
 
@@ -1373,10 +1937,12 @@ def audit_classification_metrics(results: Dict[str, Any]) -> Dict[str, Any]:
         if exp_id not in results:
             continue
         result = results[exp_id]
-        expected_thresholds = [
-            float(t)
-            for t in result.get("validation", {}).get("candidate_thresholds", me.CANDIDATE_THRESHOLDS)
-        ]
+        configured_thresholds = result.get("validation", {}).get("candidate_thresholds", me.CANDIDATE_THRESHOLDS)
+        expected_thresholds = (
+            [float(t) for t in configured_thresholds]
+            if isinstance(configured_thresholds, (list, tuple))
+            else None
+        )
         evidence = result.get("prediction_evidence", {})
         for split in ("validation", "test"):
             split_rows = evidence.get(split, [])
@@ -1422,7 +1988,7 @@ def audit_classification_metrics(results: Dict[str, Any]) -> Dict[str, Any]:
                             })
 
                 sweep = stored.get("threshold_sweep", [])
-                if isinstance(sweep, list):
+                if isinstance(sweep, list) and expected_thresholds is not None:
                     thresholds = [round(float(item.get("threshold")), 2) for item in sweep]
                     if thresholds != [round(t, 2) for t in expected_thresholds]:
                         threshold_issues.append({
@@ -1782,6 +2348,10 @@ def save_artifacts(
         ("interpretation.json", "interpretation"),
         ("research_evidence.json", "research_evidence"),
         ("research_contract.json", "research_contract"),
+        ("imbalance_report.json", "imbalance"),
+        ("qlearning_efficiency.json", "qlearning_efficiency"),
+        ("trait_label_thresholds.json", "trait_label_thresholds"),
+        ("targeted_gan_report.json", "targeted_gan"),
     ):
         if bundle.get(key) is not None:
             with (out / name).open("w", encoding="utf-8") as fh:
@@ -1808,6 +2378,7 @@ def save_artifacts(
             "prediction_evidence.csv",
             "classification_audit.json",
             "qlearning_effect.csv",
+            "qlearning_efficiency.json",
             "gan_effect.csv",
             "model_comparison.csv",
             "experiment_data.json",
@@ -1822,8 +2393,9 @@ def save_artifacts(
         "run_created_at": datetime.now().isoformat(timespec="seconds"),
         "metric_policy": {
             "official_test_metrics": "Use validation-selected thresholds only.",
-            "candidate_thresholds": list(cfg.candidate_thresholds),
-            "ground_truth_cutoff": float(cfg.ground_truth_cutoff),
+            "candidate_thresholds": "validation_score_percentiles_per_trait",
+            "threshold_selection": "max_harmonic_mean_f1_specificity",
+            "ground_truth_cutoff": "train_split_median_per_trait",
             "audit_requirement": "classification_audit.json status must be PASS before presenting results.",
         },
         "graph_policy": {
@@ -1926,14 +2498,34 @@ def load_or_prepare_pandora(
     """Use prepared JSON if present, otherwise build it from the PANDORA parquet."""
     prepared_path = Path(prepared_json)
     if prepared_path.exists() and not refresh_prepared:
-        logger.info("Loading cached prepared PANDORA data from %s.", prepared_path)
-        try:
-            return load_prepared_cache(prepared_path)
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "Prepared PANDORA cache is not valid JSON (%s); rebuilding it from parquet.",
-                exc,
+        quality = load_ingestion_quality(prepared_path)
+        cached_source = str((quality or {}).get("source") or "")
+        if cached_source and Path(cached_source).resolve() != Path(pandora_file).resolve():
+            logger.info(
+                "Prepared PANDORA cache source changed from %s to %s; rebuilding.",
+                cached_source,
+                pandora_file,
             )
+        elif cached_source:
+            logger.info("Loading cached prepared PANDORA data from %s.", prepared_path)
+            try:
+                return load_prepared_cache(prepared_path)
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "Prepared PANDORA cache is not valid JSON (%s); rebuilding it.",
+                    exc,
+                )
+        elif not quality_sidecar_path(prepared_path).exists():
+            logger.info("Prepared PANDORA cache has no source sidecar; rebuilding it.")
+        else:
+            logger.info("Loading cached prepared PANDORA data from %s.", prepared_path)
+            try:
+                return load_prepared_cache(prepared_path)
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "Prepared PANDORA cache is not valid JSON (%s); rebuilding it.",
+                    exc,
+                )
     return load_pandora_comments(
         pandora_file,
         output_path=prepared_path,
@@ -1942,10 +2534,73 @@ def load_or_prepare_pandora(
     )
 
 
+def _default_pandora_files_by_split() -> Dict[str, List[Path]]:
+    root = Path("PANDORA")
+    legacy = root / "pandora-big5" / "data"
+    return {
+        "train": sorted(root.glob("Training dataset*.xlsx")) or sorted(legacy.glob("train-*.parquet")),
+        "validation": sorted(root.glob("Validation dataset*.xlsx")) or sorted(legacy.glob("validation-*.parquet")),
+        "test": sorted(root.glob("Test dataset*.xlsx")) or sorted(legacy.glob("test-*.parquet")),
+    }
+
+
+def load_file_defined_splits(
+    *,
+    work_dir: str | Path = "pandora_personality",
+    refresh_prepared: bool = False,
+    cfg: Optional[ExperimentConfig] = None,
+) -> DatasetSplits:
+    """Load the repository's train/validation/test Excel or parquet files as true splits."""
+    files = _default_pandora_files_by_split()
+    missing = [split for split, paths in files.items() if not paths]
+    if missing:
+        raise FileNotFoundError(f"Missing PANDORA dataset split(s): {', '.join(missing)}")
+
+    work = Path(work_dir)
+    data_dir = work / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    cfg = cfg or ExperimentConfig()
+
+    split_samples = {}
+    for split, paths in files.items():
+        prepared_all: List[PreparedUserComments] = []
+        for part_no, path in enumerate(paths):
+            suffix = f"_{part_no:02d}" if len(paths) > 1 else ""
+            prepared_all.extend(load_or_prepare_pandora(
+                path,
+                data_dir / f"pandora_{split}{suffix}_prepared.json",
+                refresh_prepared=refresh_prepared,
+                group_by="author",
+            ))
+        if split == "train":
+            split_sample_n = cfg.sample_n_users
+        elif split == "validation":
+            split_sample_n = max(1, round(cfg.sample_n_users * cfg.val_ratio))
+        else:
+            split_sample_n = max(1, round(cfg.sample_n_users * cfg.test_ratio))
+        split_cfg = ExperimentConfig(
+            sample_n_users=split_sample_n,
+            min_comments_per_user=cfg.min_comments_per_user,
+            seed=cfg.seed,
+            top_k=cfg.top_k,
+        )
+        split_samples[split] = sample_users(prepared_all, split_cfg)
+
+    out = combine_split_samples(
+        split_samples["train"],
+        split_samples["validation"],
+        split_samples["test"],
+    )
+    out.sources = {split: ";".join(str(path) for path in paths) for split, paths in files.items()}
+    return out
+
+
 def _default_pandora_file() -> Optional[Path]:
-    candidates = sorted(Path("PANDORA").glob("**/train-*.parquet"))
+    candidates = sorted(Path("PANDORA").glob("Training dataset*.xlsx"))
     if not candidates:
-        candidates = sorted(Path("PANDORA").glob("**/*.parquet"))
+        candidates = sorted(Path("PANDORA").glob("**/train-*.parquet"))
+    if not candidates:
+        candidates = sorted(Path("PANDORA").glob("**/*.xlsx")) or sorted(Path("PANDORA").glob("**/*.parquet"))
     return candidates[0] if candidates else None
 
 
@@ -1987,7 +2642,7 @@ def main(argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     logging.getLogger("ml_pipeline").setLevel(getattr(logging, args.log_level))
 
     if not args.pandora_file:
-        raise SystemExit("No PANDORA parquet file found. Pass --pandora-file path/to/file.parquet.")
+        raise SystemExit("No PANDORA dataset file found. Pass --pandora-file path/to/file.xlsx.")
 
     work_dir = Path(args.work_dir)
     data_dir = work_dir / "data"

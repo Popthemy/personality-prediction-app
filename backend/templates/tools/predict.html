@@ -7,7 +7,8 @@
 <div class="min-h-screen bg-gradient-to-br from-stone-50 via-amber-50 to-stone-100">
   <div class="max-w-7xl mx-auto px-6 py-10">
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <div class="lg:col-span-5 bg-white rounded-3xl border border-stone-200 shadow-sm p-8">
+      <div class="lg:col-span-5 space-y-6">
+      <div class="bg-white rounded-3xl border border-stone-200 shadow-sm p-8">
         <p class="text-xs font-semibold uppercase tracking-[0.25em] text-amber-700">Prediction workspace</p>
         <h1 class="mt-3 text-4xl font-black text-stone-900">Prediction Console</h1>
         <p class="mt-4 text-stone-600 leading-7">
@@ -34,6 +35,49 @@
         </div>
       </div>
 
+      <div class="bg-white rounded-3xl border border-stone-200 shadow-sm p-8">
+        <p class="text-xs font-semibold uppercase tracking-[0.25em] text-emerald-700">Stored dataset test</p>
+        <h2 class="mt-3 text-2xl font-black text-stone-900">Predict From Stored PANDORA Dataset</h2>
+        <p class="mt-3 text-stone-600 leading-7">
+          Create inspectable PANDORA test profiles from the local test dataset, store their true OCEAN labels, run the latest trained artifact, and save per-profile prediction results.
+        </p>
+
+        <form method="post" class="mt-6 space-y-4">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="pandora_predict">
+          <div>
+            <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ pandora_prediction_form.condition.id_for_label }}">{{ pandora_prediction_form.condition.label }}</label>
+            {{ pandora_prediction_form.condition }}
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ pandora_prediction_form.sample_size.id_for_label }}">{{ pandora_prediction_form.sample_size.label }}</label>
+              {{ pandora_prediction_form.sample_size }}
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ pandora_prediction_form.seed.id_for_label }}">{{ pandora_prediction_form.seed.label }}</label>
+              {{ pandora_prediction_form.seed }}
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-stone-700 mb-2" for="{{ pandora_prediction_form.threshold.id_for_label }}">{{ pandora_prediction_form.threshold.label }}</label>
+              {{ pandora_prediction_form.threshold }}
+              <p class="mt-1 text-xs text-stone-500">Used only when the selected training run has no saved validation thresholds.</p>
+            </div>
+          </div>
+          <label class="flex items-start gap-3 rounded-lg border border-stone-200 bg-stone-50 p-4">
+            <div class="pt-1">{{ pandora_prediction_form.allow_reuse }}</div>
+            <div>
+              <div class="font-semibold text-stone-900">{{ pandora_prediction_form.allow_reuse.label }}</div>
+              <p class="text-sm text-stone-600 mt-1">Keep this off to avoid testing the same PANDORA profile twice until the test set is exhausted.</p>
+            </div>
+          </label>
+          <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-emerald-700">
+            Predict From Stored PANDORA Dataset
+          </button>
+        </form>
+      </div>
+      </div>
+
       <div class="lg:col-span-7 space-y-6">
         <div class="grid grid-cols-2 gap-4">
           <div class="rounded-2xl bg-white border border-stone-200 p-5 shadow-sm">
@@ -53,6 +97,25 @@
               <span class="rounded-full bg-white/10 px-3 py-1 text-sm">@{{ volunteer.x_handle }}</span>
             {% empty %}
               <span class="text-stone-400">No prediction evaluation profiles available yet. Import optional BFI baselines or analyze an X handle first.</span>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="rounded-3xl bg-white border border-stone-200 p-6 shadow-sm">
+          <div class="flex flex-wrap items-center gap-4 justify-between">
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-[0.25em] text-emerald-700">PANDORA prediction runs</div>
+              <h2 class="mt-2 text-xl font-bold text-stone-900">Recent Stored-Dataset Tests</h2>
+            </div>
+          </div>
+          <div class="mt-4 divide-y divide-stone-200">
+            {% for run in latest_pandora_prediction_runs %}
+              <a href="{% url 'tools:pandora_prediction_run_detail' pk=run.pk %}" class="block py-3 hover:bg-stone-50">
+                <div class="font-semibold text-stone-900">{{ run.run_id }}</div>
+                <div class="text-sm text-stone-500">{{ run.status }} · {{ run.predicted_samples }}/{{ run.requested_samples }} profiles · accuracy {{ run.accuracy|floatformat:3|default:"n/a" }}</div>
+              </a>
+            {% empty %}
+              <div class="py-4 text-sm text-stone-500">No PANDORA prediction runs yet.</div>
             {% endfor %}
           </div>
         </div>

@@ -1,22 +1,127 @@
-# Environment variables
-.env*.local
-venv/
+# ============================================================
+# Environment & Secrets
+# ============================================================
 .env
+.env.local
+.env*.local
+*.env
 
+# ============================================================
 # Python
+# ============================================================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.eggs/
+*.egg-info/
+*.egg
+dist/
+build/
 
-# ML files
+# ============================================================
+# Django
+# ============================================================
+db.sqlite3
+db.sqlite3-journal
+/migrations
+**/migrations/00*.py
+
+# ============================================================
+# ML / Data Science artifacts
+# ============================================================
+# Trained model weights
 *.pt
 *.pth
 *.bin
+*.h5
+*.pkl
+*.joblib
+*.onnx
+*.safetensors
+
+# Model directories
 models/
 datasets/
-pandora_personality/*
-# Colab
+checkpoints/
+
+# ============================================================
+# PANDORA Dataset (large binary/Excel data files)
+# ============================================================
+PANDORA/
+pandora_personality/
+
+# ============================================================
+# Outputs / Exports / Generated data
+# ============================================================
+outputs/
+exports/
+docx_render_out/
+
+# Large data files
+*.xlsx
+*.csv
+*.jsonl
+*.ndjson
+*.xml
+*.json.gz
+
+# Inspected / processed data artefacts
+*.inspect.ndjson
+rows*.xml
+complete.json
+metadata.json
+split-summary.json
+*-rows.json
+comments.jsonl
+
+# ============================================================
+# Logs
+# ============================================================
+logs/
+*.log
+
+# ============================================================
+# Temporary / scratch files
+# ============================================================
+doc_extract_tmp.txt
+xtf_inspection.txt
+xtf_tweet_schema.txt
+"et --hard b96368c"
+
+# ============================================================
+# Generated reports / documents
+# ============================================================
+*.docx
+revised_personality_prediction_full_report.docx
+
+# ============================================================
+# Node / Frontend build artefacts
+# ============================================================
+node_modules/
+.next/
+.vercel/
+out/
+dist/
+
+# ============================================================
+# Jupyter / Colab
+# ============================================================
 .ipynb_checkpoints/
+*.ipynb
 
-db.sqlite3
-
-/migrations
+# ============================================================
+# IDE / OS
+# ============================================================
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+desktop.ini

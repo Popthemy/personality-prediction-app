@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}PANDORA Prediction Results{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6">
+    <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">PANDORA prediction run</p>
+    <h1 class="mt-2 text-3xl font-bold text-stone-900">{{ run.run_id }}</h1>
+    <p class="mt-2 text-stone-600">{{ run.condition }} · {{ run.predicted_samples }} profiles · average decision threshold {{ run.threshold|floatformat:3 }}</p>
+
+    <div class="mt-6 grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">Accuracy</div>
+        <div class="mt-1 text-2xl font-bold">{{ run.accuracy|floatformat:3|default:"n/a" }}</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">F1</div>
+        <div class="mt-1 text-2xl font-bold">{{ run.f1_score|floatformat:3|default:"n/a" }}</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">Specificity</div>
+        <div class="mt-1 text-2xl font-bold">{{ run.specificity|floatformat:3|default:"n/a" }}</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">Precision</div>
+        <div class="mt-1 text-2xl font-bold">{{ run.precision|floatformat:3|default:"n/a" }}</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
+        <div class="text-sm text-stone-500">Recall</div>
+        <div class="mt-1 text-2xl font-bold">{{ run.recall|floatformat:3|default:"n/a" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-stone-200">
+      <h2 class="text-xl font-bold text-stone-900">PANDORA Test Profiles</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-stone-200 text-sm">
+        <thead class="bg-stone-50 text-left text-stone-600">
+          <tr>
+            <th class="px-4 py-3">Profile</th>
+            <th class="px-4 py-3">Comments</th>
+            <th class="px-4 py-3">Match Rate</th>
+            <th class="px-4 py-3">True OCEAN</th>
+            <th class="px-4 py-3">Predicted OCEAN</th>
+            <th class="px-4 py-3">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-stone-200">
+          {% for profile in run.profiles.all %}
+            <tr>
+              <td class="px-4 py-3 font-semibold">{{ profile.pandora_user_id }}</td>
+              <td class="px-4 py-3">{{ profile.comment_count }}</td>
+              <td class="px-4 py-3">{{ profile.match_rate|floatformat:2 }}</td>
+              <td class="px-4 py-3">O {{ profile.true_openness|floatformat:2 }}, C {{ profile.true_conscientiousness|floatformat:2 }}, E {{ profile.true_extraversion|floatformat:2 }}, A {{ profile.true_agreeableness|floatformat:2 }}, N {{ profile.true_neuroticism|floatformat:2 }}</td>
+              <td class="px-4 py-3">O {{ profile.predicted_openness|floatformat:2 }}, C {{ profile.predicted_conscientiousness|floatformat:2 }}, E {{ profile.predicted_extraversion|floatformat:2 }}, A {{ profile.predicted_agreeableness|floatformat:2 }}, N {{ profile.predicted_neuroticism|floatformat:2 }}</td>
+              <td class="px-4 py-3"><a href="{% url 'tools:pandora_test_profile_detail' pk=profile.pk %}" class="text-blue-600 font-semibold hover:text-blue-800">View</a></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="px-4 py-8 text-center text-stone-500">No profiles were saved for this run.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

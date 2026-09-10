@@ -17,7 +17,7 @@
       <div class="bg-white rounded-lg border border-stone-200 shadow-sm p-6">
         <div class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Dataset</div>
         <h3 class="mt-3 text-lg font-bold text-stone-900">PANDORA Status</h3>
-        <p class="mt-2 text-sm text-stone-600">{{ pandora_status.parquet_count }} parquet files detected in the local dataset folder.</p>
+        <p class="mt-2 text-sm text-stone-600">{{ pandora_status.dataset_count }} dataset files detected in the local dataset folder.</p>
         <div class="mt-4 text-sm font-semibold {% if pandora_status.exists %}text-emerald-700{% else %}text-red-700{% endif %}">
           {% if pandora_status.exists %}Dataset found{% else %}Dataset missing{% endif %}
         </div>

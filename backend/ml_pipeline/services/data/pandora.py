@@ -1,4 +1,4 @@
-"""
+r"""
 Dependecies: pip install pandas pyarrow
 \backend\ml_pipeline\services\data\pandora.py
 PANDORA Data Ingestion Pipeline
@@ -54,10 +54,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import zipfile
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Literal
+from xml.etree import ElementTree as ET
 
 from backend.ml_pipeline.cleaning.cleaner import CleanedContent, DataCleaner, RawXData
 from backend.ml_pipeline.services.data.quality import exclusion, safe_rate
@@ -69,8 +72,20 @@ _LAST_INGESTION_QUALITY: dict[str, Any] | None = None
 
 # The five Big Five trait columns, in the order the dataset uses them.
 _TRAIT_COLS = ("O", "C", "E", "A", "N")
+_TRAIT_ALIASES = {
+    "o": "O",
+    "openness": "O",
+    "c": "C",
+    "conscientiousness": "C",
+    "e": "E",
+    "extraversion": "E",
+    "a": "A",
+    "agreeableness": "A",
+    "n": "N",
+    "neuroticism": "N",
+}
 
-GroupBy = Literal["traits", "row"]
+GroupBy = Literal["author", "traits", "row"]
 
 
 @dataclass
@@ -105,6 +120,100 @@ class PreparedUserComments:
 # Loading
 # ---------------------------------------------------------------------------
 
+def _xlsx_cell_text(cell: ET.Element, shared_strings: list[str], ns: dict[str, str]) -> Any:
+    cell_type = cell.attrib.get("t")
+    value = cell.find("main:v", ns)
+    if cell_type == "inlineStr":
+        text = cell.find(".//main:t", ns)
+        return text.text if text is not None else ""
+    if value is None:
+        return ""
+    raw = value.text or ""
+    if cell_type == "s":
+        try:
+            return shared_strings[int(raw)]
+        except (ValueError, IndexError):
+            return raw
+    try:
+        number = float(raw)
+        return int(number) if number.is_integer() else number
+    except ValueError:
+        return raw
+
+
+def _read_xlsx_records(path: Path, *, header_row: int = 4) -> list[dict[str, Any]]:
+    """Read a simple first-sheet XLSX file without requiring openpyxl."""
+    ns = {
+        "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "pkg": "http://schemas.openxmlformats.org/package/2006/relationships",
+    }
+    with zipfile.ZipFile(path) as zf:
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in zf.namelist():
+            root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+            for item in root.findall("main:si", ns):
+                shared_strings.append("".join(t.text or "" for t in item.findall(".//main:t", ns)))
+
+        workbook = ET.fromstring(zf.read("xl/workbook.xml"))
+        first_sheet = workbook.find("main:sheets/main:sheet", ns)
+        if first_sheet is None:
+            return []
+        rel_id = first_sheet.attrib.get(f"{{{ns['rel']}}}id")
+        rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+        target = None
+        for rel in rels.findall("pkg:Relationship", ns):
+            if rel.attrib.get("Id") == rel_id:
+                target = rel.attrib.get("Target")
+                break
+        if not target:
+            return []
+        target = target.lstrip("/")
+        sheet_path = target if target.startswith("xl/") else "xl/" + target
+        sheet = ET.fromstring(zf.read(sheet_path))
+
+    rows: dict[int, dict[int, Any]] = defaultdict(dict)
+    for row in sheet.findall(".//main:sheetData/main:row", ns):
+        row_no = int(row.attrib.get("r", "0"))
+        for cell in row.findall("main:c", ns):
+            ref = cell.attrib.get("r", "")
+            match = re.match(r"([A-Z]+)", ref)
+            if not match:
+                continue
+            col_no = 0
+            for ch in match.group(1):
+                col_no = col_no * 26 + (ord(ch) - ord("A") + 1)
+            rows[row_no][col_no - 1] = _xlsx_cell_text(cell, shared_strings, ns)
+
+    headers = [str(rows[header_row].get(i, "")).strip() for i in range(max(rows.get(header_row, {0: ""}).keys()) + 1)]
+    records: list[dict[str, Any]] = []
+    for row_no in sorted(k for k in rows if k > header_row):
+        record = {
+            headers[i]: rows[row_no].get(i)
+            for i in range(len(headers))
+            if headers[i]
+        }
+        if any(str(v).strip() for v in record.values() if v is not None):
+            records.append(record)
+    return records
+
+
+def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in row.items():
+        norm = str(key).strip().lower()
+        if norm in _TRAIT_ALIASES:
+            out[_TRAIT_ALIASES[norm]] = value
+        elif norm in {"comment", "comments", "text"}:
+            out["text"] = value
+        elif norm in {"author", "username", "user", "user_id"}:
+            out["author"] = value
+        elif norm == "ptype":
+            out["ptype"] = value
+    out.setdefault("ptype", 0)
+    return out
+
+
 def _load_raw_rows(pandora_file: str | Path) -> Iterable[dict[str, Any]]:
     """
     Stream rows out of the PANDORA parquet export.
@@ -116,21 +225,36 @@ def _load_raw_rows(pandora_file: str | Path) -> Iterable[dict[str, Any]]:
     if not path.exists():
         raise FileNotFoundError(f"PANDORA file not found: {path}")
 
+    if path.suffix.lower() in {".xlsx", ".xlsm"}:
+        try:
+            import pandas as pd
+
+            df = pd.read_excel(path, header=3)
+            records = df.to_dict(orient="records")
+        except Exception:
+            records = _read_xlsx_records(path, header_row=4)
+        for row in records:
+            yield _normalize_row(row)
+        return
+
     try:
         import pandas as pd
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
-            "Reading the PANDORA parquet export requires pandas and pyarrow: "
-            "pip install pandas pyarrow"
+            "Reading the PANDORA export requires pandas plus pyarrow for parquet, "
+            "or an .xlsx file that can be read by the built-in fallback."
         ) from exc
 
     df = pd.read_parquet(path, columns=[*_TRAIT_COLS, "ptype", "text"])
     for row in df.to_dict(orient="records"):
-        yield row
+        yield _normalize_row(row)
 
 
 def _row_key(row: dict[str, Any]) -> str:
     """Proxy user id: the Big Five trait tuple, formatted as a stable string."""
+    author = row.get("author")
+    if author is not None and str(author).strip():
+        return str(author).strip()
     return "_".join(str(row.get(col)) for col in _TRAIT_COLS)
 
 
@@ -163,6 +287,8 @@ def _group_rows(
 
         if group_by == "row":
             key = f"row{i}"
+        elif group_by == "author":
+            key = str(row.get("author") or _row_key(row)).strip()
         else:
             key = _row_key(row)
 

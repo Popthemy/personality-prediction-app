@@ -483,7 +483,7 @@ class PANDORA_THRESHOLD_RESULT(models.Model):
     class Meta:
         db_table = 'pandora_threshold_result'
         indexes = [
-            models.Index(fields=['run', 'condition', 'trait']),
+            models.Index(fields=['run', 'condition', 'trait'], name='pandora_thr_run_id_c46ec3_idx'),
         ]
 
 
@@ -501,6 +501,81 @@ class PANDORA_DATASET_ALLOCATION(models.Model):
     class Meta:
         db_table = 'pandora_dataset_allocation'
         unique_together = ['pandora_user_id', 'run']
+
+
+class PANDORA_PREDICTION_RUN(models.Model):
+    """Batch prediction evaluation on held-out PANDORA test profiles."""
+
+    id = models.BigAutoField(primary_key=True)
+    researcher = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='pandora_prediction_runs')
+    run_id = models.CharField(max_length=80, unique=True, db_index=True)
+    status = models.CharField(
+        max_length=20,
+        choices=EXPERIMENT_STATUS_CHOICES,
+        default='queued',
+        db_index=True,
+    )
+    source_file = models.CharField(max_length=500, blank=True)
+    experiment_run = models.ForeignKey(
+        PANDORA_EXPERIMENT_RUN, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='prediction_runs')
+    condition = models.CharField(max_length=80, blank=True)
+    requested_samples = models.IntegerField(default=0)
+    predicted_samples = models.IntegerField(default=0)
+    seed = models.IntegerField(default=42)
+    threshold = models.FloatField(default=0.5)
+    allow_reuse = models.BooleanField(default=False)
+    accuracy = models.FloatField(null=True, blank=True)
+    f1_score = models.FloatField(null=True, blank=True)
+    specificity = models.FloatField(null=True, blank=True)
+    precision = models.FloatField(null=True, blank=True)
+    recall = models.FloatField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'pandora_prediction_run'
+        ordering = ['-created_at']
+
+
+class PANDORA_TEST_PROFILE(models.Model):
+    """Inspectable per-sample PANDORA prediction profile."""
+
+    id = models.BigAutoField(primary_key=True)
+    prediction_run = models.ForeignKey(
+        PANDORA_PREDICTION_RUN, on_delete=models.CASCADE, related_name='profiles')
+    pandora_user_id = models.CharField(max_length=120, db_index=True)
+    source_file = models.CharField(max_length=500, blank=True)
+    comment_count = models.IntegerField(default=0)
+    comments_preview = models.JSONField(default=list, blank=True)
+
+    true_openness = models.FloatField(null=True, blank=True)
+    true_conscientiousness = models.FloatField(null=True, blank=True)
+    true_extraversion = models.FloatField(null=True, blank=True)
+    true_agreeableness = models.FloatField(null=True, blank=True)
+    true_neuroticism = models.FloatField(null=True, blank=True)
+
+    predicted_openness = models.FloatField(null=True, blank=True)
+    predicted_conscientiousness = models.FloatField(null=True, blank=True)
+    predicted_extraversion = models.FloatField(null=True, blank=True)
+    predicted_agreeableness = models.FloatField(null=True, blank=True)
+    predicted_neuroticism = models.FloatField(null=True, blank=True)
+
+    true_binary = models.JSONField(default=dict, blank=True)
+    predicted_binary = models.JSONField(default=dict, blank=True)
+    correctness = models.JSONField(default=dict, blank=True)
+    match_rate = models.FloatField(null=True, blank=True)
+    metrics = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pandora_test_profile'
+        unique_together = ['prediction_run', 'pandora_user_id']
+        ordering = ['pandora_user_id']
 
 
 class PSYCHOMETRIC_PROFILE(models.Model):

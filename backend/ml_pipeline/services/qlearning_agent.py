@@ -903,7 +903,7 @@ class QLearningAgent:
     def select_comments(
         self,
         comments: Sequence[Union[str, Dict[str, Any]]],
-        top_k: int = 10,
+        top_k: Optional[int] = None,
         training: bool = False,
         embedding_fn: Optional[Callable[[str], Dict[str, float]]] = None,
         informativeness_fn: Optional[Callable[[str], float]] = None,
@@ -912,7 +912,7 @@ class QLearningAgent:
         novelty_weight: float = 1.0,
     ) -> List[Dict[str, Any]]:
         """
-        Select up to *top_k* comments using the trained Q-policy.
+        Select comments using the trained Q-policy.
 
         Inference steps through the *same* CommentSelectionEnvironment
         used during training, so every state observed at inference time
@@ -925,17 +925,17 @@ class QLearningAgent:
 
         HOW THE TOP-K LIMIT WORKS
         --------------------------
-        top_k is enforced via the environment's max_selected parameter
-        (it also shapes budget_bin in the state). The agent may select
-        fewer than top_k comments if the greedy policy judges remaining
-        candidates too redundant/uninformative (Q(s, 'skip') > Q(s, 'select')).
+        When top_k is omitted, the only upper bound is the number of available
+        comments for that author. The agent may select fewer comments if the
+        greedy policy judges remaining candidates too redundant/uninformative
+        (Q(s, 'skip') > Q(s, 'select')).
 
         Parameters
         ----------
         comments      : List of cleaned comment strings (or feature dicts
                          from create_comment_features()) — the candidate
                          pool for one user/episode.
-        top_k          : Maximum number of comments to return.
+        top_k          : Optional maximum number of comments to return.
         training       : If True, uses ε-greedy; if False (default), acts greedily.
         embedding_fn, informativeness_fn, selection_cost,
         informativeness_weight, novelty_weight : forwarded to the
@@ -952,12 +952,13 @@ class QLearningAgent:
         changes after each selection, so Q-values aren't directly
         comparable across steps).
         """
+        max_selected = len(comments) if top_k is None else min(int(top_k), len(comments))
         env = CommentSelectionEnvironment(
             comments=comments,
             embedding_fn=embedding_fn,
             informativeness_fn=informativeness_fn,
             selection_cost=selection_cost,
-            max_selected=top_k,
+            max_selected=max_selected,
             informativeness_weight=informativeness_weight,
             novelty_weight=novelty_weight,
         )
@@ -985,8 +986,8 @@ class QLearningAgent:
             state = next_state
 
         logger.info(
-            "select_comments | selected %d / %d | top_k=%d",
-            len(selected), len(comments), top_k,
+            "select_comments | selected %d / %d | max_selected=%d",
+            len(selected), len(comments), max_selected,
         )
         return selected
 
@@ -1133,7 +1134,7 @@ def run_training_loop(
     comment_batches: List[List[Union[str, Dict[str, Any]]]],
     n_epochs: int = 5,
     selection_cost: float = 0.05,
-    max_selected: int = 10,
+    max_selected: Optional[int] = None,
     informativeness_weight: float = 1.0,
     novelty_weight: float = 1.0,
     embedding_fn: Optional[Callable[[str], Dict[str, float]]] = None,
@@ -1171,7 +1172,9 @@ def run_training_loop(
                                  (each is one episode)
     n_epochs                 : How many full passes over all batches
     selection_cost            : Per-selection penalty forwarded to the environment
-    max_selected              : Selection budget per episode
+    max_selected              : Optional selection budget per episode; when
+                                 omitted, each episode may select up to all
+                                 comments in that author's batch.
     informativeness_weight,
     novelty_weight             : Reward weighting forwarded to the environment
     embedding_fn, informativeness_fn : Optional overrides forwarded to the
@@ -1198,12 +1201,13 @@ def run_training_loop(
         epoch_reward = 0.0
 
         for comments in comment_batches:
+            episode_max_selected = len(comments) if max_selected is None else min(int(max_selected), len(comments))
             env = CommentSelectionEnvironment(
                 comments=comments,
                 embedding_fn=embedding_fn,
                 informativeness_fn=informativeness_fn,
                 selection_cost=selection_cost,
-                max_selected=max_selected,
+                max_selected=episode_max_selected,
                 informativeness_weight=informativeness_weight,
                 novelty_weight=novelty_weight,
             )

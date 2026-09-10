@@ -231,7 +231,7 @@ class CohortTrainingForm(forms.Form):
         })
     )
     max_comments_per_user = forms.IntegerField(
-        label="Max comments per PANDORA user",
+        label="Optional comment cap",
         required=False,
         min_value=1,
         widget=forms.NumberInput(attrs={
@@ -279,6 +279,54 @@ class PredictionSelectionForm(forms.Form):
 
     def clean_volunteer_id(self):
         return int(self.cleaned_data['volunteer_id'])
+
+
+class PandoraPredictionForm(forms.Form):
+    """Run prediction against stored PANDORA test samples."""
+
+    condition = forms.ChoiceField(
+        label="Model condition",
+        required=False,
+        widget=forms.Select(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200',
+        })
+    )
+    sample_size = forms.IntegerField(
+        label="PANDORA test samples",
+        min_value=1,
+        initial=20,
+        widget=forms.NumberInput(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200',
+        })
+    )
+    seed = forms.IntegerField(
+        label="Random seed",
+        initial=42,
+        widget=forms.NumberInput(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200',
+        })
+    )
+    threshold = forms.FloatField(
+        label="Fallback threshold for older runs",
+        min_value=0.0,
+        max_value=1.0,
+        initial=0.5,
+        widget=forms.NumberInput(attrs={
+            'class': 'block w-full rounded-lg border border-stone-300 bg-white px-3 py-3 text-stone-900 shadow-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200',
+            'step': '0.05',
+        })
+    )
+    allow_reuse = forms.BooleanField(
+        label="Allow reuse of PANDORA test profiles already predicted",
+        required=False,
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
+    )
+
+    def __init__(self, *args, condition_choices=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        choices = [("", "Use best condition from latest training run")]
+        choices.extend(condition_choices or [])
+        self.fields['condition'].choices = choices
 
 
 class BFISurveyImportForm(forms.Form):

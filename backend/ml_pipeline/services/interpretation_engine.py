@@ -765,9 +765,10 @@ def interpret_experiment_effects(
     acc_delta = None if lasso_acc is None or lstm_acc is None else lstm_acc - lasso_acc
     f1_delta = None if lasso_f1 is None or lstm_f1 is None else lstm_f1 - lasso_f1
     # Treat Lasso as the reference: negative mae_delta => LSTM improved (lower MAE).
-    model_pair_rows = _model_pair_rows(
-        bundle.get("model_comparison") or effects.get("model_comparison")
-    )
+    model_comparison = bundle.get("model_comparison")
+    if model_comparison is None:
+        model_comparison = effects.get("model_comparison")
+    model_pair_rows = _model_pair_rows(model_comparison)
     if model_pair_rows:
         model_label = _summarize_cell_effects(model_pair_rows, thresholds)
     elif mae_delta is not None or r2_delta is not None:

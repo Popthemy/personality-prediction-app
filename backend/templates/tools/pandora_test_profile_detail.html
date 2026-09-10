@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}PANDORA Test Profile{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6">
+    <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">PANDORA test profile</p>
+    <h1 class="mt-2 text-3xl font-bold text-stone-900">{{ profile.pandora_user_id }}</h1>
+    <p class="mt-2 text-stone-600">{{ profile.comment_count }} comments · match rate {{ profile.match_rate|floatformat:2 }}</p>
+    <a href="{% url 'tools:pandora_prediction_run_detail' pk=profile.prediction_run.pk %}" class="mt-4 inline-block rounded-lg border border-stone-300 px-4 py-2 font-semibold text-stone-800 hover:bg-stone-50">Back to Run</a>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6">
+      <h2 class="text-xl font-bold text-stone-900">True OCEAN Labels</h2>
+      <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+        <div>Openness: <strong>{{ profile.true_openness|floatformat:3 }}</strong></div>
+        <div>Conscientiousness: <strong>{{ profile.true_conscientiousness|floatformat:3 }}</strong></div>
+        <div>Extraversion: <strong>{{ profile.true_extraversion|floatformat:3 }}</strong></div>
+        <div>Agreeableness: <strong>{{ profile.true_agreeableness|floatformat:3 }}</strong></div>
+        <div>Neuroticism: <strong>{{ profile.true_neuroticism|floatformat:3 }}</strong></div>
+      </div>
+    </div>
+
+    <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6">
+      <h2 class="text-xl font-bold text-stone-900">Predicted OCEAN Scores</h2>
+      <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+        <div>Openness: <strong>{{ profile.predicted_openness|floatformat:3 }}</strong></div>
+        <div>Conscientiousness: <strong>{{ profile.predicted_conscientiousness|floatformat:3 }}</strong></div>
+        <div>Extraversion: <strong>{{ profile.predicted_extraversion|floatformat:3 }}</strong></div>
+        <div>Agreeableness: <strong>{{ profile.predicted_agreeableness|floatformat:3 }}</strong></div>
+        <div>Neuroticism: <strong>{{ profile.predicted_neuroticism|floatformat:3 }}</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6">
+    <h2 class="text-xl font-bold text-stone-900">Low/High Classification</h2>
+    <div class="mt-4 overflow-x-auto">
+      <table class="min-w-full divide-y divide-stone-200 text-sm">
+        <thead class="bg-stone-50 text-left text-stone-600">
+          <tr>
+            <th class="px-4 py-3">Trait</th>
+            <th class="px-4 py-3">True Label</th>
+            <th class="px-4 py-3">Predicted Label</th>
+            <th class="px-4 py-3">Correct</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-stone-200">
+          {% for row in trait_rows %}
+            <tr>
+              <td class="px-4 py-3 font-semibold">{{ row.trait|title }}</td>
+              <td class="px-4 py-3">{{ row.true_label }}</td>
+              <td class="px-4 py-3">{{ row.predicted_label }}</td>
+              <td class="px-4 py-3">{% if row.correct %}Yes{% else %}No{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6">
+    <h2 class="text-xl font-bold text-stone-900">Comments Used</h2>
+    <div class="mt-4 space-y-3">
+      {% for comment in profile.comments_preview %}
+        <div class="rounded-lg bg-stone-50 border border-stone-200 p-4 text-sm text-stone-700">{{ comment }}</div>
+      {% empty %}
+        <div class="text-stone-500">No comment preview stored.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

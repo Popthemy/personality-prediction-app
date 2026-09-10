@@ -390,17 +390,29 @@ def compute_multiclass_metrics(
     }
 
 
-def default_threshold_candidates(values: np.ndarray, n: int = 5) -> List[float]:
+def default_threshold_candidates(values: np.ndarray, n: int = 19) -> List[float]:
     """
-    [LEGACY] Data-driven candidate thresholds from the 30th-70th percentile
-    of `values`. Not used by `evaluate()` -- that path sweeps the fixed
-    [0.00, 1.00] grid so the evaluation set cannot choose its own thresholds.
+    Data-driven candidate thresholds from validation prediction scores.
+
+    These are not final thresholds. They are candidate cut points learned from
+    the validation score distribution, then the sweep chooses one per trait.
     """
     values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
     if values.size == 0:
         return list(CANDIDATE_THRESHOLDS)
-    pctiles = np.linspace(30, 70, n)
-    return [round(float(np.percentile(values, p)), 4) for p in pctiles]
+    if values.size <= n:
+        candidates = sorted(set(float(v) for v in values))
+    else:
+        pctiles = np.linspace(5, 95, n)
+        candidates = sorted(set(float(np.percentile(values, p)) for p in pctiles))
+    return [round(min(1.0, max(0.0, t)), 4) for t in candidates]
+
+
+def _threshold_selection_score(metrics: Dict[str, Any]) -> float:
+    f1 = float(metrics.get("f1_score") or 0.0)
+    specificity = float(metrics.get("specificity") or 0.0)
+    return 0.0 if f1 + specificity == 0 else (2.0 * f1 * specificity) / (f1 + specificity)
 
 
 def derive_binary_ground_truth(y_true: np.ndarray, cutoff: Optional[float] = None) -> tuple:
@@ -418,6 +430,12 @@ def derive_binary_ground_truth(y_true: np.ndarray, cutoff: Optional[float] = Non
         cutoff = DEFAULT_GROUND_TRUTH_CUTOFF
     y_true_binary = (np.asarray(y_true, dtype=float) >= float(cutoff)).astype(int)
     return y_true_binary, float(cutoff)
+
+
+def _jsonable_cutoff(cutoff: Union[float, Dict[str, float], None]) -> Union[float, Dict[str, float], None]:
+    if isinstance(cutoff, dict):
+        return {str(k): float(v) for k, v in cutoff.items()}
+    return None if cutoff is None else float(cutoff)
 
 
 def derive_three_class_ground_truth(y_true: np.ndarray, cutoffs: Optional[List[float]] = None) -> tuple:
@@ -444,27 +462,36 @@ def sweep_thresholds_on_scores(
     Sweep candidate thresholds over continuous `scores` (not pre-binarized
     High/Low labels). prediction >= tau -> High (1), else Low (0).
 
-    Reports the complete sweep plus the threshold with the highest F1.
+    Reports the complete sweep plus the selected threshold.
     This reports a post-hoc best-of-sweep; it does not learn or apply a
     decision boundary. The runner must supply a train/validation-selected
     cutoff via `derive_binary_ground_truth` / `evaluate(ground_truth_cutoff=...)`.
-
-    Default candidates are the supervisor-facing five-threshold sweep:
-    0.30, 0.40, 0.50, 0.60, 0.70.
     """
     if candidate_thresholds is None:
-        candidate_thresholds = list(CANDIDATE_THRESHOLDS)
+        candidate_thresholds = default_threshold_candidates(np.asarray(scores, dtype=float))
 
     results = []
     best = None
     for tau in candidate_thresholds:
         m = compute_classification_metrics_at_threshold(y_true_binary, np.asarray(scores, dtype=float), tau)
+        m["selection_score"] = round(_threshold_selection_score(m), 4)
+        m["selection_policy"] = "max_harmonic_mean_f1_specificity"
         results.append(m)
-        if best is None or m['f1_score'] > best['f1_score']:
+        if (
+            best is None
+            or m["selection_score"] > best["selection_score"]
+            or (
+                m["selection_score"] == best["selection_score"]
+                and (m["f1_score"], m["specificity"], m["accuracy"]) >
+                (best["f1_score"], best["specificity"], best["accuracy"])
+            )
+        ):
             best = m
 
     return {
         'best_threshold': best['threshold'] if best else None,
+        'selection_policy': best.get("selection_policy") if best else "max_harmonic_mean_f1_specificity",
+        'selection_score': best.get("selection_score") if best else 0.0,
         'best_f1': best['f1_score'] if best else 0.0,
         'accuracy': best['accuracy'] if best else 0.0,
         'precision': best['precision'] if best else 0.0,
@@ -484,7 +511,7 @@ def evaluate_lstm_binary_classifier(
     y_true: ArrayLike,
     probabilities: ArrayLike,
     trait_names: Optional[List[str]] = None,
-    ground_truth_cutoff: float = DEFAULT_GROUND_TRUTH_CUTOFF,
+    ground_truth_cutoff: Union[float, Dict[str, float]] = DEFAULT_GROUND_TRUTH_CUTOFF,
     candidate_thresholds: Optional[List[float]] = None,
 ) -> Dict[str, Any]:
     """
@@ -502,12 +529,12 @@ def evaluate_lstm_binary_classifier(
         trait_names = list(_DEFAULT_TRAIT_NAMES)
     if len(trait_names) != y_true_2d.shape[1]:
         raise ValueError(f"trait_names has {len(trait_names)} entries, expected {y_true_2d.shape[1]}.")
-    if candidate_thresholds is None:
-        candidate_thresholds = list(CANDIDATE_THRESHOLDS)
-
     per_trait: Dict[str, Dict[str, Any]] = {}
     for i, trait in enumerate(trait_names):
-        y_binary, cutoff = derive_binary_ground_truth(y_true_2d[:, i], ground_truth_cutoff)
+        y_binary, cutoff = derive_binary_ground_truth(
+            y_true_2d[:, i],
+            _threshold_for_trait(ground_truth_cutoff, trait),
+        )
         sweep = sweep_thresholds_on_scores(y_binary, probs_2d[:, i], candidate_thresholds)
         roc = compute_roc_curve_metrics(y_binary, probs_2d[:, i])
         pr = compute_precision_recall_curve_metrics(y_binary, probs_2d[:, i])
@@ -524,7 +551,7 @@ def evaluate_lstm_binary_classifier(
         }
         per_trait[trait] = {
             "ground_truth_cutoff": cutoff,
-            "candidate_thresholds": [float(t) for t in candidate_thresholds],
+            "candidate_thresholds": [float(item["threshold"]) for item in sweep["results"]],
             "best_threshold": sweep["best_threshold"],
             "accuracy": sweep["accuracy"],
             "precision": sweep["precision"],
@@ -539,8 +566,12 @@ def evaluate_lstm_binary_classifier(
 
     return {
         "split": "validation",
-        "ground_truth_cutoff": float(ground_truth_cutoff),
-        "candidate_thresholds": [float(t) for t in candidate_thresholds],
+        "ground_truth_cutoff": _jsonable_cutoff(ground_truth_cutoff),
+        "candidate_thresholds": (
+            [float(t) for t in candidate_thresholds]
+            if candidate_thresholds is not None
+            else "validation_score_percentiles_per_trait"
+        ),
         "per_trait": per_trait,
         "aggregate": {
             "accuracy": _aggregate_metric(per_trait, "accuracy"),
@@ -559,7 +590,7 @@ def evaluate_lstm_binary_with_thresholds(
     probabilities: ArrayLike,
     threshold_selection: Dict[str, Any],
     trait_names: Optional[List[str]] = None,
-    ground_truth_cutoff: float = DEFAULT_GROUND_TRUTH_CUTOFF,
+    ground_truth_cutoff: Union[float, Dict[str, float]] = DEFAULT_GROUND_TRUTH_CUTOFF,
     candidate_thresholds: Optional[List[float]] = None,
 ) -> Dict[str, Any]:
     """
@@ -578,16 +609,16 @@ def evaluate_lstm_binary_with_thresholds(
         trait_names = list(_DEFAULT_TRAIT_NAMES)
     if len(trait_names) != y_true_2d.shape[1]:
         raise ValueError(f"trait_names has {len(trait_names)} entries, expected {y_true_2d.shape[1]}.")
-    if candidate_thresholds is None:
-        candidate_thresholds = list(CANDIDATE_THRESHOLDS)
-
     selected = threshold_selection.get("per_trait", {})
     per_trait: Dict[str, Dict[str, Any]] = {}
     for i, trait in enumerate(trait_names):
         if trait not in selected:
             raise ValueError(f"Missing validation-selected threshold for trait {trait!r}.")
         tau = float(selected[trait]["best_threshold"])
-        y_binary, cutoff = derive_binary_ground_truth(y_true_2d[:, i], ground_truth_cutoff)
+        y_binary, cutoff = derive_binary_ground_truth(
+            y_true_2d[:, i],
+            _threshold_for_trait(ground_truth_cutoff, trait),
+        )
         official = compute_classification_metrics_at_threshold(y_binary, probs_2d[:, i], tau)
         sweep = sweep_thresholds_on_scores(y_binary, probs_2d[:, i], candidate_thresholds)
         roc = compute_roc_curve_metrics(y_binary, probs_2d[:, i])
@@ -616,7 +647,12 @@ def evaluate_lstm_binary_with_thresholds(
 
     return {
         "split": "test",
-        "ground_truth_cutoff": float(ground_truth_cutoff),
+        "ground_truth_cutoff": _jsonable_cutoff(ground_truth_cutoff),
+        "candidate_thresholds": (
+            [float(t) for t in candidate_thresholds]
+            if candidate_thresholds is not None
+            else "test_analysis_score_percentiles_per_trait"
+        ),
         "per_trait": per_trait,
         "aggregate": {
             "accuracy": _aggregate_metric(per_trait, "accuracy"),

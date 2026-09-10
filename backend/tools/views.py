@@ -3,8 +3,11 @@ import csv
 import logging
 import json
 import re
+import random
+import threading
 from pathlib import Path
 from io import StringIO, BytesIO
+from django.db import close_old_connections
 from django.views.generic import TemplateView, FormView, View, DetailView, ListView
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import JsonResponse, HttpResponse, FileResponse, Http404
@@ -19,11 +22,12 @@ from .forms import (
     PipelineControlForm,
     CohortTrainingForm,
     PredictionSelectionForm,
+    PandoraPredictionForm,
 )
 from backend.core.models import (
     VOLUNTEER, BFI_SURVEY, POST, BERT_EMBEDDING, COHORT_MODEL, PSYCHOMETRIC_PROFILE,
     PANDORA_EXPERIMENT_RUN, PANDORA_CONDITION_RESULT, PANDORA_THRESHOLD_RESULT,
-    PANDORA_DATASET_ALLOCATION,
+    PANDORA_DATASET_ALLOCATION, PANDORA_PREDICTION_RUN, PANDORA_TEST_PROFILE,
 )
 from backend.core.services.bfi_scorer import BFIScorer, score_bfi_survey
 from backend.ml_pipeline.services.pipeline_orchestrator import PipelineOrchestrator
@@ -32,19 +36,30 @@ from backend.ml_pipeline.tasks import run_full_pipeline_task, run_pipeline_phase
 
 logger = logging.getLogger(__name__)
 
-PANDORA_DATA_DIR = Path("PANDORA") / "pandora-big5" / "data"
+PANDORA_DATA_DIR = Path("PANDORA")
+TRAIT_FIELDS = [
+    ("O", "openness"),
+    ("C", "conscientiousness"),
+    ("E", "extraversion"),
+    ("A", "agreeableness"),
+    ("N", "neuroticism"),
+]
 
 
 def _pandora_dataset_status():
     data_dir = PANDORA_DATA_DIR
-    parquet_files = sorted(data_dir.glob("*.parquet")) if data_dir.exists() else []
+    dataset_files = sorted(data_dir.glob("*.xlsx")) if data_dir.exists() else []
+    if not dataset_files and data_dir.exists():
+        dataset_files = sorted((data_dir / "pandora-big5" / "data").glob("*.parquet"))
     prepared_cache = Path("pandora_personality") / "data" / "pandora_prepared.json"
     latest_run = PANDORA_EXPERIMENT_RUN.objects.order_by('-created_at').first()
     return {
         'path': str(data_dir.resolve()),
         'exists': data_dir.exists(),
-        'parquet_count': len(parquet_files),
-        'parquet_files': [p.name for p in parquet_files],
+        'parquet_count': len(dataset_files),
+        'parquet_files': [p.name for p in dataset_files],
+        'dataset_count': len(dataset_files),
+        'dataset_files': [p.name for p in dataset_files],
         'prepared_cache_exists': prepared_cache.exists(),
         'prepared_cache_path': str(prepared_cache.resolve()),
         'latest_run': latest_run,
@@ -137,6 +152,248 @@ def _record_pandora_bundle(run, bundle):
     run.status = 'completed'
     run.completed_at = timezone.now()
     run.save()
+
+
+def _run_pandora_experiment(run_id):
+    """Run a PANDORA experiment outside the request/response lifecycle."""
+    close_old_connections()
+    run = None
+    try:
+        run = PANDORA_EXPERIMENT_RUN.objects.get(pk=run_id)
+        run.status = 'running'
+        run.started_at = run.started_at or timezone.now()
+        run.save(update_fields=['status', 'started_at', 'updated_at'])
+
+        from backend.ml_pipeline.experiments import pandora_runner
+
+        work_dir = Path("pandora_personality")
+        cache_dir = work_dir / "cache"
+        artifact_dir = work_dir / "artifacts"
+        for folder in (cache_dir, artifact_dir):
+            folder.mkdir(parents=True, exist_ok=True)
+        cfg = pandora_runner.ExperimentConfig(
+            sample_n_users=run.sample_size,
+            seed=run.seed,
+            embedding_cache_dir=str(cache_dir),
+            output_dir=str(artifact_dir),
+        )
+        prepared = pandora_runner.load_file_defined_splits(
+            work_dir=work_dir,
+            refresh_prepared=run.refresh_prepared_cache,
+            cfg=cfg,
+        )
+        if not run.allow_reuse and not isinstance(prepared, pandora_runner.DatasetSplits):
+            used_ids = set(
+                PANDORA_DATASET_ALLOCATION.objects.exclude(run=run).values_list(
+                    'pandora_user_id',
+                    flat=True,
+                )
+            )
+            prepared = [item for item in prepared if item.user_id not in used_ids]
+            if len(prepared) < run.sample_size:
+                raise ValueError(
+                    f"Only {len(prepared)} unused PANDORA users remain. "
+                    "Reduce sample size or enable reuse."
+                )
+
+        bundle = pandora_runner.ExperimentRunner(prepared, cfg).run()
+        _record_pandora_bundle(run, bundle)
+        logger.info("PANDORA experiment %s completed in background.", run.run_id)
+    except Exception as e:
+        logger.error("PANDORA background experiment error: %s", e, exc_info=True)
+        if run is not None:
+            run.status = 'error'
+            run.error_message = str(e)
+            run.completed_at = timezone.now()
+            run.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
+    finally:
+        close_old_connections()
+
+
+def _start_pandora_experiment_thread(run_id):
+    thread = threading.Thread(
+        target=_run_pandora_experiment,
+        args=(run_id,),
+        name=f"pandora-training-{run_id}",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def _default_pandora_test_file():
+    preferred = PANDORA_DATA_DIR / "Test dataset.xlsx"
+    if preferred.exists():
+        return preferred
+    files = sorted(PANDORA_DATA_DIR.glob("Test dataset*.xlsx"))
+    if not files:
+        legacy = PANDORA_DATA_DIR / "pandora-big5" / "data"
+        files = sorted(legacy.glob("test-*.parquet"))
+    return files[0] if files else None
+
+
+def _latest_prediction_experiment():
+    return PANDORA_EXPERIMENT_RUN.objects.filter(
+        status='completed',
+        artifact_dir__gt='',
+    ).order_by('-completed_at', '-created_at').first()
+
+
+def _load_lasso_artifact(exp_run, condition):
+    from backend.ml_pipeline.services.lasso_regressor import LassoTrainer
+
+    artifact_dir = Path(exp_run.artifact_dir)
+    state_path = artifact_dir / condition / "lasso_state.json"
+    if not state_path.exists():
+        return None
+    trainer = LassoTrainer()
+    trainer.load_state(json.loads(state_path.read_text(encoding="utf-8")))
+    return trainer
+
+
+def _load_lstm_artifact(exp_run, condition):
+    import torch
+    from backend.ml_pipeline.services.lstm_classifier import LSTMTrainer, StackedLSTMRegressor
+
+    artifact_dir = Path(exp_run.artifact_dir)
+    state_path = artifact_dir / condition / "lstm_state.pt"
+    if not state_path.exists():
+        return None
+    state = torch.load(state_path, map_location="cpu")
+    trainer = LSTMTrainer(
+        hidden_dim=state.get("hidden_dim") or 128,
+        num_layers=state.get("num_layers") or 2,
+        dropout=state.get("dropout") or 0.2,
+        learning_rate=state.get("learning_rate") or 1e-3,
+    )
+    model = StackedLSTMRegressor(
+        input_dim=768,
+        hidden_dim=trainer.hidden_dim,
+        num_layers=trainer.num_layers,
+        num_outputs=5,
+        dropout=trainer.dropout,
+    )
+    model.load_state_dict(state["state_dict"])
+    trainer.model = model
+    return trainer
+
+
+def _load_prediction_model(exp_run, condition_override=None):
+    condition = condition_override or exp_run.best_condition or ""
+    if not condition:
+        first = exp_run.condition_results.order_by('-accuracy').first()
+        condition = first.condition if first else ""
+    if not condition:
+        raise ValueError("No completed model condition is available for prediction.")
+
+    if "lstm" in condition:
+        model = _load_lstm_artifact(exp_run, condition)
+        model_type = "lstm"
+    else:
+        model = _load_lasso_artifact(exp_run, condition)
+        model_type = "lasso"
+
+    if model is None:
+        raise ValueError(f"Model artifact for {condition} was not found.")
+    return condition, model_type, model
+
+
+def _trait_threshold_lookup(thresholds, short, name, fallback):
+    if not isinstance(thresholds, dict):
+        return float(fallback)
+    for key in (short, str(short).lower(), name, str(name).lower(), str(name).title()):
+        if key in thresholds:
+            return float(thresholds[key])
+    return float(fallback)
+
+
+def _load_trait_label_thresholds(exp_run):
+    path = Path(exp_run.artifact_dir or "") / "trait_label_thresholds.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    thresholds = payload.get("thresholds") if isinstance(payload, dict) else {}
+    return thresholds if isinstance(thresholds, dict) else {}
+
+
+def _load_validation_decision_thresholds(exp_run, condition):
+    metrics_path = Path(exp_run.artifact_dir or "") / condition / "metrics.json"
+    if metrics_path.exists():
+        try:
+            payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+            selected = {}
+            for trait, block in ((payload.get("validation") or {}).get("per_trait") or {}).items():
+                threshold = block.get("best_threshold")
+                if threshold is None:
+                    sweep = block.get("threshold_sweep") or {}
+                    threshold = sweep.get("best_threshold") if isinstance(sweep, dict) else None
+                if threshold is not None:
+                    selected[str(trait)] = float(threshold)
+            if selected:
+                return selected
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    rows = exp_run.threshold_results.filter(
+        condition=condition,
+        split="validation",
+    ).order_by("trait", "-f1_score", "-accuracy", "-specificity")
+    selected = {}
+    for row in rows:
+        if row.trait and row.trait not in selected:
+            selected[row.trait] = float(row.threshold)
+    return selected
+
+
+def _pandora_condition_choices(exp_run):
+    if exp_run is None:
+        return []
+    rows = exp_run.condition_results.order_by('condition')
+    choices = []
+    for row in rows:
+        gan = "GAN ON" if row.gan else "GAN OFF"
+        label = f"{row.condition} - {row.selection} + {gan} + {row.model.upper()}"
+        choices.append((row.condition, label))
+    return choices
+
+
+def _embed_pandora_profiles(profiles):
+    from backend.ml_pipeline.services.bert_encoder import BERTEncoder
+    import numpy as np
+
+    encoder = BERTEncoder()
+    sequences = []
+    pooled = []
+    for profile in profiles:
+        texts = [c.cleaned_text for c in profile.comments if c.cleaned_text]
+        encoded = encoder.encode_batch(texts[:10], max_length=256)
+        vectors = [item["embedding"] for item in encoded if item]
+        arr = np.asarray(vectors, dtype=np.float32)
+        if arr.size == 0:
+            arr = np.zeros((1, 768), dtype=np.float32)
+        sequences.append(arr)
+        pooled.append(arr.mean(axis=0))
+    return np.asarray(pooled, dtype=np.float32), sequences
+
+
+def _binary_metrics(truth, pred):
+    tp = sum(1 for t, p in zip(truth, pred) if t == 1 and p == 1)
+    fp = sum(1 for t, p in zip(truth, pred) if t == 0 and p == 1)
+    tn = sum(1 for t, p in zip(truth, pred) if t == 0 and p == 0)
+    fn = sum(1 for t, p in zip(truth, pred) if t == 1 and p == 0)
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {
+        'accuracy': (tp + tn) / max(1, tp + fp + tn + fn),
+        'precision': precision,
+        'recall': recall,
+        'f1_score': f1,
+        'specificity': tn / (tn + fp) if tn + fp else 0.0,
+    }
 
 
 def _export_cleaned_timeline_for_volunteer(volunteer, posts):
@@ -465,8 +722,8 @@ class CohortTrainingView(LoginRequiredMixin, FormView):
 
     def form_valid(self, form):
         status = _pandora_dataset_status()
-        if not status['exists'] or status['parquet_count'] == 0:
-            messages.error(self.request, 'PANDORA parquet files were not found in the project dataset folder.')
+        if not status['exists'] or status['dataset_count'] == 0:
+            messages.error(self.request, 'PANDORA dataset files were not found in the project dataset folder.')
             return self.form_invalid(form)
 
         sample_size = form.cleaned_data['sample_size']
@@ -475,57 +732,23 @@ class CohortTrainingView(LoginRequiredMixin, FormView):
             researcher=self.request.user,
             run_id=f"pandora_{timezone.now().strftime('%Y%m%d_%H%M%S')}",
             label=form.cleaned_data.get('run_label') or "",
-            status='running',
+            status='queued',
             dataset_path=status['path'],
             sample_size=sample_size,
             seed=seed,
             max_comments_per_user=form.cleaned_data.get('max_comments_per_user'),
             refresh_prepared_cache=form.cleaned_data.get('refresh_prepared_cache') or False,
             allow_reuse=form.cleaned_data.get('allow_reuse') or False,
-            started_at=timezone.now(),
         )
 
         try:
-            from backend.ml_pipeline.experiments import pandora_runner
-
-            pandora_file = pandora_runner._default_pandora_file()
-            if pandora_file is None:
-                raise ValueError("No PANDORA parquet file found.")
-
-            work_dir = Path("pandora_personality")
-            data_dir = work_dir / "data"
-            cache_dir = work_dir / "cache"
-            artifact_dir = work_dir / "artifacts"
-            for folder in (data_dir, cache_dir, artifact_dir):
-                folder.mkdir(parents=True, exist_ok=True)
-
-            prepared = pandora_runner.load_or_prepare_pandora(
-                pandora_file,
-                data_dir / "pandora_prepared.json",
-                refresh_prepared=form.cleaned_data.get('refresh_prepared_cache') or False,
-            )
-            if not run.allow_reuse:
-                used_ids = set(PANDORA_DATASET_ALLOCATION.objects.values_list('pandora_user_id', flat=True))
-                prepared = [item for item in prepared if item.user_id not in used_ids]
-                if len(prepared) < sample_size:
-                    raise ValueError(
-                        f"Only {len(prepared)} unused PANDORA users remain. Reduce sample size or enable reuse."
-                    )
-
-            cfg = pandora_runner.ExperimentConfig(
-                sample_n_users=sample_size,
-                seed=seed,
-                embedding_cache_dir=str(cache_dir),
-                output_dir=str(artifact_dir),
-            )
-            bundle = pandora_runner.ExperimentRunner(prepared, cfg).run()
-            _record_pandora_bundle(run, bundle)
-
-            messages.success(
+            _start_pandora_experiment_thread(run.pk)
+            messages.info(
                 self.request,
-                f"PANDORA experiment completed. Artifacts saved to {run.artifact_dir}."
+                "PANDORA training has started in the background. "
+                "You can keep using the application and check Recent Runs for progress."
             )
-            return redirect('tools:experiment_detail', pk=run.pk)
+            return redirect('tools:train')
         except Exception as e:
             run.status = 'error'
             run.error_message = str(e)
@@ -613,13 +836,177 @@ class CohortPredictionView(LoginRequiredMixin, FormView):
         context = super().get_context_data(**kwargs)
         active_model = COHORT_MODEL.objects.filter(is_active=True).order_by('-updated_at').first()
         prediction_volunteers = self._get_prediction_volunteers()
+        latest_pandora_experiment = _latest_prediction_experiment()
+        condition_choices = _pandora_condition_choices(latest_pandora_experiment)
 
         context['active_model'] = active_model
+        context['latest_pandora_experiment'] = latest_pandora_experiment
+        context['pandora_prediction_form'] = kwargs.get('pandora_prediction_form') or PandoraPredictionForm(
+            condition_choices=condition_choices
+        )
+        context['latest_pandora_prediction_runs'] = PANDORA_PREDICTION_RUN.objects.filter(
+            researcher=self.request.user
+        ).order_by('-created_at')[:5]
         context['prediction_volunteers'] = prediction_volunteers
         context['prediction_result'] = kwargs.get('prediction_result')
         context['prediction_profile'] = kwargs.get('prediction_profile')
         context['available_count'] = prediction_volunteers.count()
         return context
+
+    def post(self, request, *args, **kwargs):
+        if request.POST.get("action") == "pandora_predict":
+            latest_pandora_experiment = _latest_prediction_experiment()
+            return self._run_pandora_prediction(PandoraPredictionForm(
+                request.POST,
+                condition_choices=_pandora_condition_choices(latest_pandora_experiment),
+            ))
+        return super().post(request, *args, **kwargs)
+
+    def _run_pandora_prediction(self, form):
+        if not form.is_valid():
+            return self.render_to_response(self.get_context_data(pandora_prediction_form=form))
+
+        prediction_run = PANDORA_PREDICTION_RUN.objects.create(
+            researcher=self.request.user,
+            run_id=f"pandora_pred_{timezone.now().strftime('%Y%m%d_%H%M%S')}",
+            status='running',
+            requested_samples=form.cleaned_data['sample_size'],
+            seed=form.cleaned_data['seed'],
+            threshold=form.cleaned_data['threshold'],
+            allow_reuse=form.cleaned_data.get('allow_reuse') or False,
+            started_at=timezone.now(),
+        )
+        try:
+            from backend.ml_pipeline.experiments import pandora_runner
+
+            exp_run = _latest_prediction_experiment()
+            if exp_run is None:
+                raise ValueError("Run a completed PANDORA training experiment before dataset prediction.")
+
+            selected_condition = form.cleaned_data.get('condition') or None
+            condition, model_type, model = _load_prediction_model(exp_run, selected_condition)
+            fallback_threshold = form.cleaned_data['threshold']
+            trait_label_thresholds = _load_trait_label_thresholds(exp_run)
+            decision_thresholds = _load_validation_decision_thresholds(exp_run, condition)
+            test_file = _default_pandora_test_file()
+            if test_file is None:
+                raise ValueError("No PANDORA test dataset file was found.")
+
+            prepared = pandora_runner.load_or_prepare_pandora(
+                test_file,
+                Path("pandora_personality") / "data" / "pandora_test_prepared.json",
+                refresh_prepared=False,
+            )
+            if not prediction_run.allow_reuse:
+                used_ids = set(PANDORA_TEST_PROFILE.objects.values_list('pandora_user_id', flat=True))
+                prepared = [item for item in prepared if item.user_id not in used_ids]
+
+            eligible = [item for item in prepared if item.traits is not None and item.comments]
+            rng = random.Random(prediction_run.seed)
+            selected = rng.sample(eligible, min(prediction_run.requested_samples, len(eligible)))
+            if not selected:
+                raise ValueError("No unused PANDORA test profiles are available.")
+
+            pooled, sequences = _embed_pandora_profiles(selected)
+            if model_type == "lstm":
+                predictions = model.predict(sequences)
+            else:
+                X = model.transform_features(pooled)
+                by_trait = model.predict_all_traits(X)
+                predictions = []
+                for i in range(len(selected)):
+                    predictions.append([
+                        float(by_trait.get("Openness", [0.0] * len(selected))[i]),
+                        float(by_trait.get("Conscientiousness", [0.0] * len(selected))[i]),
+                        float(by_trait.get("Extraversion", [0.0] * len(selected))[i]),
+                        float(by_trait.get("Agreeableness", [0.0] * len(selected))[i]),
+                        float(by_trait.get("Neuroticism", [0.0] * len(selected))[i]),
+                    ])
+
+            all_true_binary = []
+            all_pred_binary = []
+            for item, pred in zip(selected, predictions):
+                true_scores = [float(getattr(item.traits, short)) / 100.0 for short, _ in TRAIT_FIELDS]
+                pred_scores = [max(0.0, min(1.0, float(v))) for v in pred]
+                true_threshold_by_trait = {
+                    name: _trait_threshold_lookup(trait_label_thresholds, short, name, fallback_threshold)
+                    for short, name in TRAIT_FIELDS
+                }
+                decision_threshold_by_trait = {
+                    name: _trait_threshold_lookup(decision_thresholds, short, name, fallback_threshold)
+                    for short, name in TRAIT_FIELDS
+                }
+                true_binary = {
+                    name: int(score >= true_threshold_by_trait[name])
+                    for (_, name), score in zip(TRAIT_FIELDS, true_scores)
+                }
+                pred_binary = {
+                    name: int(score >= decision_threshold_by_trait[name])
+                    for (_, name), score in zip(TRAIT_FIELDS, pred_scores)
+                }
+                correctness = {
+                    name: true_binary[name] == pred_binary[name]
+                    for _, name in TRAIT_FIELDS
+                }
+                all_true_binary.extend(true_binary.values())
+                all_pred_binary.extend(pred_binary.values())
+                PANDORA_TEST_PROFILE.objects.create(
+                    prediction_run=prediction_run,
+                    pandora_user_id=item.user_id,
+                    source_file=str(test_file),
+                    comment_count=len(item.comments),
+                    comments_preview=[c.cleaned_text for c in item.comments[:5]],
+                    true_openness=true_scores[0],
+                    true_conscientiousness=true_scores[1],
+                    true_extraversion=true_scores[2],
+                    true_agreeableness=true_scores[3],
+                    true_neuroticism=true_scores[4],
+                    predicted_openness=pred_scores[0],
+                    predicted_conscientiousness=pred_scores[1],
+                    predicted_extraversion=pred_scores[2],
+                    predicted_agreeableness=pred_scores[3],
+                    predicted_neuroticism=pred_scores[4],
+                    true_binary=true_binary,
+                    predicted_binary=pred_binary,
+                    correctness=correctness,
+                    match_rate=sum(1 for v in correctness.values() if v) / 5.0,
+                    metrics={
+                        'condition': condition,
+                        'model_type': model_type,
+                        'true_label_thresholds': true_threshold_by_trait,
+                        'decision_thresholds': decision_threshold_by_trait,
+                        'threshold_source': 'training_artifacts' if decision_thresholds else 'form_fallback',
+                    },
+                )
+
+            metrics = _binary_metrics(all_true_binary, all_pred_binary)
+            used_decision_thresholds = [
+                _trait_threshold_lookup(decision_thresholds, short, name, fallback_threshold)
+                for short, name in TRAIT_FIELDS
+            ]
+            prediction_run.experiment_run = exp_run
+            prediction_run.condition = condition
+            prediction_run.source_file = str(test_file)
+            prediction_run.predicted_samples = len(selected)
+            prediction_run.threshold = sum(used_decision_thresholds) / len(used_decision_thresholds)
+            prediction_run.accuracy = metrics['accuracy']
+            prediction_run.precision = metrics['precision']
+            prediction_run.recall = metrics['recall']
+            prediction_run.f1_score = metrics['f1_score']
+            prediction_run.specificity = metrics['specificity']
+            prediction_run.status = 'completed'
+            prediction_run.completed_at = timezone.now()
+            prediction_run.save()
+            messages.success(self.request, f"PANDORA prediction completed for {len(selected)} test profiles.")
+            return redirect('tools:pandora_prediction_run_detail', pk=prediction_run.pk)
+        except Exception as e:
+            prediction_run.status = 'error'
+            prediction_run.error_message = str(e)
+            prediction_run.completed_at = timezone.now()
+            prediction_run.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
+            logger.error("PANDORA prediction error: %s", e, exc_info=True)
+            messages.error(self.request, f'Error running PANDORA prediction: {str(e)}')
+            return self.render_to_response(self.get_context_data(pandora_prediction_form=form))
 
     def form_valid(self, form):
         volunteer_id = form.cleaned_data['volunteer_id']
@@ -675,6 +1062,40 @@ class CohortPredictionView(LoginRequiredMixin, FormView):
             logger.error("Prediction-only error: %s", e, exc_info=True)
             messages.error(self.request, f'Error running prediction: {str(e)}')
         return self.form_invalid(form)
+
+
+class PandoraPredictionRunDetailView(LoginRequiredMixin, DetailView):
+    model = PANDORA_PREDICTION_RUN
+    template_name = 'tools/pandora_prediction_run_detail.html'
+    context_object_name = 'run'
+
+    def get_queryset(self):
+        return PANDORA_PREDICTION_RUN.objects.filter(researcher=self.request.user)
+
+
+class PandoraTestProfileDetailView(LoginRequiredMixin, DetailView):
+    model = PANDORA_TEST_PROFILE
+    template_name = 'tools/pandora_test_profile_detail.html'
+    context_object_name = 'profile'
+
+    def get_queryset(self):
+        return PANDORA_TEST_PROFILE.objects.filter(prediction_run__researcher=self.request.user)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        profile = self.object
+        rows = []
+        for _, name in TRAIT_FIELDS:
+            true_value = (profile.true_binary or {}).get(name)
+            pred_value = (profile.predicted_binary or {}).get(name)
+            rows.append({
+                'trait': name,
+                'true_label': 'High' if true_value == 1 else 'Low',
+                'predicted_label': 'High' if pred_value == 1 else 'Low',
+                'correct': bool((profile.correctness or {}).get(name)),
+            })
+        context['trait_rows'] = rows
+        return context
 
 
 class AnalyzeProfileView(LoginRequiredMixin, FormView):

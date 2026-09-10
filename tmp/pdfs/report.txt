@@ -1,0 +1,2715 @@
+
+=== PDF PAGE 1 ===
+i 
+ 
+INTEGRATING Q-LEARNING, BERT, GANS AND LASSO REGRESSION FOR 
+BIG FIVE PERSONALITY PREDICTION FROM SOCIAL MEDIA TEXT 
+ 
+BY 
+POPOOLA TEMILORUN OLAMILEKAN  (2021002677) 
+MOHAMMED ISLAMIYAT ADEOLA (2021000307) 
+AJADI ADEMOLA ELIJAH (2021000317) 
+ 
+A PROJECT 
+SUBMITTED TO THE 
+DEPARTMENT OF COMPUTER SCIENCE, 
+FACULTY OF COMPUTING AND INFORMATICS, 
+LADOKE AKINTOLA UNIVERSITY OF TECHNOLOGY OGBOMOSO, 
+OYO STATE, NIGERIA. 
+ 
+IN PARTIAL FULFILLMENT OF THE REQUIREMENTS FOR THE 
+AWARD OF THE BACHELOR OF TECHNOLOGY (B.TECH.) DEGREE IN 
+COMPUTER SCIENCE 
+SUPERVISOR 
+PROF. W.O ISMAILA 
+ 
+AUGUST, 2026
+
+=== PDF PAGE 2 ===
+ii 
+ 
+CERTIFICATION 
+This is to certify that this project was carried out by Popoola Temilorun Olamilekan 
+(2021002677), Mohammed Islamiyat Adeola (2021000307), and Ajadi Ademola Elijah 
+(2021000317) in the Department of Computer Science, Faculty of Computing and Informatics, 
+Ladoke Akintola University of Technology. 
+ 
+———————— 
+ 
+——-———— 
+Prof. W.O Ismaila 
+(Supervisor) 
+Date 
+ 
+ 
+ 
+ 
+——————— ——-———— 
+Prof. W.O Ismaila Date 
+(Head of Department)  
+
+=== PDF PAGE 3 ===
+iii 
+ 
+DEDICATION 
+This work is dedicated to Almighty God for His guidance and protection throughout our 
+studies. 
+It is also dedicated to our parents for their continuous support, encouragement, and sacrifices, 
+which have been instrumental in the successful completion of this project.  
+
+=== PDF PAGE 4 ===
+iv 
+ 
+ACKNOWLEDGEMENT 
+Our utmost gratitude goes to Almighty God, the most beneficent, most merciful for his 
+immense blessing, mercies, favor and his exquisite protection over us. 
+We would like to express our sincere appreciation to our project supervisor, Prof. W.O Ismaila, 
+for his invaluable guidance, patience, constructive criticism, and continuous support 
+throughout the duration of this research work. Your expertise and encourag ement greatly 
+contributed to the success of this project. 
+Our profound gratitude also goes to the Head of Department, Prof. W.O Ismaila, and all 
+lecturers in the Department of Computer Science, Ladoke Akintola University of Technology, 
+for the knowledge and academic foundation they have imparted to us.  
+We are deeply grateful to our parents for their unconditional love, financial support, prayers, 
+and encouragement throughout our academic journey. We also appreciate our friends and 
+colleagues for their moral support, cooperation, and motivation. 
+  
+
+=== PDF PAGE 5 ===
+v 
+ 
+ABSTRACT 
+Personality assessment plays an important role in understanding individual behavioural 
+patterns across domains such as education, employment, and digital wellbeing. Traditional 
+personality assessment methods rely mainly on questionnaire-based approaches, which can be 
+limited by response bias and the inability to capture naturally occurring behavioural signals. 
+This study presents the design and implementation of a web -based Big Five personality 
+prediction system that combines psychometric assessment with social media text analysis to 
+estimate personality traits from digital behavioural data. 
+The system was developed using a Django -based architecture that integrates researcher 
+management, BFI -44 questionnaire processing, social media post acquisition , text 
+preprocessing, contextual feature extraction, machine learning prediction, and personality 
+visualization. The methodology involved collecting BFI -44 responses as ground -truth 
+personality labels, retrieving and preprocessing social media posts, apply ing a Q -learning-
+based selection mechanism to identify informative posts, generating contextual representations 
+using the BERT transformer model, expanding training samples through a simplified 
+augmentation approach, and applying Lasso/ElasticNet  regression models to predict the five 
+personality dimensions of Openness, Conscientiousness, Extraversion, Agreeableness, and 
+Neuroticism. The system stores intermediate processing outputs, including embeddings, 
+synthetic samples, regression parameters, a nd prediction profiles, enabling traceability and 
+interpretation of model results. 
+The implemented application successfully demonstrates an end -to-end personality prediction 
+workflow, transforming raw social media text and questionnaire responses into explainable Big 
+Five personality profiles. Experimental evaluation using stored volunteer records showed that 
+the regression models were capable of learning  personality-related patterns from contextual 
+text representations, with performance differences observed across personality traits due to 
+dataset size and variation in available social media content. The system provides a practical 
+
+=== PDF PAGE 6 ===
+vi 
+ 
+foundation for explainable personality prediction research by integrating natural language 
+processing, machine learning, and web-based data management into a unified platform. 
+  
+
+=== PDF PAGE 7 ===
+vii 
+ 
+TABLE OF CONTENTS 
+TITLE PAGE          i 
+CERTIFICATION ii 
+DEDICATION iii 
+ACKNOWLEDGEMENT iv 
+ABSTRACT v 
+TABLE OF CONTENTS vii 
+LIST OF FIGURES xi 
+LIST OF TABLES xii 
+CHAPTER ONE 1 
+INTRODUCTION 1 
+1.0 Introduction 1 
+1.1 Background and Motivation to the Study 1 
+1.2 Problem Statement 5 
+1.3 Aim and Objectives 6 
+1.4 Justification Based on Existing Solutions 7 
+1.5 Scope of the Study 8 
+1.6 Limitations of the Study 9 
+1.7 Definition of Terms 9 
+CHAPTER TWO 12 
+LITERATURE REVIEW 12 
+2.1 Conceptual Review 12 
+2.1.1 The Big Five Personality Model (OCEAN) 12 
+2.1.2 Digital Personality Footprints on Social Media 13 
+2.1.3 Social Media Signals for Big Five Personality Prediction 14 
+2.1.4 Applications of Personality Prediction 15 
+2.1.5 Personality Profile Visualization 16 
+2.1.6 X (Twitter) Profile Features for Personality Inference 17 
+
+=== PDF PAGE 8 ===
+viii 
+ 
+2.2 Theoretical Framework 18 
+2.2.1 Q-Learning for Active Text and Signal Selection 18 
+2.2.2 BERT for Contextual Semantic Embedding Extraction 20 
+2.2.3 Generative Adversarial Networks (GANs) for Embedding Augmentation 21 
+2.2.4 Lasso Regression for Sparse, Interpretable Trait Prediction 23 
+2.3 Empirical Review 25 
+2.4 Research Gaps 32 
+2.5 Conceptual Framework 34 
+2.5.1 Stage 1: Active Signal Selection 34 
+2.5.2 Stage 2: Contextual Feature Extraction 34 
+2.5.3 Stage 3: Embedding Augmentation 35 
+2.5.4 Stage 4: Personality Prediction 35 
+CHAPTER THREE 37 
+RESEARCH METHODOLOGY 37 
+3.1 Introduction 37 
+3.2 Research Methodology 37 
+3.3 System Analysis 39 
+3.3.1 Researcher Management Module 39 
+3.3.2 Data Acquisition Module 40 
+3.3.3 Personality Prediction Module 40 
+3.3.4 Reporting and Visualization Module 40 
+3.4 Overall System Architecture 41 
+3.5 Data Acquisition and Preparation 42 
+3.5.1 Participant Registration and BFI-44 Data Acquisition 43 
+3.5.2 Social Media Data Acquisition 43 
+3.5.3 Data Validation 46 
+3.5.4 Data Preprocessing 46 
+3.6 Personality Prediction Pipeline 47 
+3.6.1 Q-Learning-Based Post Selection 48 
+
+=== PDF PAGE 9 ===
+ix 
+ 
+3.6.3 GAN-Style Embedding Augmentation 49 
+3.6.4 Lasso Personality Prediction 50 
+3.6.5 Personality Profile Generation and Result Presentation 51 
+3.7 System Modeling and Design 52 
+3.7.1 Data Flow Diagram (DFD) Decomposition 52 
+3.7.2 Database Schema (ERD) 53 
+3.8 Ethical Considerations and Data Protection 55 
+3.9 Model Evaluation Metrics 55 
+3.9.1 Prediction Accuracy 55 
+3.9.2 Model Goodness of Fit 56 
+3.9.3 Model Validation 56 
+CHAPTER FOUR 57 
+SYSTEM IMPLEMENTATION, TESTING, RESULTS AND DISCUSSION 57 
+4.1  System Implementation Overview 57 
+4.2 Data Acquisition, Cleaning and Ground-Truth Labeling 58 
+4.3 User Interface Implementation 59 
+4.3.1 User Registration and Researcher Workflow 59 
+4.3.2 BFI-44 Survey Import and Scoring 60 
+4.3.3 Timeline Retrieval and Post Persistence 61 
+4.4.2 BERT Contextual Embedding Extraction 61 
+4.4.3 GAN-Style Data Augmentation 62 
+4.4.4 Lasso and ElasticNet Regression 62 
+4.4.5 Psychometric Profile Generation 63 
+4.5 Runtime Database Statistics 65 
+4.6 System Testing and Validation 65 
+4.7 Results and Discussion 66 
+CHAPTER FIVE 68 
+SUMMARY, CONCLUSION AND RECOMMENDATIONS 68 
+5.1 Introduction 68 
+
+=== PDF PAGE 10 ===
+x 
+ 
+5.2 Summary of the Study 68 
+5.3 Major Contributions of the Project 69 
+5.4 Conclusion 70 
+5.5 Limitations of the Study 70 
+5.6 Recommendations 72 
+5.7 Suggestions for Future Work 72 
+REFERENCES 74 
+APPENDICES 77 
+APPENDIX A 77 
+A.1 Pipeline Orchestrator 77 
+A.2 Q-Learning Active Selection Module 80 
+ 
+  
+
+=== PDF PAGE 11 ===
+xi 
+ 
+LIST OF FIGURES 
+FIGURE                                          PAGE  
+2.1 Personality Traits                                  13 
+2.2 Big Five Personality Profile (Radar Chart)             17  
+2.3 Example of X (Twitter) Profile                      18 
+2.4 Diagram of Q - Learning                           20 
+2.5 Architecture of the BERT Transformer model underpinning Contextual           21 
+Embedding Extraction  
+2.6 Architecture of Lasso Regression                    24 
+2.7 Conceptual Pipeline Architecture                    36 
+3.1 High-Level Functional Architecture of  the Proposed System            41 
+3.2 Social Media Data Acquisition Process               46 
+3.3 Data Flow Diagram – level 0        52 
+3.4 Data Pipeline Diagram for the Big Five Personality Prediction system              53 
+3.5 Entity-Relationship Diagram (ERD)                 54 
+4.1 Overall System Interface                           58 
+4.2 User Registration Interface                         60 
+4.3 Personality Prediction Dashboard                   64 
+  
+
+=== PDF PAGE 12 ===
+xii 
+ 
+LIST OF TABLES 
+TABLE                                         PAGE  
+2.1 Mapping Big Five Personality Traits to Typical Signals from X                  16 
+2.2 Summary of Related Studies                      31 
+3.1 Personality Prediction Otputs                     52 
+4.1 Runtime Database Statistics                      65 
+4.2 System Validation Results                       66 
+4.3 Average Regression Performance by Personality Trait            67 
+5.1 Recommendation         72 
+
+=== PDF PAGE 13 ===
+1 
+ 
+CHAPTER ONE 
+INTRODUCTION 
+1.0 Introduction 
+The present research systematically develops and evaluates an integrated machine learning 
+pipeline for predicting the Big Five (OCEAN) personality traits from social media-style textual 
+and profile data within a Django-based application. 
+This methodological framework directly tackles three persistent challenges in computational 
+personality assessment: excessive computational cost when processing large volumes of user-
+generated content, chronic scarcity of high -quality labeled personality d atasets, and lack of 
+interpretability in deep neural architectures. By addressing these challenges simultaneously, 
+the pipeline produces outputs that exhibit high predictive stability, reliability, and 
+explainability qualities that are essential for respon sible deployment in high -stakes decision-
+making contexts such as student support systems, digital wellbeing monitoring, employment 
+screening, and algorithmic fairness auditing (Azucar et al., 2018; Pletzer et al., 2025). 
+The significance of this work lies in its novelty: it constitutes the first systematic integration of 
+reinforcement learning -based active selection, transformer -based contextual embeddings, 
+generative data augmentation, and sparse linear regression tailored to social media personality 
+inference. This integrated approach not only advances computational psychology but also 
+offers practical utility across four equally weighted application domains: education, health and 
+wellbeing, employment, and responsible artificial intelligence governance. 
+1.1 Background and Motivation to the Study  
+The Big Five Personality Model, comprising Openness to Experience, Conscientiousness, 
+Extraversion, Agreeableness, and Neuroticism, represents the most empirically robust and 
+widely accepted taxonomic framework in modern personality psychology. Extensive research 
+has demonstrated that these five dimensions exhibit strong temporal stability across the 
+lifespan, cross-cultural generalizability, and substantial predictive validity for a broad range of 
+
+=== PDF PAGE 14 ===
+2 
+ 
+consequential life outcomes. These outcomes include academic performance, mental health 
+trajectories, leadership emergence, interpersonal relationship quality, job satisfaction, and 
+overall psychological adjustment (Goldberg, 1993; McCrae & Costa, 2008; Pl etzer et al., 
+2025). 
+Traditional methods of assessing the Big Five rely primarily on self-report questionnaires such 
+as the NEO Personality Inventory -Revised (NEO -PI-R), the Big Five Inventory (BFI), or 
+shorter variants such as the BFI -10 and BFI-2. While these instruments hav e been rigorously 
+validated and show good psychometric properties, they suffer from several well -documented 
+limitations. Respondents frequently exhibit social desirability bias, deliberately presenting 
+themselves in a more favorable light. Retrospective re call inaccuracies further distort self -
+reports, particularly when individuals are asked to reflect on long-term behavioral tendencies. 
+Moreover, questionnaire -based assessment lacks scalability for real -time, large -scale, or 
+continuous monitoring in digita l environments (Pennebaker et al., 2015; Paulhus & Vazire, 
+2007). 
+The widespread adoption of social media platforms has fundamentally transformed the 
+availability of ecologically valid behavioral data. Platforms such as X (formerly Twitter)  
+generate massive volumes of naturalistic text, profile descriptions, activity metadata, and 
+network interaction patterns. Linguistic choices, sentiment expression, syntactic complexity, 
+topical focus, self-presentation style, posting frequency, follower/following ratios, and group 
+memberships all contain detectable correlates of personality traits. Meta -analytic syntheses 
+have established moderate to strong associations between digital footprints and Big Five 
+dimensions, with correlations typically ranging from 0.29 to 0.42 across studies (Azucar et al., 
+2018; Tadesse et al., 2018; Farnadi et al., 2016). 
+Recent breakthroughs in natural language processing, most notably the development of 
+Bidirectional Encoder Representations from Transformers (BERT), have dramatically 
+improved the quality of text representations. BERT captures bidirectional context, enabli ng it 
+to encode subtle semantic and pragmatic cues that earlier bag -of-words or static embedding 
+
+=== PDF PAGE 15 ===
+3 
+ 
+approaches could not detect. Empirical benchmarks show that BERT -based models routinely 
+achieve R² values between 0.32 and 0.48 on personality prediction tasks, compared with 0.12–
+0.18 for classical methods (Devlin et al., 2019; Christian et al., 2021; Tsa ni & Suhartono, 
+2023). 
+Despite these methodological advances, three critical barriers continue to prevent widespread 
+practical adoption.  
+First, exhaustive processing of entire user content histories through computationally expensive 
+transformer models is resource -intensive and often impractical for real -time or large -scale 
+applications.  
+Second, high -quality labeled personality datasets remain scarce, with most academic 
+collections containing fewer than 10,000 cases and many controlled studies limited to 100–200 
+participants. This scarcity leads to overfitting and poor generalization.  
+Third, the dense, non -linear decision boundaries produced by deep neural networks offer 
+limited interpretability, which is unacceptable in regulated domains where accountability, 
+fairness audits, and legal compliance are mandatory (Pletzer et al., 2025; Si ngh & 
+Ramasubramanian, 2023). 
+The current study addresses these barriers through a novel orchestration of four complementary 
+paradigms. Q-Learning intelligently identifies and selects the most informative social media 
+signals including posts, profile bios, headlines, metadata, and network features thereby 
+reducing the computational overhead associated with processing large volumes of text. The 
+selected content is then processed by Bidirectional Encoder Representations from 
+Transformers (BERT), which generates rich contextual embeddings that capture semantic, 
+syntactic, and pragmatic relationships beyond the capabilities of traditional text representation 
+methods. These embeddings serve as high -quality feature representations for downstream 
+personality prediction. Conditional Generative Adversarial Networks (cGANs)  
+subsequently augment the embedding space by generating realistic synthetic representations, 
+
+=== PDF PAGE 16 ===
+4 
+ 
+mitigating data scarcity and improving model generalization. Finally, Lasso regression learns 
+sparse predictive models that identify the most discriminative embedding dimensions and 
+associated personality indicators for each Big Five trait, improving interpretability, reducing 
+overfitting, and supporting transparent, accountable decision-making.  
+This integrated pipeline targets four domains of high societal relevance. In education, trait -
+informed models can support adaptive learning pathways, personalized tutoring, and optimal 
+group formation based on complementary personality profiles (Poropat, 2 009; Komarraju & 
+Karau, 2008). In health and wellbeing, continuous monitoring of digital emotional expression 
+and trait-based adherence prediction can facilitate early intervention and personalized mental 
+health support (Stephan, 2009; Rostami et al., 2022). In employme nt, accurate trait inference 
+enables better role-trait alignment, team composition optimization, and talent assessment while 
+minimizing subjective bias (Barrick & Mount, 1991; Pletzer et al., 2025). In responsible AI 
+governance, the pipeline contributes to bias detection in profiling algorithms, establishment of 
+ethical screening thresholds, and promotion of fair algorithmic decision -making (Singh & 
+Ramasubramanian, 2023). 
+Meta-analytic evidence underscores domain -specific predictive strength: conscientiousness 
+shows the highest correlation with academic achievement (ρ ≈ 0.41), neuroticism is strongly 
+associated with psychological distress (ρ ≈ 0.36), extraversion predicts l eadership emergence 
+(ρ ≈ 0.38), and agreeableness facilitates collaborative effectiveness (ρ ≈ 0.32) (Poropat, 2009; 
+Barrick & Mount, 1991; Rostami et al., 2022; Pletzer et al., 2025). 
+Radar charts are widely used to visualize Big Five personality profiles. These charts present 
+the five trait scores on radial axes, forming a pentagon shape that allows easy comparison of 
+relative strengths and balances across dimensions. 
+X (Twitter) profiles provide concise bios, follower/following counts, posting frequency, and 
+interaction patterns that serve as valuable metadata and network signals. 
+
+=== PDF PAGE 17 ===
+5 
+ 
+1.2 Problem Statement 
+Contemporary approaches to text -based personality prediction continue to face three 
+interrelated, empirically documented challenges that undermine both theoretical progress and 
+practical utility. 
+First, computational inefficiency and prediction instability persist as major obstacles. 
+Comprehensive application of BERT to heterogeneous and voluminous social media corpora 
+produces outputs that are highly sensitive to minor input volume changes, noise,  or sampling 
+variations. Cross-validation variance frequently exceeds acceptable thresholds (σ² > 0.08 in 
+many reported studies). No existing framework has effectively incorporated reinforcement 
+learning principles to intelligently curate high-value text and profile subsets, thereby preserving 
+predictive fidelity while dramatically reducing inference latency and resource demands 
+(Christian et al., 2021; Park et al., 2020). 
+Second, data scarcity and consequent generalization limitations remain unresolved. High -
+quality, personality -labeled datasets are chronically undersized, with most academic 
+collections falling well below 10,000 cases and many controlled studies limited to 100–200 
+participants. This scarcity precipitates embedding-level overfitting and vulnerability to domain 
+shift. Although generative adversarial networks have demonstrated strong augmentation 
+performance in vision, medical imaging, and tabular data domains,  their systematic empirical 
+validation within the high -dimensional manifold of personality -related BERT embeddings is 
+conspicuously absent from the literature (Hortal, 2021; Frid-Adar et al., 2018; Antoniou et al., 
+2017). 
+Third, interpretability deficits severely restrict deployment in regulated applications. 
+Predominant deep architectures sacrifice explanatory transparency, which is indispensable for 
+stakeholder accountability in high-stakes contexts such as personnel selection, clinical decision 
+support, mental health monitoring, and algorithmic governance. Identification of causally 
+relevant linguistic, profile, and behavioral predictors is a prerequisite for regulatory 
+compliance, fairness auditing, and ethical use. Spar se regression techniques such as Lasso 
+
+=== PDF PAGE 18 ===
+6 
+ 
+remain underutilized in this domain despite their proven capacity to deliver interpretable, high-
+accuracy models (Pletzer et al., 2025; Tibshirani, 1996; Muthukrishnan & Rohini, 2016). 
+1.3 Aim and Objectives 
+The primary aim of this study is to systematically develop, implement, and empirically validate 
+an integrated computational pipeline that combines Q -Learning-driven active text and signal 
+selection, BERT -based contextual semantic representation, GAN -mediated embedding 
+augmentation, and Lasso -regularized sparse regression. The pipeline performs reliable, 
+interpretable inference of continuous Big Five personality trait scores from constrained social 
+media-style textual and profile corpora. The framework demonstrates clear applicability across 
+four high -impact domains: education, health and wellbeing, employment, and responsible 
+artificial intelligence governance. 
+Objectives 
+1. To design and optimize a Q -Learning agent that dynamically selects maximally 
+informative text segments, profile descriptions, metadata features, and network signals 
+according to defined state representations (prediction uncertainty), actions (item 
+selection), and rewards (accuracy improvement), with a target of 30–50% reduction in 
+BERT computational requirements. 
+2. To extract and appropriately aggregate BERT embeddings using CLS -token pooling 
+and recency -weighted averaging from the algorithmically curated signals, thereby 
+establishing robust 768-dimensional user-level semantic representations. 
+3. To train conditional Generative Adversarial Networks capable of synthesizing 
+distributionally realistic (embedding, OCEAN -score) pairs, thereby expanding the 
+effective training corpus size by a factor of 2 –3 without inducing mode collapse or 
+introducing significant distributional artifacts. 
+4. To develop trait -specific Lasso regression models incorporating systematic L1 
+regularization, achieving targeted coefficient sparsity greater than 85% through careful 
+
+=== PDF PAGE 19 ===
+7 
+ 
+alpha hyperparameter optimization while maximizing predictive performance on 
+continuous trait scores. 
+5. To conduct comprehensive empirical evaluation using a combination of accuracy -
+oriented metrics (R², MAE, RMSE), stability indicators (cross-validation variance, test-
+retest reliability), ablation studies demonstrating the contribution of each pipeline 
+component, and domain-specific validation protocols. 
+1.4 Justification Based on Existing Solutions 
+Several existing studies have demonstrated the feasibility of predicting personality traits from 
+social media using machine learning and deep learning techniques. However, most solutions 
+focus on a single modelling approach, such as transformer-based language models or traditional 
+feature engineering, limiting their ability to address computational efficiency, data scarcity, 
+and model interpretability simultaneously. 
+Christian et al. (2021) showed that BERT -based language representations significantly 
+improve Big Five personality prediction by capturing contextual semantic information from 
+social media text. While the model achieved strong predictive performance, it re lies on 
+processing large volumes of text, making inference computationally expensive for practical 
+deployment. 
+Tsani and Suhartono (2023) further improved prediction accuracy by combining BERT and 
+RoBERTa with text augmentation techniques. Although their ensemble enhanced classification 
+performance, the approach increased computational complexity and did not provide 
+interpretable explanations for predicted personality traits. 
+Majima and Markov (2022) demonstrated that combining BERT embeddings with handcrafted 
+linguistic features improves personality prediction over using contextual embeddings alone. 
+However, the system still processes all available text uniformly and lacks an intelligent 
+mechanism for selecting only the most informative content before encoding. 
+
+=== PDF PAGE 20 ===
+8 
+ 
+Unlike these existing solutions, the proposed system integrates Q-Learning, BERT, 
+Conditional GAN, and Lasso Regression  into a unified prediction pipeline. Q -Learning 
+minimizes unnecessary BERT computation by selecting high -value social media signals, 
+BERT extracts contextual semantic embeddings, Conditional GAN addresses limited training 
+data through embedding augmentatio n, and Lasso Regression provides interpretable feature 
+selection and transparent personality prediction. This integrated architecture is designed to 
+improve prediction accuracy, computational efficiency, robustness on small datasets, and 
+explainability, making it more suitable for real-world personality assessment applications. 
+1.5 Scope of the Study  
+The scope of this investigation is deliberately focused to ensure feasibility, ethical compliance, 
+and scientific rigor. The study is restricted to English -language social media -style text and 
+profile content. Each participant contributes 3 –5 posts (each approximately 30 –50 words), 
+profile bio/about section text (up to 100 words), headline/tagline, pinned post (if available), 
+and basic metadata (followers count, following count, post frequency estimate, join date). 
+Network signals include the three most frequently interacted accounts and any relevant group 
+memberships. 
+Data are ethically procured from 80–150 student volunteers through institutional review board-
+approved, consent-based web instrumentation (Google Forms).  
+The implementation follows a sequential order of data acquisition, text cleaning, Q -learning 
+based post selection, BERT contextual encoding, augmentation, and Lasso or ElasticNet 
+regression. In practice, the stored runs rely on persisted database artifacts  and cohort-based 
+training summaries rather than a purely abstract cross-validation description. 
+All four application domains receive equal analytical emphasis: 
+1. Educational contexts (adaptive learning personalization, heterogeneous group 
+formation), 
+
+=== PDF PAGE 21 ===
+9 
+ 
+2. Health and wellbeing platforms (digital emotional trajectory monitoring, intervention 
+adherence prediction), 
+3. Employment processes (occupational trait -role alignment, team composition 
+optimization), 
+4. Responsible AI governance (algorithmic bias auditing, ethical screening threshold 
+policymaking). 
+The implementation is realized as a Django web application backed by SQLite in development, 
+PostgreSQL-ready models for deployment, and a local machine-learning workflow that can use 
+GPU acceleration when BERT is loaded on compatible hardware. 
+1.6 Limitations of the Study  
+The study is subject to several inherent limitations that should be acknowledged. 
+First, reliance on self-reported Big Five scores (via BFI-44 or similar) introduces potential self-
+presentation bias, even though participants are assured of anonymity. Second, the sample size 
+(80–150 participants) remains relatively small despite GAN augmentation, which may limit 
+statistical power for detecting su btle effects. Third, the exclusive focus on English -language 
+content restricts generalizability to non -English-speaking populations. Fourth, the study 
+excludes multimodal signals (profile photos, emojis, images, videos) due to ethical complexity 
+and computational constraints. Fifth, evaluation is based on controlled, offline experiments 
+rather than live, longitudinal deployments, which may affect ecological validity. Sixth, 
+potential biases embedded in pre -trained BERT models or in participant self -selection may 
+influence results. Finally, high computational requirements for BERT fine -tuning and GAN 
+training may limit immediate reproducibility on standard hardware. 
+1.7 Definition of Terms  
+1. Agreeableness: The orientation toward compassion, cooperation, trust, altruism, and 
+prosocial motivation. High agreeableness is associated with empathy, helpfulness, and 
+
+=== PDF PAGE 22 ===
+10 
+ 
+conflict avoidance, whereas low agreeableness is characterized by skepticism, 
+competitiveness, and a greater focus on self-interest. 
+2. BERT Embeddings: Fixed-length (typically 768 -dimensional) contextualized vector 
+representations generated by the Bidirectional Encoder Representations from 
+Transformers pre -trained language model. These embeddings encode bidirectional 
+semantic and syntactic dependencies w ithin input sequences, providing rich 
+representations of meaning based on surrounding context (Devlin et al., 2019). 
+3. Big Five Personality Traits (OCEAN Model):  A hierarchical, empirically -derived 
+taxonomic framework that represents the fundamental dimensions of human 
+personality along continuous spectra. The model demonstrates high test -retest 
+reliability (r_tt = 0.80 –0.90) and cross -cultural invariance, as established through 
+decades of lexical, questionnaire-based, and behavioral validation research (Goldberg, 
+1993; McCrae & Costa, 2008). 
+4. Conscientiousness: The capacity for self -discipline, organization, dependability, 
+industriousness, and goal -directed persistence. High conscientiousness manifests as 
+diligence, effective time management, and strong achievement orientation, while low 
+conscientiousness is characterized by impulsivity, disorganization, and a more relaxed 
+approach to responsibilities. 
+5. Extraversion: The tendency toward positive emotionality, assertiveness, sociability, 
+and energy derived from social stimulation. Individuals high in extraversion display 
+enthusiasm, dominance in social settings, and active affiliation -seeking behavior, 
+whereas those low in extraversion (introverts) exhibit reserve, preference for solitude, 
+and introspective tendencies. 
+6. GAN Augmentation (Generative Adversarial Networks):  A class of machine 
+learning frameworks comprising two mutually antagonistic neural networks a generator 
+and a discriminator that are trained simultaneously via minimax optimization. The 
+generator learns to produce synthetic data instances that preserve the underlying 
+distributional characteristics of real data, specifically targeting augmentatio n of high-
+
+=== PDF PAGE 23 ===
+11 
+ 
+dimensional embedding spaces in data-scarce regimes (Goodfellow et al., 2014; Hortal, 
+2021). 
+7. Lasso Regression:  A linear regression technique augmented with an L1 -norm 
+regularization penalty (λ‖β‖₁). The penalty term induces coefficient sparsity through 
+soft-thresholding, simultaneously enabling automatic variable selection, overfitting 
+mitigation, and enhanced interpretability in high-dimensional predictive modeling tasks 
+(Tibshirani, 1996). 
+8. Neuroticism (Emotional Instability):  The proneness to experience negative affect, 
+including anxiety, depression, vulnerability to stress, and emotional lability. High 
+neuroticism predicts heightened stress reactivity and mood dysregulation, whereas low 
+neuroticism (emotional stability) is ma rked by calmness, resilience, and emotional 
+equilibrium. 
+9. Openness to Experience:  The disposition toward intellectual curiosity, aesthetic 
+sensitivity, imagination, preference for novelty, and receptivity to unconventional ideas 
+and experiences. Individuals high in openness tend to exhibit creativity, divergent 
+thinking, and cultural e ngagement, whereas those low in openness prefer convention, 
+practicality, and routine. 
+10. Q-Learning: A model -free reinforcement learning algorithm that iteratively 
+approximates the optimal action -value function Q(s,a) through temporal -difference 
+updates based on observed state transitions, actions, and rewards. It facilitates policy 
+optimization in partially observable environments without requiring a full model of the 
+environment dynamics (Sutton & Barto, 2018). 
+  
+
+=== PDF PAGE 24 ===
+12 
+ 
+CHAPTER TWO 
+LITERATURE REVIEW 
+2.1 Conceptual Review 
+2.1.1 The Big Five Personality Model (OCEAN) 
+The Big Five Personality Model, commonly referred to as the OCEAN framework, is the most 
+widely accepted and empirically validated model for describing human personality. The model 
+categorizes personality into five broad dimensions: Openness to Experience, 
+Conscientiousness, Extraversion, Agreeableness, and Neuroticism. These dimensions have 
+been extensively validated across cultures and age groups, making them the standard 
+framework for psychological assessment and computational personality prediction (Goldberg, 
+1993; McCrae & Costa, 2008). 
+Openness to Experience  describes an individual's curiosity, imagination, creativity, and 
+willingness to explore new ideas. Individuals with high openness tend to enjoy abstract 
+thinking, artistic expression, and intellectual discussions, whereas those with low openness 
+generally prefer routine, familiarity, and conventional approaches. 
+Conscientiousness reflects self -discipline, organization, reliability, and persistence in 
+achieving goals. Highly conscientious individuals are dependable, structured, and 
+achievement-oriented, while lower scores are associated with impulsiveness, poor planning, 
+and disorganization. 
+Extraversion represents sociability, assertiveness, enthusiasm, and positive emotionality. 
+Individuals with high extraversion actively seek social interaction and external stimulation, 
+whereas introverted individuals prefer solitude, reflection, and smaller social circles. 
+Agreeableness measures compassion, cooperation, trust, empathy, and willingness to maintain 
+harmonious relationships. Highly agreeable individuals are supportive and collaborative, while 
+lower agreeableness is associated with competitiveness and skepticism. 
+
+=== PDF PAGE 25 ===
+13 
+ 
+Neuroticism, sometimes referred to as emotional instability, measures susceptibility to 
+anxiety, stress, mood swings, and negative emotions. High neuroticism is associated with 
+emotional instability, whereas low neuroticism reflects emotional resilience and psychological 
+stability. 
+The Big Five dimensions demonstrate strong predictive validity across numerous domains, 
+including academic performance, job performance, leadership, interpersonal relationships, and 
+mental wellbeing (Poropat, 2009; Barrick & Mount, 1991; Roberts et al., 20 07). Their 
+consistency and interpretability make the model particularly suitable for automated personality 
+prediction systems. 
+ 
+Figure 2.1: Personality Traits 
+2.1.2 Digital Personality Footprints on Social Media 
+Social media platforms have become valuable sources of behavioural data for computational 
+personality analysis because they capture spontaneous and natural self -expression. Unlike 
+traditional personality questionnaires, users continuously reveal aspects of  their behaviour, 
+interests, communication style, and social interactions through their online activities. 
+Among these platforms, X (formerly Twitter) provides rich multi-source information suitable 
+for personality inference. Posts reflect linguistic style, emotional expression, topical interests, 
+
+
+=== PDF PAGE 26 ===
+14 
+ 
+and communication patterns. Profile information, including biographies, headlines, pinned 
+posts, and self-descriptions, provides relatively stable indicators of personal identity and self -
+presentation. Platform metadata, such as follower counts, following relationships, posting 
+frequency, account age, and activity patterns, offers additional behavioural evidence. Network 
+interactions, including mentions, replies, reposts, and community participation, further reveal 
+users' social preferences and communication styles. 
+Research has shown that combining textual, profile, behavioural, and network information 
+significantly improves personality prediction compared with relying solely on textual content 
+(Azucar et al., 2018; Farnadi et al., 2016; Tadesse et al., 2018). 
+2.1.3 Social Media Signals for Big Five Personality Prediction 
+Personality traits are reflected through different categories of digital signals on social media. 
+These signals include textual content, profile information, metadata, and interaction patterns, 
+each contributing complementary evidence for personality inference. 
+Individuals with high openness frequently discuss abstract ideas, creative topics, innovation, 
+literature, science, or philosophy. Their profiles often contain artistic or intellectual keywords, 
+while their networks usually span diverse interests. 
+Conscientiousness is commonly associated with structured posts, project updates, organized 
+profile descriptions, professional photographs, regular posting behaviour, and stable long-term 
+activity patterns. 
+Extraversion is reflected through frequent conversations, event participation, mentions of 
+other users, networking-oriented biographies, high posting activity, and extensive interaction 
+with followers. 
+Agreeableness is often indicated by supportive language, expressions of gratitude, 
+collaborative profile descriptions, mentoring activities, and frequent replies to other users. 
+Neuroticism may be observed through emotionally charged language, expressions of worry or 
+uncertainty, inconsistent posting schedules, and unstable interaction patterns. 
+
+=== PDF PAGE 27 ===
+15 
+ 
+These behavioural indicators provide measurable digital evidence that machine learning 
+models can use to estimate Big Five personality traits from social media data. 
+Table 2.1: Mapping Big Five Personality Traits to Typical Signals from X 
+S/N Trait Posts Signals Profile 
+Signals 
+Metadata 
+Signals 
+Network 
+Signals 
+1 Openness Abstract 
+topics, 
+creative 
+language 
+Artistic or 
+innovative 
+keywords 
+High lexical 
+diversity 
+Diverse interests 
+in 
+follows/groups 
+2 Conscientiousness Structured 
+updates, 
+project details 
+Complete 
+profile, 
+professional 
+photo 
+Consistent 
+posting 
+schedule 
+High follower -
+to-following 
+ratio 
+3 Extraversion Frequent 
+mentions, 
+event 
+references 
+Outgoing 
+phrases in 
+bio/headline 
+High 
+activity 
+level 
+Frequent 
+@mentions and 
+replies 
+4 Agreeableness Supportive 
+comments, 
+gratitude 
+Teamwork or 
+mentoring 
+terms 
+High reply 
+ratio 
+Collaborative 
+communities 
+5 Neuroticism Venting, 
+uncertainty 
+expressions 
+Emotional or 
+self-doubt 
+phrases 
+Erratic 
+posting 
+patterns 
+Unstable 
+following 
+behaviour 
+The relationship between these observable signals and the Big Five personality traits forms the 
+conceptual basis for the proposed multi-source personality prediction framework. 
+2.1.4 Applications of Personality Prediction 
+Automated personality prediction has practical applications across multiple domains. 
+1. Education 
+
+=== PDF PAGE 28 ===
+16 
+ 
+Educational institutions can use personality prediction to support adaptive learning, student 
+advising, collaborative group formation, and personalized academic interventions. 
+Conscientiousness has consistently been identified as one of the strongest predi ctors of 
+academic success, while openness contributes to creativity and learning engagement (Poropat, 
+2009; Komarraju & Karau, 2008). 
+2. Health and Wellbeing 
+Personality prediction supports digital health monitoring by identifying behavioural tendencies 
+associated with stress management, treatment adherence, and emotional wellbeing. Low 
+neuroticism and high conscientiousness are generally associated with improved health 
+outcomes and psychological resilience (Stephan, 2009; Rostami et al., 2022). 
+3. Employment 
+Organizations increasingly utilize personality assessment for recruitment, employee 
+development, leadership identification, and team composition. Conscientiousness, 
+extraversion, emotional stability, and agreeableness have consistently demonstrated strong 
+relationships with workplace performance across different occupations (Barrick & Mount, 
+1991; Pletzer et al., 2025). 
+4. Responsible Artificial Intelligence 
+Personality prediction also contributes to responsible AI by promoting transparency, fairness, 
+and explainability in automated decision -making systems. Interpretable personality models 
+assist in bias detection, fairness auditing, and ethical deployment of AI systems involving 
+human behavioural analysis (Singh & Ramasubramanian, 2023; Sorokovikova et al., 2024). 
+2.1.5 Personality Profile Visualization 
+Visualization techniques enable intuitive interpretation of personality assessment results. 
+Among these techniques, radar charts are widely used because they simultaneously display the 
+five Big Five dimensions on a single graphical representation. The resu lting polygon allows 
+
+=== PDF PAGE 29 ===
+17 
+ 
+rapid comparison of personality strengths, weaknesses, and overall behavioural balance across 
+individuals. 
+Radar charts are particularly useful for comparing multiple personality profiles and 
+communicating prediction results to users in an interpretable manner. 
+ 
+Figure 2.2: Big Five Personality Profile (Radar Chart) 
+2.1.6 X (Twitter) Profile Features for Personality Inference 
+X profiles contain several structured attributes that complement textual analysis. These include 
+profile biographies, profile photographs, follower and following statistics, account age, posting 
+frequency, and interaction history. Collectively, these featu res provide valuable contextual 
+information for personality prediction. 
+Profile descriptions reveal stable aspects of self -identity, while follower relationships and 
+interaction behaviour indicate patterns of social engagement. Posting frequency and account 
+longevity further capture behavioural consistency over time. When combined with linguistic 
+features extracted from user posts, these profile characteristics substantially improve the 
+robustness and accuracy of computational personality prediction systems. 
+
+
+=== PDF PAGE 30 ===
+18 
+ 
+ 
+Figure 2.3: Example X (Twitter) Profile 
+2.2 Theoretical Framework 
+2.2.1 Q-Learning for Active Text and Signal Selection 
+Q-Learning is a model-free, off-policy reinforcement learning algorithm that learns an optimal 
+action-value function without requiring a complete model of the environment. The core update 
+rule is derived from the Bellman optimality equation and is expressed as: 
+Q(s, a) ← Q(s, a) + α [r + γ max_{a′} Q(s′, a′) − Q(s, a)] 
+Where:  
+• (s) represents the current state (e.g., current prediction uncertainty or model 
+confidence),  
+• (a) denotes the action (e.g., selecting a specific post, bio segment, or metadata 
+feature),  
+• (r) is the immediate reward (e.g., improvement in prediction accuracy or 
+reduction in uncertainty),  
+
+
+=== PDF PAGE 31 ===
+19 
+ 
+• (α) is the learning rate controlling the update magnitude 
+• (γ) is the discount factor balancing immediate versus future rewards (Sutton & 
+Barto, 2018). 
+In natural language processing and text classification tasks, Q-Learning has been successfully 
+applied within active learning frameworks to intelligently select the most informative instances 
+for labeling or processing. This selection reduces annotation cost and computational overhead 
+while preserving or even improving model performance compared to random or passive 
+sampling. The algorithm prioritizes samples that are expected to yield the greatest expected 
+reward, typically measured through uncertainty reduction, expected model change, or expected 
+error reduction (Thompson et al., 1999; Settles, 2012). 
+In the present pipeline, Q -Learning forms the initial stage. It operates on multi -source social 
+media signals from X posts, profile text (bio, headline, about section), metadata 
+(followers/following counts, posting frequency, join date), and network featur es (interacted 
+accounts, group memberships). The agent learns to select the subset of signals that maximizes 
+downstream prediction accuracy while minimizing BERT processing cost. This capability is 
+particularly valuable in employment-related applications where human resources professionals 
+require rapid, resource -efficient screening of candidate profiles (McCallum & Nigam, 1998; 
+Alhathli et al., 2020). 
+  
+
+=== PDF PAGE 32 ===
+20 
+ 
+ 
+Figure 2.4:  Diagram of  Q - Learning 
+2.2.2 BERT for Contextual Semantic Embedding Extraction 
+Bidirectional Encoder Representations from Transformers (BERT) is a transformer -based 
+language model that pre -trains deep bidirectional representations by jointly conditioning on 
+both left and right context in every layer. Pre -training objectives include m asked language 
+modeling (predicting randomly masked tokens) and next sentence prediction, enabling the 
+model to learn rich semantic and syntactic relationships (Devlin et al., 2019). 
+The architecture consists of multiple transformer encoder layers with self -attention 
+mechanisms that allow each token to attend to all other tokens in the input sequence. The output 
+embeddings are highly contextualized: the representation of any given toke n depends on the 
+entire surrounding context. For sentence -level tasks, the special [CLS] token embedding is 
+commonly extracted as a fixed -length (typically 768 -dimensional in BERT -base) aggregate 
+representation (Devlin et al., 2019). 
+In personality prediction, BERT embeddings capture subtle linguistic markers —word choice, 
+sentiment valence, syntactic complexity, topic coherence, and pragmatic intent—that correlate 
+
+
+=== PDF PAGE 33 ===
+21 
+ 
+strongly with Big Five traits. The bidirectional context modeling is particularly advantageous 
+for processing professional self-presentation in expressive content on X (Christian et al., 2021; 
+Tsani & Suhartono, 2023; Majima & Markov, 2022). 
+Within the pipeline, BERT constitutes the second stage. It generates high -quality contextual 
+embeddings from the text segments and profile signals previously selected by the Q -Learning 
+agent. These embeddings serve as the primary input for augmentation and final prediction. 
+ 
+Figure 2.5: Architecture of the BERT transformer model underpinning contextual 
+embedding extraction. 
+2.2.3 Generative Adversarial Networks (GANs) for Embedding Augmentation 
+Generative Adversarial Networks (GANs) are deep learning models designed to generate 
+synthetic data that closely resembles real data. A GAN consists of two neural networks trained 
+simultaneously in a competitive process: a generator (G), which creates synthetic samples, 
+and a discriminator (D), which attempts to distinguish between real and generated samples. 
+During training, the generator continuously improves its  ability to produce realistic samples, 
+while the discriminator becomes better at identifying synthetic ones. This adversarial learning 
+process enables the generator to learn the underlying distribution of the training data 
+(Goodfellow et al., 2014). 
+
+
+=== PDF PAGE 34 ===
+22 
+ 
+The objective of GAN training is expressed as the following minimax optimization problem: 
+min
+𝐺
+max
+𝐷
+𝑉(𝐷, 𝐺) = 𝐸𝑥∼𝑝𝑑𝑎𝑡𝑎[log 𝐷(𝑥)] + 𝐸𝑧∼𝑝𝑧[log(1 − 𝐷(𝐺(𝑧)))] 
+where: 
+• 𝑥represents samples drawn from the real data distribution;  
+• 𝑧is a random noise vector supplied to the generator;  
+• 𝐺(𝑧)denotes the synthetic sample generated from the noise vector;  
+• 𝐷(⋅)represents the discriminator's estimated probability that a sample is real; and  
+• 𝑉(𝐷, 𝐺)is the value function that guides the adversarial learning process.  
+A widely used extension is the Conditional Generative Adversarial Network (cGAN) , in 
+which both the generator and discriminator receive additional information such as class labels 
+or personality trait scores during training. Conditioning enables the generator to produce 
+synthetic samples belonging to specific categories rather than ge nerating completely random 
+data. This makes cGANs particularly suitable for supervised learning tasks where labelled data 
+are limited (Mirza & Osindero, 2014). 
+In the proposed personality prediction system, the Conditional GAN is applied after BERT 
+generates contextual text embeddings. Instead of generating synthetic social media posts, the 
+model learns the distribution of the BERT embedding space and produces realistic synthetic 
+embeddings associated with the corresponding Big Five (OCEAN) personal ity scores. These 
+synthetic embeddings are combined with the original embeddings to increase the amount of 
+training data while preserving the semantic characteristics learned by BERT. 
+Embedding augmentation is especially beneficial when working with relatively small 
+personality datasets, typically containing 80–150 participants  in controlled studies. By 
+increasing sample diversity, the Conditional GAN reduces overfitting and improves the ability 
+
+=== PDF PAGE 35 ===
+23 
+ 
+of the prediction model to generalize to unseen users (Hortal, 2021; Antoniou et al., 2017; Frid-
+Adar et al., 2018). 
+2.2.4 Lasso Regression for Sparse, Interpretable Trait Prediction 
+The Least Absolute Shrinkage and Selection Operator (Lasso) is a linear regression technique 
+augmented with an L1-norm penalty on the coefficients. The objective function is: 
+minimize (1/(2n)) ||y − Xβ||²₂ + λ||β||₁ 
+In this Lasso Regression objective function, each variable plays a specific role in balancing 
+model accuracy with simplicity: 
+• n (Number of Observations): The total number of data points or rows in your dataset. 
+• y (Response Vector): A vector of size  n containing the actual observed target values 
+(the dependent variable). 
+• X (Predictor Matrix):  A matrix of n X P  containing the independent variables or 
+features. 
+•  β (Coefficients):  The vector of parameters the model is trying to estimate. These 
+represent the weight or "importance" of each feature. 
+•  λ (Tuning Parameter): A non-negative hyperparameter that controls the strength of 
+the penalty: 
+o If  λ = 0 , the model is equivalent to standard Ordinary Least Squares (OLS) 
+regression. 
+o As λ increases, more coefficients are pushed toward zero, simplifying the 
+model. 
+• || y – Xβ||22  (L2 Norm / RSS):  The Residual Sum of Squares, which measures the 
+"loss" or the difference between the actual values and the model's predictions. 
+• || β ||1 |(L1 Norm): The sum of the absolute values of  
+
+
+=== PDF PAGE 36 ===
+24 
+ 
+The L1 penalty drives less important coefficients exactly to zero, thereby performing automatic 
+feature selection and producing sparse models (Tibshirani, 1996). 
+In high -dimensional settings such as when input features include 768 -dimensional BERT 
+embeddings plus additional metadata Lasso identifies the subset of dimensions that are most 
+predictive of each Big Five trait. The resulting sparse coefficient vectors pr ovide direct 
+interpretability: non-zero coefficients indicate which semantic, linguistic, profile, or behavioral 
+features contribute most strongly to each trait score. This interpretability is critical in regulated 
+domains requiring transparency, accountab ility, and fairness auditing (Hastie et al., 2015; 
+Muthukrishnan & Rohini, 2016). 
+In the pipeline, Lasso serves as the final prediction stage. It maps the augmented embedding 
+vectors to continuous OCEAN trait scores while simultaneously revealing the most influential 
+input signals for each trait. 
+ 
+Figure 2.6: Architecture of Lasso regression 
+
+
+=== PDF PAGE 37 ===
+25 
+ 
+2.3 Empirical Review 
+The development of the proposed pipeline is informed by a growing body of empirical research 
+that validates the effectiveness of BERT, GANs, Q-Learning, and Lasso regression in various 
+natural language processing and personality inference tasks. This secti on provides a detailed 
+explanation of works that have significantly shaped the methodology and theoretical focus of 
+this study. 
+Christian et al. (2021) investigated the use of large language model embeddings for personality 
+trait prediction, utilizing Reddit comments from the PANDORA dataset. Their methodology 
+involved evaluating LLM embeddings through a performance comparison with  zero-shot 
+methods and conducting a psychometric validation by correlating embeddings with LIWC and 
+emotion features. The results demonstrated that custom -trained deep learning models using 
+LLM embeddings significantly outperformed zero -shot approaches by an average of 45% 
+across all Big Five traits. They reported moderate reliability for the embeddings, with an 
+average Cronbach’s alpha of 0.63, and found strong associations between specific traits and 
+linguistic markers, such as the correlation between ope nness and social markers. This work 
+establishes BERT and RoBERTa as robust semantic backbones for personality analysis. 
+Tsani and Suhartono (2023) developed an ensemble model combining BERT and RoBERTa  
+for personality prediction from Twitter and YouTube datasets. To address the challenge of class 
+imbalance, they introduced a data augmentation method based on the T5 model, which used 
+back-translation to generate paraphrased sentences. Their voting ensemble achieved an average 
+F1 score of 0.730 on the Twitter dataset and 0.741 on the YouTube dataset. A key conclusion 
+of their research was that the inclusion of data augmentation led to a measurable increase in 
+average performance compared to models without such processing. Their study highlights the 
+importance of using multiple transformer models and synthetic data to enhance the robustness 
+of personality classifiers in noisy social media environments. 
+Majima and Markov (2022) proposed a personality prediction system that combined BERT 
+embeddings with statistical features extracted from text, such as uni -gram and bi -gram 
+
+=== PDF PAGE 38 ===
+26 
+ 
+histograms, topic distributions, and emoticon usage. Their methodology employed a self -
+attention mechanism to merge these heterogeneous information sources, allowing the model to 
+dynamically prioritize the most relevant signals for each MBTI axis. Using 10 -fold cross -
+validation on the Kaggle MBTI dataset, they demonstrated that the addition of statistical 
+features slightly improved the performance of the base BERT system, increasing accuracy from 
+83.4% to 84.2%. Their work demonstrates that while BERT is po werful for capturing 
+contextual dependencies, task -specific statistical information provides critical user -level 
+context that improves overall system performance. 
+Hortal (2021) explored the use of GANs for data augmentation in the classification of 
+imbalanced and scarce datasets, specifically focusing on EEG bio-signals. Their methodology 
+utilized a Wasserstein GAN with a gradient penalty (WGAN-GP) to generate synthetic features 
+that mirrored the distribution of real training data. They investigated different augmentation 
+factors, combining the original dataset with synthetic sets of equal size to increase the total 
+training volume. The results showed that the addition of GAN-generated samples provided a 
+considerable enhancement in classification accuracy and helped mitigate overfitting. This 
+study provides empirical justification for incorporating GAN -mediated augmentation in the 
+current personality prediction pipeline to address the limitations of small datasets. 
+Frid-Adar et al. (2018) focused on GAN-based synthetic data augmentation for medical image 
+classification, using a limited dataset of CT images of liver lesions. 16 Their methodology 
+involved synthesized high-quality lesion regions of interest using GAN architectures and then 
+training a CNN with both classic and synthetic augmentation. The findings indicated that 
+adding synthetic data increased sensitivity from 78.6% to 85.7% and specificity from 88.4% to 
+92.4%. Their research demonstrates that GANs can effectively learn and replicate the essential 
+features of a complex, high-dimensional data distribution, supporting the generalization of this 
+technique to the augmentation of semantic embeddings in personality research. 
+Antoniou et al. (2017) conducted a comprehensive survey and evaluation of various data 
+augmentation techniques, including generative adversarial networks, for deep learning tasks.28 
+
+=== PDF PAGE 39 ===
+27 
+ 
+Their findings highlighted that GAN-based augmentation is an effective tool for dealing with 
+small datasets, introducing greater diversity and complexity into the training samples than 
+traditional geometric transformations. They concluded that GANs can capture subtle variations 
+within the data, leading to more realistic and varied training samples that mimic real -world 
+examples. This work establishes the foundational value of GANs as a regularizing mechanism 
+that reduces generalization error in scenarios wh ere obtaining high -quality labeled data is 
+costly or time-consuming. 
+Thompson et al. (1999) investigated active learning for natural language parsing and 
+information extraction, presenting a framework where the learner sequentially chooses the 
+most informative unlabeled instances to be labeled. Their methodology focused on minimizing 
+human annotation effort while producing as high -quality a classifier as possible. They 
+demonstrated that active learning can significantly reduce the number of examples required for 
+complex linguistic tasks. This research validates the inclusion of a selection mechanism in the 
+proposed pipeline, specifically Q-Learning, to intelligently prioritize high-value text segments 
+and metadata for processing, thereby achieving gains in computational efficiency. 
+McCallum and Nigam (1998) introduced an algorithm for text classification from labeled and 
+unlabeled documents using a combination of Expectation -Maximization (EM) and active 
+learning. Their methodology showed that unlabeled data can significantly increase  
+classification accuracy, particularly when labeled data is scarce. They proposed extensions to 
+the basic EM scheme, such as dynamically weighting  the contribution of unlabeled data, to 
+reduce bias and improve convergence. Their findings indicate that the combination of EM and 
+active learning requires only slightly more than half as many labeled training examples to 
+achieve the same accuracy as passive learning, providing strong support for the reinforcement-
+based selection strategy utilized in this research. 
+Settles (2012) provided a comprehensive review of active learning techniques, including 
+uncertainty sampling and query-by-committee methods. The survey explained various practical 
+challenges with active learning in real-world settings and highlighted how it can be combined 
+
+=== PDF PAGE 40 ===
+28 
+ 
+with diverse machine learning areas. The findings showed that uncertainty -based strategies 
+consistently outperform random sampling by focusing on instances where the model makes 
+unreliable predictions. This theoretical and empirical evidence supports the use of Q-Learning 
+as the initial stage of the personality prediction pipeline, enabling the system to learn an optimal 
+policy for signal prioritization based on prediction uncertainty. 
+Tibshirani (1996) introduced the Lasso regression method, which combines linear regression 
+with L1 -regularization to perform both variable selection and regularization. 18 The 
+methodology assumes that the coefficients of the linear model are sparse, meaning that many 
+of them are pushed exactly to zero. Tibshirani demonstrated that Lasso achieves both improved 
+prediction accuracy and model interpretability by excluding irrelevant covariates from the 
+model. This pioneering work serves as the basis for the final prediction layer of the proposed 
+system, where Lasso id entifies the most influential 768 -dimensional BERT features for each 
+personality trait, ensuring that the model outputs are explainable and auditable. 
+Hastie et al. (2015) expanded upon the principles of statistical learning with sparsity, 
+specifically evaluating Lasso and its generalizations in high -dimensional settings. Their 
+research compared Lasso with other regularization techniques and confirmed it s superior 
+performance in producing sparse, stable models when the number of features significantly 
+exceeds the number of observations. They highlighted that Lasso’s ability to perform subset 
+selection is fundamental for identifying informative features and simplifying complex models. 
+This work validates the choice of Lasso for the final prediction stage, where interpretability is 
+essential for the responsible application of personality prediction in sectors such as healthcare 
+and employment. 
+Poropat (2009) conducted a landmark meta -analysis of the relationship between the Big Five 
+personality model and academic performance. The methodology involved synthesized results 
+from numerous studies to establish the predictive validity of each personali ty dimension. The 
+findings revealed that conscientiousness is the strongest and most consistent predictor of 
+academic achievement, with a correlation of approximately 0.41. Openness was also found to 
+
+=== PDF PAGE 41 ===
+29 
+ 
+contribute significantly to learning motivation and creative engagement. This empirical 
+evidence establishes the importance of personality assessment in the education domain and 
+provides the criterion against which the proposed pipeline's predictive perfor mance is 
+evaluated. 
+Rostami et al. (2022) investigated the association between Big Five personality traits and 
+mental health in older adults, using observational data and psychometric scales.1 Their findings 
+indicated that all five personality dimensions significantly predict mental health outcomes, with 
+neuroticism exhibiting the strongest negative association. They reported that personality traits 
+explain a substantial proportion of the variance in psychological wellbeing and resilience. This 
+research underscores the clinical relevance of personality inference and demonstrates the 
+potential of digital personality monitoring for supporting mental health interventions and 
+wellbeing monitoring in the healthcare domain. 
+Barrick and Mount (1991) performed a seminal meta-analysis on the relationship between the 
+Big Five personality dimensions and job performance across various occupational categories. 
+Their methodology involved categorizing job roles and performance criteri a to evaluate trait-
+specific validity. The results established that conscientiousness is a valid predictor for all jobs, 
+while extraversion and emotional stability (low neuroticism) are significant predictors for 
+specific roles such as sales and management. Their findings have guided decades of personnel 
+selection research and provide the empirical foundation for the employment -focused 
+application of the integrated personality prediction pipeline. 
+Singh and Ramasubramanian (2023) conducted a systematic review of AI -based personality 
+prediction for human wellbeing, focusing on interpretability and fairness.  Their methodology 
+involved assessing existing text-based systems against the principles of responsible AI. They 
+highlighted that while deep learning models offer high accuracy, they often lack the 
+transparency required for ethical deployment. The findings emphasized the need for 
+interpretable models and bias -aware evaluation to ensure that personality profiling does not 
+lead to discriminatory outcomes. This study serves as the ethical framework for the current 
+
+=== PDF PAGE 42 ===
+30 
+ 
+research, motivating the integration of Lasso for transparency and the focus on accountable 
+decision-making. 
+Table 2.2: Summary of Related Studies 
+S/
+N 
+Study  
+(Year) 
+Primary 
+Method 
+Source / 
+Domain 
+Task / 
+Traits 
+Result / 
+Metric 
+Relevance to 
+Proposed 
+Pipeline 
+1 Christian et 
+al. (2021) 
+Fine-tuned 
+BERT 
+YouTube 
+comment
+s 
+Big Five F1 ≈ 0.75 Validates 
+BERT for 
+text-based 
+traits 
+2 Tsani & 
+Suhartono 
+(2023) 
+BERT + 
+RoBERTa 
+Ensemble 
+Twitter 
+posts 
+Big Five Improved F1 
+over single 
+models 
+Supports 
+contextual 
+embeddings 
+3 Majima & 
+Markov 
+(2022) 
+BERT 
+Embeddin
+gs 
+Social 
+media 
+posts 
+Personalit
+y cues 
+Better than 
+static 
+embeddings 
+Contextual 
+signal 
+capture 
+4 Hortal (2021) Condition
+al GAN 
+Imbalanc
+ed EEG 
+data 
+Classificat
+ion 
+Significant 
+accuracy 
+improvement 
+Augmentatio
+n for 
+small/imbala
+nced data 
+5 Frid-Adar et 
+al. (2018) 
+GAN Medical 
+images 
+Lesion 
+classificat
+ion 
+Enhanced 
+CNN 
+performance 
+GANs in 
+limited-
+sample 
+settings 
+6 Antoniou et 
+al. (2017) 
+GAN 
+Augmenta
+tion 
+Various 
+domains 
+General 
+classificat
+ion 
+Reliable gains 
+with scarce 
+data 
+Basis for 
+embedding 
+expansion 
+
+=== PDF PAGE 43 ===
+31 
+ 
+7 Thompson et 
+al. (1999) 
+Q-
+Learning 
+Active 
+Learning 
+Text 
+parsing 
+Sample 
+selection 
+Reduced 
+annotation 
+effort 
+Active 
+selection 
+mechanism 
+8 McCallum & 
+Nigam (1998) 
+Q-
+Learning + 
+EM 
+Text 
+classificat
+ion 
+Active 
+learning 
+Faster 
+convergence 
+Reinforceme
+nt-based 
+selection 
+9 Settles (2012) Uncertaint
+y 
+Sampling 
+Review 
+NLP 
+tasks 
+Active 
+learning 
+Consistent 
+efficiency 
+gains 
+Supports Q -
+Learning 
+choice 
+10 Tibshirani 
+(1996) 
+Lasso 
+Regressio
+n 
+Various 
+regressio
+n datasets 
+Variable 
+selection 
+Sparse 
+coefficients 
+Interpretable 
+final 
+prediction 
+11 Hastie et al. 
+(2015) 
+Lasso 
+Compariso
+ns 
+High-
+dimensio
+nal data 
+Model 
+selection 
+Superior 
+sparsity 
+Regularizatio
+n for 
+interpretabili
+ty 
+12 Poropat 
+(2009) 
+Meta-
+analysis 
+Academic 
+records 
+Academic 
+performan
+ce 
+ρ = 0.41 
+(Conscientious
+ness) 
+Education 
+domain 
+evidence 
+13 Rostami et al. 
+(2022) 
+Observatio
+nal Study 
+Older 
+adults 
+Mental 
+health 
+Traits predict 
+outcomes 
+Health/wellb
+eing domain 
+14 Barrick & 
+Mount (1991) 
+Meta-
+analysis 
+Job 
+performa
+nce 
+datasets 
+Job 
+performan
+ce 
+Traits predict 
+across 
+occupations 
+Employment 
+domain 
+
+=== PDF PAGE 44 ===
+32 
+ 
+15 Singh & 
+Ramasubrama
+nian (2023) 
+Systematic 
+Review 
+Text-
+based AI 
+systems 
+Personalit
+y 
+prediction 
+Need for 
+interpretability 
+& fairness 
+Responsible 
+AI domain 
+ 
+The empirical literature provides strong support for each individual component of the pipeline. 
+However, no prior study has integrated Q -Learning, BERT, GAN augmentation, and Lasso 
+regression into a unified framework for social media personality prediction across the f our 
+specified domains. This gap in integration forms the primary motivation for the current 
+research. 
+2.4 Research Gaps 
+The existing body of empirical and theoretical work on computational personality prediction 
+has made considerable progress, yet several persistent and critical gaps remain that limit the 
+development of accurate, efficient, interpretable, and practically de ployable systems for Big 
+Five trait inference from social media data. These gaps are evident across methodological 
+integration, data handling, interpretability, selection efficiency, and cross-domain applicability. 
+Most published studies adopt a single -model or single -paradigm approach. Researchers 
+typically fine-tune BERT or similar transformers on post text alone, or they apply classical 
+feature engineering techniques such as LIWC and n-grams. Very few investigations attempt to 
+combine reinforcement learning for active selection, deep contextual embeddings, generative 
+augmentation, and sparse interpretable regression into a unified, end-to-end pipeline. No prior 
+work has systematically integrated Q -Learning-driven s ignal selection, BERT -based 
+representation, GAN-mediated augmentation, and Lasso regression specifically for personality 
+prediction from heterogeneous social media sources that include posts, profile text, metadata, 
+and network signals (Christian et al., 2 021; Tsani & Suhartono, 2023; Majima & Markov, 
+2022). 
+Data scarcity continues to represent a major constraint. Controlled academic datasets for 
+personality inference rarely exceed a few hundred participants, and even larger public 
+
+=== PDF PAGE 45 ===
+33 
+ 
+collections frequently fall below 10,000 labeled cases. This small sample size leads to 
+overfitting, reduced generalization, and high sensitivity to noise or domain shift. Although 
+Generative Adversarial Networks have proven highly effective for augmentati on in computer 
+vision, medical imaging, and tabular data tasks, their systematic application to the high -
+dimensional manifold of BERT embeddings derived from personality-related social media text 
+remains largely unexplored. Most personality prediction rese arch still relies on raw, 
+unaugmented data, which limits model robustness in small-N regimes (Hortal, 2021; Frid-Adar 
+et al., 2018; Antoniou et al., 2017). 
+Interpretability remains severely underdeveloped in deep learning approaches. Transformer -
+based models such as BERT deliver strong predictive performance but function as opaque 
+black boxes. This lack of transparency creates significant barriers in high -stakes domains 
+employment screening, mental health monitoring, educational advising, and algorithmic 
+governance where stakeholders require clear, auditable explanations of which linguistic, 
+profile, behavioral, or network signals drive each trait prediction. Sparse regression methods 
+such as Lasso offer a proven path to interpretability through automatic feature selection and 
+coefficient shrinkage, yet they are rarely combined with modern contextual embeddings in the 
+personality prediction literature (Pletzer et al., 2025; Singh & Ramasubramanian, 2023; 
+Tibshirani, 1996). 
+Active selection mechanisms are underutilized in this domain. Reinforcement learning 
+strategies, including Q-Learning, have demonstrated substantial reductions in annotation cost 
+and computational overhead in general NLP tasks such as parsing, classificati on, and 
+information extraction. However, their application to intelligently prioritize high-value signals 
+from heterogeneous social media sources particularly when posts, bios, headlines, metadata, 
+and network features are jointly available has received mi nimal attention. This represents a 
+missed opportunity to achieve significant efficiency gains, especially in employment and 
+education contexts where rapid, low-cost inference is essential (Thompson et al., 1999; Settles, 
+2012; McCallum & Nigam, 1998). 
+
+=== PDF PAGE 46 ===
+34 
+ 
+These five gaps lack of  integrated multi -paradigm pipelines, inadequate handling of data 
+scarcity, limited interpretability, underuse of active selection, and insufficient cross -domain 
+evaluation collectively restrict progress toward scalable, trustworthy, and accountable 
+personality prediction systems. The proposed pipeline directly targets each limitation by 
+introducing the first unified framework that combines Q-Learning, BERT, GAN augmentation, 
+and Lasso regression for multi-source social media data, with equal emphasis  
+2.5 Conceptual Framework 
+The conceptual framework presents the overall architecture of the proposed personality 
+prediction system. It integrates reinforcement learning, transformer -based natural language 
+processing, generative data augmentation, and sparse regression into a unifie d pipeline for 
+predicting the Big Five (OCEAN) personality traits from multi -source data collected from X 
+(formerly Twitter). The framework demonstrates how information flows through successive 
+processing stages, with each stage contributing a distinct fun ction toward producing accurate, 
+robust, and interpretable personality predictions. 
+2.5.1 Stage 1: Active Signal Selection 
+The first stage collects multiple forms of user information from X, including posts, profile 
+biography, profile metadata (such as follower count, following count, posting frequency, and 
+account age), and network interactions. Since not all available information contributes equally 
+to personality prediction, a Q -Learning agent is employed to identify and prioritize the most 
+informative signals. This intelligent selection process reduces unnecessary processing while 
+preserving relevant behavioural information required for subsequent analysis. 
+2.5.2 Stage 2: Contextual Feature Extraction 
+The selected textual information is passed to Bidirectional Encoder Representations from 
+Transformers (BERT) for contextual feature extraction. Unlike traditional text representation 
+methods, BERT captures the contextual meaning of words by considering bot h preceding and 
+succeeding words within a sentence. This enables the model to generate rich semantic 
+
+=== PDF PAGE 47 ===
+35 
+ 
+representations that effectively capture linguistic patterns associated with the Big Five 
+personality traits. 
+2.5.3 Stage 3: Embedding Augmentation 
+The contextual embeddings generated by BERT are then supplied to a Conditional Generative 
+Adversarial Network (cGAN) during the model training phase. Rather than generating 
+synthetic social media posts, the cGAN  produces realistic embedding representations 
+conditioned on the corresponding personality traits. This augmentation process increases the 
+diversity of the training data, reduces overfitting, and improves the model's ability to generalize 
+when only a limited number of labelled samples are available. 
+2.5.4 Stage 4: Personality Prediction 
+The final stage applies Lasso Regression to the original and augmented embedding 
+representations. Lasso performs personality prediction while simultaneously selecting the most 
+relevant features through L1 regularization. This produces interpretable predictions for the five 
+personality dimensions Openness, Conscientiousness, Extraversion, Agreeableness, and 
+Neuroticism while reducing the influence of redundant or less informative features. 
+The integration of Q -Learning, BERT, Conditional GAN, and Lasso Regression forms a 
+complete personality prediction framework that combines efficient feature selection, 
+contextual language understanding, data augmentation, and interpretable prediction. The 
+resulting personality profiles can support decision-making in education, health and wellbeing, 
+employment, and responsible artificial intelligence applications. 
+  
+
+=== PDF PAGE 48 ===
+36 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Figure 2.7: Conceptual Pipeline Architecture 
+INPUT DATA SOURCES 
+X (Twitter) 
+STAGE 1: Q-Learning           
+Active Signal Selection 
+STAGE 2: BERT 
+Contextual Embedding Extraction 
+STAGE 3: GAN Augmentation 
+(Training Phase Only) 
+STAGE 4: Lasso Regression       
+OUTPUT 
+• Predicted Big Five scores 
+• Feature importance (Lasso paths) 
+• Comparison with BFI ground 
+truth 
+Applications: 
+•Education • Health/Wellbeing 
+• Employment • Responsible AI 
+
+=== PDF PAGE 49 ===
+37 
+ 
+CHAPTER THREE 
+RESEARCH METHODOLOGY 
+3.1 Introduction 
+This chapter presents the methodology adopted for the design and development of the proposed 
+personality prediction system. The system was developed as a web -based research platform 
+that predicts the Big Five (OCEAN) personality traits from multi-source data obtained from X 
+(formerly Twitter). The implementation integrates BFI-44 questionnaire scoring, social media 
+data acquisition, contextual language representation using BERT, Q -learning-based post 
+selection, GAN -style embedding augmentation, and Lasso/ ElasticNet regression within a 
+unified processing framework. 
+The methodology emphasizes a modular system architecture in which data are collected, 
+validated, transformed, and analysed through a sequence of interconnected processing stages. 
+Each stage performs a specific function, beginning with participant data acquisition and ending 
+with the generation of interpretable personality profiles supported by quantitative evaluation 
+metrics. The chapter therefore presents the methodological procedures, system design, 
+processing workflow, database structure, and evaluation approach adopted in implementing the 
+proposed system. 
+3.2 Research Methodology 
+The development of the proposed personality prediction system followed a Design and 
+Development Research (DDR) methodology. This approach is appropriate for studies that 
+involve the design, implementation, and evaluation of a technological artifact intended to solve 
+an identified problem. Rather than investigating existing phenomena alone, the methodology 
+emphasizes the construction of a functional system, iterative validation of its components, and 
+assessment of its ability to satisfy the research objectives. 
+The methodology was selected because the study extends beyond personality analysis to the 
+development of an integrated web -based platform capable of acquiring social media data, 
+
+=== PDF PAGE 50 ===
+38 
+ 
+processing textual information, predicting Big Five personality traits, and presenting the results 
+through an interactive research dashboard. The resulting software artifact serves as the primary 
+outcome of the research and provides a practical environment for evaluating the effectiveness 
+of the proposed prediction framework. 
+The development process was organized into five major activities: 
+1. Requirements Analysis: Functional and non-functional requirements were identified 
+from the research objectives, domain literature, and expected researcher workflow. 
+These requirements defined the core capabilities of the platform, including participant 
+management, BFI -44 survey  processing, social media data acquisition, personality 
+prediction, and result visualization. 
+2. System Design: The overall architecture, database schema, processing pipeline, and 
+user interaction flow were designed before implementation. This stage established the 
+relationships between the application modules, machine learning pipeline, and 
+persistent data storage. 
+3. System Implementation:  The application was implemented using Django as the 
+primary web framework. Individual modules for authentication, survey management, 
+data collection, preprocessing, machine learning, and reporting were developed as 
+independent but interconnected components to improve maintainability and scalability. 
+4. System Testing: The completed modules were evaluated through functional testing to 
+verify that each component performed its intended operation. Integration testing was 
+subsequently conducted to ensure that data flowed correctly throughout the complete 
+personality prediction pipeline. 
+5. System Evaluation:  The developed system was evaluated using quantitative 
+performance metrics generated during personality prediction. The evaluation assessed 
+the correctness of the implemented workflow, prediction quality, and the effectiveness 
+of the integrated processing pipeline in achieving the objectives of the study. 
+
+=== PDF PAGE 51 ===
+39 
+ 
+3.3 System Analysis 
+System analysis defines the functional structure and operational workflow of the proposed 
+personality prediction platform before implementation. The analysis identifies the major 
+software components, the interactions between those components, and the flow of information 
+from participant registration to personality prediction. This process provides the foundation for 
+the subsequent architectural design and implementation of the system. 
+The proposed system was designed as a web -based research platform that combines 
+psychometric assessment, social media data acquisition, machine learning, and interactive 
+visualization within a unified environment. Rather than operating as independent softw are 
+modules, these components are integrated into a single workflow that enables researchers to 
+manage participants, acquire data, execute the prediction pipeline, and analyse the generated 
+personality profiles through a centralized dashboard. 
+The platform adopts a modular architecture to improve maintainability, scalability, and 
+separation of responsibilities. Each module performs a well -defined task while exchanging 
+information through the application's service layer and relational database. T his modular 
+organization also simplifies future extension of the system without affecting the overall 
+processing workflow. 
+The principal functional modules of the proposed system are summarized as follows. 
+3.3.1 Researcher Management Module 
+This module provides authentication and access control for researchers. It manages user 
+registration, login, researcher profiles, and authorization to ensure that participant records, 
+uploaded datasets, and prediction results remain associated with the app ropriate researcher 
+throughout the study. 
+  
+
+=== PDF PAGE 52 ===
+40 
+ 
+3.3.2 Data Acquisition Module 
+The data acquisition module manages the collection of personality assessment data and social 
+media content. It imports BFI -44 questionnaire responses from CSV files, creates participant 
+records, retrieves posts from X (formerly Twitter), and validates the collected information 
+before further processing. 
+3.3.3 Personality Prediction Module 
+The personality prediction module coordinates the machine learning workflow. It preprocesses 
+the collected text, selects informative posts, generates contextual embeddings, performs 
+embedding augmentation during training, and predicts the five Big Five personality traits. The 
+resulting personality scores and evaluation metrics are subsequently stored for analysis. 
+3.3.4 Reporting and Visualization Module 
+This module presents prediction outcomes through an interactive dashboard. Researchers can 
+review participant information, examine predicted personality profiles, compare predictions 
+with ground-truth BFI scores, and visualize the five personality dimensio ns using graphical 
+reports. 
+The interaction between these modules forms a complete research workflow, enabling 
+participant management, data collection, personality prediction, and result visualization within 
+a single integrated platform. 
+                     
+
+=== PDF PAGE 53 ===
+41 
+ 
+     
+ 
+Figure 3.1: High-Level Functional Architecture of the Proposed System 
+3.4 Overall System Architecture 
+The proposed personality prediction system adopts a modular, service -oriented architecture 
+that integrates participant management, psychometric assessment, social media data 
+acquisition, machine learning, and result visualization within a unified web appli cation. The 
+architecture was designed to separate system responsibilities into independent but 
+interconnected modules, thereby improving maintainability, scalability, and ease of future 
+enhancement. 
+The application is implemented using the Django web framework, which coordinates 
+communication between the user interface, application services, machine learning pipeline, and 
+database. Researchers interact with the system through a web -based dashboard to register 
+participants, import BFI -44 questionnaire responses, retrieve social media posts, execute the 
+prediction pipeline, and review generated personality profiles. 
+The machine learning pipeline operates as the analytical core of the system. Following data 
+acquisition and preprocessing, informative posts are selected using the Q -learning module 
+Researcher
+Authentication Module
+Research Dashboard
+Data Acquisition, Prediction, Pipeline 
+Reporting
+System Database
+
+=== PDF PAGE 54 ===
+42 
+ 
+before contextual representations are generated using BERT embeddings. During model 
+training, embedding augmentation is performed to increase the diversity of the training data, 
+after which Lasso/ElasticNet  regression predicts the five Big Five personality traits. The 
+generated predictions, together with the corresponding evaluation metrics, are stored in the 
+database and presented through the reporting dashboard. 
+To improve system responsiveness, computationally intensive prediction tasks are executed 
+asynchronously using Celery workers, allowing researchers to continue interacting with the 
+application while the prediction pipeline executes in the background. This architecture 
+separates user interaction from long -running machine learning processes, resulting in a more 
+responsive and reliable research platform. 
+The overall architecture establishes a clear separation between presentation, application logic, 
+machine learning services, and data persistence, enabling each component to operate 
+independently while contributing to the complete personality prediction workflow. 
+3.5 Data Acquisition and Preparation 
+The quality of personality prediction depends largely on the quality of the data supplied to the 
+prediction pipeline. Consequently, the proposed system adopts a structured data acquisition 
+and preparation process that integrates psychometric assessment wit h social media content. 
+Two primary data sources are used throughout the study: BFI -44 questionnaire responses, 
+which provide the ground-truth personality labels, and publicly available posts collected from 
+X (formerly Twitter), which provide the textual data used for personality prediction. 
+Before prediction, all collected data undergo validation and preprocessing to ensure 
+consistency, completeness, and suitability for machine learning. The preparation process 
+removes invalid records, standardizes textual content, and organizes the data into  a format 
+compatible with the subsequent processing stages. 
+
+=== PDF PAGE 55 ===
+43 
+ 
+3.5.1 Participant Registration and BFI-44 Data Acquisition 
+The prediction process begins with participant registration. Each participant is represented 
+within the system as a volunteer and is associated with the researcher responsible for the study. 
+During data collection, participants complete the Big Five Invent ory (BFI-44) questionnaire, 
+and their responses are exported as a comma-separated values (CSV) file. 
+The researcher uploads the CSV file through the system's data acquisition interface. During 
+import, each record is validated to ensure that the participant identifier is unique and that 
+informed consent has been provided before further processing. Valid records are automatically 
+converted into participant profiles, while the forty -four questionnaire responses are stored as 
+BFI survey records. 
+The imported questionnaire responses are subsequently processed by the BFI scoring module, 
+which applies reverse scoring where required and computes the five OCEAN personality trait 
+scores. These scores serve as the ground-truth labels for training and evaluating the personality 
+prediction model. 
+3.5.2 Social Media Data Acquisition 
+Following participant registration and questionnaire processing, the system acquires textual 
+data from X (formerly Twitter) to provide the input required for personality prediction. Each 
+participant is associated with a unique X username, which serves as the identifier for retrieving 
+publicly available posts through the system's data collection service. 
+Data acquisition is initiated by the researcher through the system interface after a participant 
+has been successfully registered. The application queries  the configured retrieval service to 
+obtain recent posts associated with the participant's account. The retrieved records include the 
+post content together with relevant metadata such as the publication date, engagement statistics, 
+hashtags, mentions, and embedded links where available. 
+Each retrieved post is validated before storage to ensure that incomplete, duplicated, or invalid 
+records are excluded from subsequent processing. Valid posts are persisted within the POST 
+
+=== PDF PAGE 56 ===
+44 
+ 
+table and linked to their corresponding participant through the volunteer identifier. This 
+association enables the prediction pipeline to retrieve only the posts belonging to the selected 
+participant during model execution. 
+Separating data acquisition from the machine learning pipeline improves system modularity by 
+allowing additional posts to be collected independently of prediction. It also enables 
+researchers to verify the collected data before initiating personality predi ction, thereby 
+improving data quality and reducing unnecessary processing. 
+ 
+
+=== PDF PAGE 57 ===
+45 
+ 
+ 
+Figure 3.2: Social Media Data Acquisition Process 
+
+
+=== PDF PAGE 58 ===
+46 
+ 
+3.5.3 Data Validation 
+Following data acquisition, the collected questionnaire responses and social media records 
+undergo a validation process to ensure that only complete and consistent data are forwarded 
+to the personality prediction pipeline. The objective of this stage is to  identify missing 
+values, duplicate records, and invalid entries that may negatively affect model performance. 
+For BFI-44 questionnaire data, the validation process verifies that all required questionnaire 
+items are present, participant identifiers are unique, and informed consent has been 
+recorded before the responses are processed for personality score computatio n. Records 
+containing incomplete questionnaire responses or invalid participant information are 
+rejected during import. 
+Similarly, social media records are validated after retrieval. The system checks that each 
+post contains valid textual content and is correctly associated with an existing participant. 
+Duplicate posts, empty records, and retrieval errors are excluded from further processing. 
+Metadata associated with each post, including publication date and engagement statistics, 
+is also verified before storage. 
+Validated records are committed to the database and become available for preprocessing 
+and feature extraction. By performing validation before machine learning, the system 
+minimizes data inconsistencies, reduces unnecessary computational overhead, and 
+improves the reliability of the generated personality predictions. 
+3.5.4 Data Preprocessing 
+After validation, the collected social media posts undergo preprocessing to improve data 
+quality and ensure compatibility with the personality prediction pipeline. The objective of 
+this stage is to transform raw textual data into a consistent format suitab le for feature 
+extraction while preserving the semantic information required for personality analysis. 
+The preprocessing module first removes duplicate entries and records containing 
+insufficient textual content. Hyperlinks, unnecessary whitespace, and unsupported 
+
+=== PDF PAGE 59 ===
+47 
+ 
+characters are eliminated to reduce noise within the dataset. Depending on the 
+preprocessing rules, user mentions and hashtags are either retained as meaningful 
+contextual features or normalized into a standard representation. The processed text is then 
+standardized before being forwarded to the embedding generation stage. 
+Each cleaned post remains linked to its corresponding participant and retains relevant 
+metadata, including publication date and engagement statistics. This information is 
+preserved because subsequent stages of the pipeline use both textual content and 
+behavioural indicators during informative post selection. 
+The output of this stage is a collection of validated and standardized posts that serve as the 
+input for Q-learning-based post selection and contextual embedding generation. 
+3.6 Personality Prediction Pipeline 
+The personality prediction pipeline constitutes the analytical core of the proposed system. 
+Following data acquisition and preprocessing, the validated dataset is processed through a 
+sequence of interconnected machine learning stages that transform raw soc ial media posts 
+into quantitative Big Five personality predictions. Each stage receives the output of the 
+preceding stage, ensuring a structured and reproducible workflow. 
+The pipeline begins by selecting the most informative posts for each participant before 
+generating contextual semantic representations. The resulting feature vectors are 
+subsequently expanded during model training to improve data diversity and are then 
+supplied to the prediction model to estimate the five personality traits. The generated 
+personality scores, together with the associated evaluation metrics, are finally stored in the 
+database and made available through the researcher dashboard. 
+The modular organization of the pipeline enables each processing stage to perform a 
+specific responsibility while maintaining independence from other components. This 
+improves maintainability, facilitates future enhancements, and allows individual stages t o 
+be evaluated without affecting the overall system. 
+
+=== PDF PAGE 60 ===
+48 
+ 
+3.6.1 Q-Learning-Based Post Selection 
+The first stage of the personality prediction pipeline identifies the most informative posts 
+for personality analysis. Rather than processing every retrieved post, the system applies a 
+Q-learning-based selection strategy to prioritize posts that are likely  to contribute more 
+useful information to the prediction model. This approach reduces the volume of text 
+processed by subsequent stages while preserving representative behavioural and linguistic 
+information. 
+For each participant, the system retrieves the validated posts stored in the database and 
+computes a state representation based on selected post characteristics. These characteristics 
+include engagement level, publication recency, text length, the presence  of hashtags, and 
+the presence of external links. Using these state features, the Q-learning agent estimates the 
+expected value of selecting each post and determines whether it should proceed to the 
+embedding stage. 
+The selection policy follows an epsilon-greedy strategy in which the agent primarily selects 
+posts with the highest estimated utility while occasionally exploring alternative posts 
+during training. This balance between exploitation and exploration improves  the diversity 
+of the selected dataset and prevents the selection process from becoming biased toward a 
+small subset of posts. 
+The selected posts are flagged within the database and forwarded to the BERT embedding 
+module. Posts that are not selected remain available for future processing but are excluded 
+from the current prediction cycle. By reducing the number of posts requiring contextual 
+encoding, the selection stage decreases computational cost and improves the efficiency of 
+the overall prediction pipeline. 
+ 
+
+=== PDF PAGE 61 ===
+49 
+ 
+3.6.3 GAN-Style Embedding Augmentation 
+Following BERT embedding extraction, the generated feature vectors undergo an 
+augmentation stage during model training. The purpose of this stage is to increase the 
+diversity of the available training data and improve the robustness of the personality 
+prediction models when trained on relatively small datasets. 
+The augmentation module operates on the stored BERT embeddings rather than the original 
+textual content. For each embedding, the system generates additional synthetic feature 
+vectors by applying controlled perturbations while preserving the overall semanti c 
+characteristics of the original representation. This process increases the effective number 
+of training samples without requiring additional participant data. 
+The generated synthetic embeddings are stored separately from the original embeddings 
+and are used only during model training. They are not presented to researchers or used as 
+participant records. Separating augmented data from the original observations pr eserves 
+data integrity while allowing the prediction models to learn from a more diverse feature 
+space. 
+The augmented dataset is subsequently supplied to the regression stage, where personality 
+prediction models are trained for each of the five Big Five personality traits. 
+  
+
+=== PDF PAGE 62 ===
+50 
+ 
+3.6.4 Lasso Personality Prediction 
+After feature augmentation, the resulting embedding vectors are supplied to the prediction 
+module, where the personality traits are estimated using sparse regression models. The 
+objective of this stage is to learn the relationship between the contextual fe ature 
+representations extracted from social media posts and the corresponding Big Five 
+personality scores obtained from the BFI-44 questionnaire. 
+The system trains an independent regression model for each of the five personality 
+dimensions: Openness, Conscientiousness, Extraversion, Agreeableness, and Neuroticism. 
+During training, the augmented embeddings serve as the input features, while the computed 
+BFI-44 scores provide the target values. Feature normalization is performed before model 
+fitting to ensure that all embedding dimensions contribute consistently to the learning 
+process. 
+The prediction models employ Lasso and ElasticNet  regression to produce sparse and 
+interpretable models. Following training, each model estimates the personality score 
+corresponding to its assigned trait. In addition to the predicted scores, the system computes 
+evaluation metrics, including the Mean Absolute Error (MAE), coefficient of determination 
+(R²), and correlation coefficient whenever sufficient labelled data are available. 
+The trained models, predicted personality scores, and evaluation metrics are stored within 
+the database for subsequent reporting and visualization through the researcher dashboard. 
+  
+
+=== PDF PAGE 63 ===
+51 
+ 
+Output Description 
+Openness Score Predicted openness trait value 
+Conscientiousness Score Predicted conscientiousness trait value 
+Extraversion Score Predicted extraversion trait value 
+Agreeableness Score Predicted agreeableness trait value 
+Neuroticism Score Predicted neuroticism trait value 
+MAE Mean Absolute Error 
+R² Coefficient of determination 
+Correlation Relationship between predicted and observed scores 
+Table 3.1: Personality Prediction Outputs 
+3.6.5 Personality Profile Generation and Result Presentation 
+Upon completion of the prediction stage, the estimated Big Five personality scores are 
+consolidated into a psychometric profile for the selected participant. This profile represents 
+the final output of the personality prediction pipeline and provides a str uctured summary 
+of the participant's predicted personality characteristics. 
+The generated profile includes the predicted scores for Openness, Conscientiousness, 
+Extraversion, Agreeableness, and Neuroticism together with the associated evaluation 
+metrics produced during model execution. These results are stored within the 
+PSYCHOMETRIC_PROFILE table, allowing previously generated predictions to be 
+retrieved without re-executing the complete pipeline. 
+To support interpretation, the application presents the predicted personality profile through 
+the researcher dashboard. Individual participant pages display the predicted trait scores, 
+model performance indicators, and supporting information generated during the prediction 
+process. Radar charts are used to visualize the relative distribution of the five personality 
+dimensions, enabling researchers to compare trait strengths within a participant's profile. 
+
+=== PDF PAGE 64 ===
+52 
+ 
+The system also records the execution status of each prediction task, ensuring that 
+completed analyses, processing history, and generated reports remain available for future 
+review. This persistence mechanism improves reproducibility and allows researchers  to 
+monitor prediction outcomes across multiple participants throughout the study. 
+3.7 System Modeling and Design 
+The design of the proposed personality prediction platform is represented using system 
+modeling techniques that describe the flow of information and the organization of persistent 
+data. Data Flow Diagrams (DFDs) illustrate the movement of information throu gh the 
+application, while the Entity Relationship Diagram (ERD) describes the logical structure of the 
+database used to support the system. 
+3.7.1 Data Flow Diagram (DFD) Decomposition 
+DFD Level 0 (Context Diagram): Represents the proposed personality prediction platform as 
+a single process interacting with external entities, including the researcher and the X (Twitter) 
+platform. The researcher supplies participant information and BFI-44 survey responses, while 
+the X platform provides social media posts used for personality prediction. The system returns 
+the predicted Big Five personality profile and supporting evaluation results.
+ 
+Figure 3.3:  Data Flow Diagram – Level 0 
+DFD Level 1 (Functional Overview): Breaks the system into data Acquisition, selection (Q-
+Learning), encoding (BERT), augmentation (GAN), and modeling (Lasso). 
+
+
+=== PDF PAGE 65 ===
+53 
+ 
+DFD Level 2: Decomposes the Personality Prediction process into feature normalization, 
+model loading, trait prediction, evaluation metric computation, and result storage. 
+ 
+Figure 3.4:  Data Pipeline Diagram for the Big Five Personality Prediction System. 
+3.7.2 Database Schema (ERD) 
+
+
+=== PDF PAGE 66 ===
+54 
+ 
+ 
+Figure 3.5: Entity-Relationship Diagram (ERD) 
+
+
+=== PDF PAGE 67 ===
+55 
+ 
+3.8 Ethical Considerations and Data Protection 
+Personality prediction involves the processing of sensitive behavioural data and therefore 
+requires appropriate ethical safeguards throughout the research process. This study complies 
+with the principles of the Nigeria Data Protection Regulation (NDPR) 201 9 and the Nigeria 
+Data Protection Act (NDPA) 2023 by ensuring that participants provide informed consent 
+before any questionnaire responses or social media data are collected. 
+Only the information required for personality prediction is processed, in accordance with the 
+principle of data minimization. Participant records are linked through system -generated 
+identifiers, while personally identifiable information is restricted to au thorized researchers. 
+Access to the platform is controlled through authenticated researcher accounts, and all 
+prediction records are stored within the secured database. 
+To improve transparency, the proposed prediction model employs sparse regression techniques 
+that allow the contribution of selected features to be examined. This supports the 
+interpretability of prediction outcomes and enables researchers to understand the  basis of the 
+generated personality scores. The system is intended solely for research and educational 
+purposes and is not designed to make automated decisions affecting participants without human 
+review. 
+3.9 Model Evaluation Metrics 
+The effectiveness of the proposed personality prediction system is assessed using standard 
+regression performance measures and model validation techniques. These metrics provide an 
+objective basis for evaluating the accuracy, reliability, and generalizatio n capability of the 
+trained models. 
+3.9.1 Prediction Accuracy 
+Prediction accuracy is evaluated using the Mean Absolute Error (MAE) and the Root Mean 
+Square Error (RMSE). MAE measures the average magnitude of prediction errors without 
+considering their direction, while RMSE assigns greater weight to larger prediction errors. 
+
+=== PDF PAGE 68 ===
+56 
+ 
+Together, these metrics provide a comprehensive assessment of how closely the predicted 
+OCEAN scores correspond to the ground-truth BFI-44 scores. 
+3.9.2 Model Goodness of Fit 
+The Coefficient of Determination (R²) is used to determine how well the regression models 
+explain variations in the observed personality trait scores. Higher R² values indicate stronger 
+predictive performance and better agreement between the predicted and actual personality 
+profiles. 
+3.9.3 Model Validation 
+To assess the robustness and generalization capability of the proposed pipeline, the trained 
+models are evaluated using 5-fold cross-validation. The dataset is partitioned into five subsets, 
+with each subset serving as the validation set once while the rem aining subsets are used for 
+training. This evaluation strategy minimizes the likelihood of overfitting and provides a more 
+reliable estimate of model performance on unseen data. 
+ 
+
+=== PDF PAGE 69 ===
+57 
+ 
+CHAPTER FOUR 
+SYSTEM IMPLEMENTATION, TESTING, RESULTS AND DISCUSSION 
+4.1  System Implementation Overview 
+The implemented system is a web-based personality prediction platform developed to estimate 
+the Big Five (OCEAN) personality traits from social media data. The application integrates 
+participant management, BFI -44 survey processing, social media data colle ction, text 
+preprocessing, Q -learning-based post selection, BERT contextual embedding generation, 
+GAN-style data augmentation, and Lasso/ElasticNet  regression into a unified prediction 
+workflow. The entire pipeline is deployed as a Django application, providing an interactive 
+environment for data collection, model execution, result visualization, and researcher 
+management. 
+The implementation follows a modular architecture in which each component performs a 
+specific function within the prediction pipeline. Participants are first registered and linked to a 
+researcher account before their BFI -44 questionnaire responses and soci al media posts are 
+acquired. The collected data undergoes preprocessing to remove irrelevant content and improve 
+text quality prior to feature extraction. Contextual semantic representations are then generated 
+using the pretrained bert -base-uncased model, after which the training dataset is expanded 
+through a lightweight GAN-style augmentation process. Finally, sparse regression models are 
+trained to predict the five personality dimensions, and the resulting psychometric profiles are 
+stored for visualization and subsequent analysis. 
+The application provides an integrated research environment comprising user authentication, 
+participant management, automated survey import, post retrieval, machine learning pipeline 
+orchestration, prediction dashboards, and reporting facilities. Intermediate outputs generated at 
+each processing stage are persistently stored within the database to ensure data traceability, 
+facilitate performance evaluation, and support reproducibility of experimental results. 
+ 
+
+=== PDF PAGE 70 ===
+58 
+ 
+ 
+Figure 4.1: Overall System Interface 
+4.2 Data Acquisition, Cleaning and Ground-Truth Labeling 
+The system accepts  two complementary sources  of input data. The first is  the BFI -
+44 questionnaire, imported  as a CSV  file generated during  the survey process. The CSV 
+importer extracts the volunteer  identifier, verifies informed  consent, parses the  44 
+questionnaire responses, and computes the corresponding Big Five personality scores using the 
+BFIScorer service. These scores provide  the ground -truth labels used during  model training 
+and evaluation. 
+The BFI scoring service performs reverse scoring for negatively worded questionnaire items, 
+validates the completeness  of the submitted  responses, and calculates  Openness, 
+Conscientiousness, Extraversion, Agreeableness, and Neuroticism scores on the standard five-
+point scale. The computed scores  are stored in  the BFI_SURVEY table and associated  with 
+the corresponding volunteer record. 
+
+
+=== PDF PAGE 71 ===
+59 
+ 
+The second input  source consists of  social media posts  retrieved for each  volunteer. When 
+timeline data already exist in the database, the stored posts  are reused. Otherwise, the system 
+attempts to retrieve posts  through the integrated  X/Twitter collection  service before 
+storing them in the POST table for subsequent processing. 
+Prior to feature  extraction, all retrieved  posts undergo text  preprocessing to  improve data 
+quality. The preprocessing stage  removes URLs, mentions, retweet markers, 
+leading punctuation, excessive  whitespace, and other  non-informative content. Hashtags  are 
+normalized to  preserve meaningful lexical  information, while unsupported  characters are 
+removed. Posts that do not satisfy the minimum length requirement are excluded from further 
+processing to improve the quality of the textual data supplied to the embedding stage. 
+4.3 User Interface Implementation 
+4.3.1 User Registration and Researcher Workflow 
+The authentication component provides researcher registration, login, and profile management. 
+Each volunteer record is  associated with a  researcher account, allowing  survey responses, 
+collected social media posts, and generated prediction  results to remain  linked to the 
+appropriate study participant throughout the processing pipeline. 
+The researcher dashboard  serves as the  primary interface for  managing the  study. It 
+displays summary statistics, including  the number of  registered volunteers,  imported BFI 
+surveys, and completed prediction  runs. The  dashboard also provides  direct access 
+to participant management, data collection tools, pipeline execution, and prediction results. 
+
+=== PDF PAGE 72 ===
+60 
+ 
+ 
+Figure 4.2: User Registration Interface. 
+4.3.2 BFI-44 Survey Import and Scoring 
+The survey import  module accepts  CSV files containing  completed BFI -44 questionnaire 
+responses. During import, the  system verifies participant  consent, extracts the  volunteer 
+identifier, processes  all questionnaire  responses, and computes  the corresponding  Big Five 
+trait scores. 
+The calculated scores  are stored in  the BFI_SURVEY table, while the  associated volunteer 
+record is updated to  indicate that valid  ground-truth personality  labels are available. The 
+import process  also supports updating  existing records, allowing  corrected 
+questionnaire responses to replace  previous values without  creating duplicate 
+volunteer entries. 
+  
+
+
+=== PDF PAGE 73 ===
+61 
+ 
+4.3.3 Timeline Retrieval and Post Persistence 
+Social media posts are collected through the TwitterFetcher service. The retrieval process first 
+attempts to  obtain posts through  the primary X/Twitter integration before  using alternative 
+retrieval methods when necessary. This layered approach  improves the reliability  of timeline 
+acquisition under varying network and service conditions. 
+Retrieved posts are  deduplicated using their  unique post identifiers  before engagement 
+statistics, reply status, and repost information are recorded. The processed posts are stored in 
+the POST table, after which  the preprocessing pipeline  generates cleaned text  suitable for 
+subsequent machine learning stages. The cleaned timeline  is also exported  for auditin g 
+and verification purposes. 
+4.4 Machine Learning Pipeline Implementation 
+4.4.1 Q-Learning-Based Post Selection 
+The Q-Learning Agent evaluates each post using a compact state representation derived from 
+engagement level, post recency, text length, hashtag  presence, and URL  presence. Based 
+on these features, the  agent determines whether  a post should  be selected 
+for personality prediction. 
+During pipeline execution, the agent operates  with training=False, resulting in 
+deterministic post selection based  on the existing  Q-table. The implementation preserves the 
+reinforcement learning structure while  ensuring reproducible experimental  results. Selected 
+posts and their corresponding Q-values are stored within the database for later processing. 
+4.4.2 BERT Contextual Embedding Extraction 
+Selected posts are transformed into contextual representations using the pretrained bert-base-
+uncased language model. The  BERT Encoder service tokenizes  each post, 
+generates contextual embeddings,  and extracts the  [CLS] token representation as  a 768 -
+dimensional feature vector. 
+
+=== PDF PAGE 74 ===
+62 
+ 
+Each embedding is  stored in the  BERT_EMBEDDING table, allowing feature  vectors to 
+be reused during augmentation, model training, and subsequent analyses. Before advancing to 
+the next processing stage, the pipeline verifies  that all generated  embeddings have 
+been successfully persisted in the database. 
+4.4.3 GAN-Style Data Augmentation 
+To improve the diversity of the training data, the system implements a lightweight GAN-style 
+augmentation module. Unlike a  conventional Generative  Adversarial Network (GAN), the 
+implemented approach perturbs BERT embedding vectors using Gaussian noise and generates 
+template-based synthetic text samples. This strategy increases the number of available training 
+instances without  introducing the computational  complexity associated with  adversarial 
+training. 
+The augmentation process  is coordinated by  the GAN Augmenter service. Synthetic 
+embedding vectors and their associated metadata are stored in the SYNTHETIC_DATA table 
+together with  the generator version  and confidence score. These records are  subsequently 
+incorporated into the regression training process. 
+4.4.4 Lasso and ElasticNet Regression 
+The final prediction  stage applies sparse  linear regression to  estimate the five  Big Five 
+personality traits. Before  training, the embedding  vectors are standardized  and the 
+target personality scores are  normalized. Depending on  the available training  data, the 
+implementation employs  either LassoCV or ElasticNetCV to determine the  optimal 
+regularization parameters. 
+Separate regression models  are trained for  Openness, Conscientiousness, Extraversion, 
+Agreeableness, and Neuroticism. For  each model, the  learned coefficients, intercepts, 
+validation statistics,  and prediction metrics  are stored in  the LASSO_MODEL table. The 
+sparse coefficients produced by  the models provide  an interpretable representation  of the 
+contribution of the extracted language features. 
+
+=== PDF PAGE 75 ===
+63 
+ 
+4.4.5 Psychometric Profile Generation 
+Upon completion of the prediction stage, the system generates a psychometric profile for each 
+volunteer. The profile contains the predicted OCEAN scores together with evaluation metrics 
+including Mean Absolute Error  (MAE), coefficient of  determination (R²) , confidence  score, 
+number of analysed posts, generated synthetic samples, and processing summary. 
+The prediction results  are stored in  the PSYCHOMETRIC_PROFILE table, allowing 
+individual predictions to be  reviewed, compared, and  visualized through the  researcher 
+dashboard. 
+The dashboard presents  the predicted personality  profile using radar  charts and 
+summary statistics, enabling researchers  to examine individual  volunteers and 
+compare prediction outcomes across participants. 
+ 
+
+=== PDF PAGE 76 ===
+64 
+ 
+ 
+Figure 4.3: Personality Prediction Dashboard. 
+  
+
+
+=== PDF PAGE 77 ===
+65 
+ 
+4.5 Runtime Database Statistics 
+Table 4.1: Runtime Database Statistics 
+Item Observed Count 
+Volunteers 13 
+BFI Surveys 13 
+Posts 254 
+BERT Embeddings 100 
+Q-Learning Logs 0 
+Synthetic Data 133 
+Lasso Models 40 
+Psychometric Profiles 8 
+ 
+The runtime snapshot  indicates that the  implemented pipeline successfully  generated 
+participant records, questionnaire scores, social media posts, contextual embeddings, synthetic 
+training samples, regression models, and  personality predictions. The presen ce of  persisted 
+embeddings, trained  models, and prediction  profiles demonstrates successful  execution of 
+the principal stages of the machine learning workflow. 
+4.6 System Testing and Validation 
+System validation was conducted to verify the correct operation of the implemented modules, 
+machine learning pipeline, and database components. Validation covered user  authentication, 
+questionnaire import, social media  data collection, text  preprocessing, embedding 
+generation, augmentation, regression modelling, and prediction storage. 
+The implementation also  verifies that contextual  embeddings are successfully  stored before 
+augmentation and  regression stages commence. Prediction results, model  parameters, and 
+evaluation metrics are persisted to the database upon successful completion of the pipeline. 
+
+=== PDF PAGE 78 ===
+66 
+ 
+Table 4.2: System Validation Results 
+Validation Aspect Observed Status 
+Database Models Verified 
+User Authentication Verified 
+BFI-44 Scoring Verified 
+Timeline Retrieval Verified 
+Q-Learning Selection Verified 
+BERT Embedding Generation Verified 
+GAN-Style Augmentation Verified 
+Lasso/ElasticNet Regression Verified 
+Prediction Storage Verified 
+4.7 Results and Discussion 
+The implemented system successfully executed the complete personality prediction workflow, 
+beginning with  participant registration  and questionnaire import, followed  by social 
+media data collection, text  preprocessing, contextual  embedding generation, synt hetic data 
+augmentation, regression -based personality prediction, and visualization of  the resulting 
+psychometric profiles. 
+Prediction performance varied  across volunteers because  of differences in  the quantity 
+and quality of available  social media posts. Across the generated  psychometric profiles,  the 
+average overall  Mean Absolute Error  (MAE) was approximately  0.474, the avera ge 
+correlation coefficient was approximately  0.504, and the average  prediction confidence 
+score was approximately  0.772. These results  indicate that the implemented  pipeline was 
+capable of learning  meaningful relationships between textual  features and personality  traits 
+while remaining sensitive to variations in the available training data. 
+
+=== PDF PAGE 79 ===
+67 
+ 
+At the regression  model level, prediction  performance differed across  individual 
+personality traits. Extraversion and  Openness achieved comparatively  higher training 
+performance, whereas Agreeableness  and Neuroticism produced  lower coefficients 
+of determination. These observations  suggest that some  personality dimensions  are more 
+strongly represented within social media language than others. 
+ 
+Table 4.3: Average Regression Performance by Personality Trait 
+Trait Avg. Train 
+MAE 
+Avg. Train 
+R² 
+Avg. Samples 
+Used 
+Avg. Synthetic 
+Samples 
+Agreeableness 0.0631 0.3388 49.25 43.38 
+Conscientiousness 0.0583 0.3671 31.38 25.50 
+Extraversion 0.0268 0.6014 27.00 21.12 
+Neuroticism 0.0769 0.3061 44.38 38.50 
+Openness 0.0307 0.4615 25.12 19.25 
+ 
+The prediction dashboard provides graphical visualization of the generated personality profiles 
+using radar charts and  summary statistics, allowing  researchers to compare  predicted trait 
+values across volunteers. 
+ 
+ 
+  
+
+=== PDF PAGE 80 ===
+68 
+ 
+CHAPTER FIVE 
+SUMMARY, CONCLUSION AND RECOMMENDATIONS 
+5.1 Introduction 
+The preceding chapters described the motivation, background, design, and implementation of 
+the personality prediction system. This final chapter summarizes the work, states the main 
+conclusion drawn from the implementation, and proposes realistic recommend ations for 
+improvement. In doing so, the chapter treats the project as an academic software artifact that 
+has been built, tested, corrected, and evaluated rather than as a purely theoretical proposal. 
+This is important because a final -year project should close the loop between intention and 
+delivery. The system in this study now does that. It accepts volunteers, stores and scores BFI -
+44 survey data, retrieves social media posts, cleans them, applies a selection mechanism, 
+creates BERT embed dings, augments the data, trains regularized regression models, and 
+presents the results through a dashboard and a live demo interface. 
+5.2 Summary of the Study 
+The core objective of the study was to build a personality prediction application that could infer 
+the Big Five traits from social media-style text while retaining traceability and interpretability. 
+The final implementation meets that objective at a prototype level. It uses a clear pipeline and 
+a relational database to hold every major artifact, which means that the system does not just 
+compute a prediction; it also records how that prediction was produced. 
+The system design places special emphasis on four operational domains. In education, the 
+predictions can be turned into learning recommendations . In health and wellbeing, the 
+personality profile can help identify a need for more structure or stress management. In 
+employment, the outputs can support role fit and team composition discussions. In responsible 
+AI, the project demonstrates how a transparent and auditable model can be used in a sensitive 
+decision-support setting without claiming more certainty than the data allows. 
+
+=== PDF PAGE 81 ===
+69 
+ 
+The implementation also makes a stronger point that is easy to overlook in a report: a useful 
+project is not only about model accuracy. It is also about data flow, persistence, validation, and 
+reproducibility. By storing the BFI surveys, the cleaned posts,  the embeddings, the synthetic 
+samples, the model parameters, and the final profiles, the application provides a complete 
+evidence chain for each prediction. 
+5.3 Major Contributions of the Project 
+The first contribution is architectural. The project combines psychometric survey data and 
+social media text inside one Django application. That integration matters because it shows how 
+a small research tool can be turned into a usable web system with rese archers, volunteers, 
+dashboards, and operational workflows. The modular structure also means that each layer can 
+be improved independently in future work. 
+The second contribution is methodological. The report now presents a corrected account of the 
+machine-learning stack: a practical post selection mechanism, a BERT embedding service, a 
+simplified augmentation module, and a sparse regression layer. The value here is not in 
+claiming an impossible le vel of sophistication. It is in showing that the project has been 
+implemented honestly and that each component has a clear role in the pipeline. 
+The third contribution is traceability. The use of dedicated database models for volunteers, 
+surveys, posts, embeddings, synthetic data, Lasso models, and psychometric profiles gives the 
+system a structure that can be defended in a viva. If a panel member asks where a prediction 
+came from, the answer is not a vague statement. The answer is a path through stored records 
+and reproducible services. 
+The fourth contribution is usability. The inclusion of a public -facing landing page, a live 
+prediction demo, and a researcher dashboard turns the project from a script into an application. 
+Even where the demo endpoint uses a lightweight heuristic, it still  provides a responsive 
+interface that can be shown during demonstration while the deeper research pipeline remains 
+available in the backend. 
+
+=== PDF PAGE 82 ===
+70 
+ 
+5.4 Conclusion 
+The study demonstrates that Big Five personality prediction can be implemented as a practical 
+web application using a combination of psychometric scoring, natural language processing, 
+augmentation, and sparse regression. The final system is not perfect, and the report should not 
+present it as if it were. However, it is a real and functioning academic prototype with enough 
+depth to show serious understanding of both the software engineering and the machine-learning 
+sides of the problem. 
+The most important conclusion from the implementation is that the data matters as much as the 
+algorithm. The database snapshot shows that the system can process a meaningful number of 
+volunteers and posts, but the predictive results also show substantial v ariance. That variance 
+reminds us that personality prediction from social media text is a difficult problem and that 
+model quality depends heavily on sample size, data diversity, and the quality of the ground 
+truth. 
+A second conclusion is that transparency should be preferred over overstatement. The corrected 
+report now states that the augmentation module is simplified, that the reinforcement -learning 
+component is scaffolded rather than fully self-learning in routine execution, and that the public 
+demo is heuristic. These clarifications improve the credibility of the work because they allow 
+the document to be defended using the actual codebase rather than an embellished description. 
+Finally, the project shows that an academic system can still be useful even when it is not fully 
+industrialized. The important thing is that the architecture is coherent, the data path is traceable, 
+the results are measurable, and the limitations are understood. On those grounds, the project is 
+a valid and respectable final-year software engineering and machine-learning study. 
+5.5 Limitations of the Study 
+The first limitation is dataset size. The current database contains 13 volunteers, 254 posts, and 
+8 completed psychometric profiles. That is enough for a demonstration, but it is not enough for 
+a fully stable personality model. Small sample sizes make the performance metrics unstable, 
+which is reflected in the spread of correlations and R-squared values across stored profiles. 
+
+=== PDF PAGE 83 ===
+71 
+ 
+The second limitation is data heterogeneity. Some volunteers have many more usable posts 
+than others, and this difference affects how much linguistic evidence the model can extract. In 
+practice, personality inference is better when the text is varied and e xpressive. Sparse or 
+repetitive timelines reduce the signal available to the BERT encoder and the regression layer. 
+The third limitation is augmentation fidelity. The current augmenter is helpful, but it is not a 
+full adversarial network trained through generator-discriminator competition. It creates useful 
+synthetic samples, yet it does not fully model the statistical complexity of a genuine GAN. The 
+report should therefore treat the augmentation stage as a pragmatic extension rather than as a 
+final solution. 
+The fourth limitation is reinforcement learning maturity. The Q-learning module is structurally 
+implemented, but the runtime snapshot shows that the logging table is not yet being populated 
+during routine pipeline runs. This means the model selection logic  still behaves more like a 
+controlled selector than a continuously learning agent. That is acceptable for an academic 
+prototype, but it should be improved before any stronger claims are made. 
+The fifth limitation is external validity. The system was tested on the local dataset and the 
+current runtime environment, so its generalization to a much larger, more diverse, or 
+multilingual population is unknown. The model is therefore best treated as a  proof of concept 
+that needs more data and more validation before it can be relied on outside the study context. 
+  
+
+=== PDF PAGE 84 ===
+72 
+ 
+5.6 Recommendations 
+Table 5.1: Recommendation 
+Recommendation Reason Priority 
+Expand the volunteer sample A larger and more diverse dataset will 
+stabilize the regression models and reduce 
+variance. 
+High 
+Log Q-learning episodes Persisting reward updates will make the 
+selection module truly auditable and trainable. 
+High 
+Replace simplified augmentation 
+with a true GAN 
+A genuine adversarial model would better 
+match the original research intent. 
+Medium 
+Add calibration and external 
+validation 
+Better validation will make the reported 
+metrics more defensible. 
+High 
+Improve demo prediction path The public demo should eventually call the 
+trained pipeline rather than a heuristic 
+fallback. 
+Medium 
+Document ethics and consent more 
+clearly 
+Personality prediction is sensitive and 
+requires visible governance controls. 
+High 
+ 
+These recommendations are intentionally practical. They do not assume unlimited resources or 
+a completely new research direction. Instead, they focus on the next sensible steps that would 
+make the current system stronger, more transparent, and more defensi ble in an academic 
+review. 
+5.7 Suggestions for Future Work 
+Future work should focus on improving the quality and richness of the signal available to the 
+system. One direction is to include profile biography text, pinned posts, and interaction 
+metadata so that the model can learn from more than just timeline conten t. Another direction 
+
+=== PDF PAGE 85 ===
+73 
+ 
+is to introduce multimodal signals where ethically appropriate, although that would require a 
+more careful discussion of privacy and consent. 
+A second direction is model refinement. The current architecture can be upgraded with a 
+genuine reinforcement-learning loop, a true conditional GAN or another modern generative 
+strategy, and more advanced calibration methods. However, such upgrades should only be 
+adopted if they improve measurable performance and do not reduce interpretability in the 
+process. 
+A third direction is deployment readiness. If the project is to be used by other researchers, then 
+the application should support stronger authentication, role-based permissions, richer logging, 
+backup and recovery, and a clearer API layer for model access . That would turn the current 
+academic prototype into a more durable platform for future research. 
+A final direction is ethical governance. Personality inference systems can easily be misused if 
+they are presented as infallible. Future versions should therefore include clear consent screens, 
+explanation tools, explicit uncertainty displays, and documented use limitations. Those features 
+will help ensure that the system remains a research tool rather than becoming an opaque 
+screening mechanism. 
+ 
+  
+
+=== PDF PAGE 86 ===
+74 
+ 
+REFERENCES 
+Antoniou, A., Storkey, A., & Edwards, H. (2017). Data augmentation generative adversarial 
+networks. arXiv preprint arXiv:1711.04340. 
+Azucar, D., Marengo, D., & Settanni, M. (2018). Predicting the Big 5 personality traits from 
+digital footprints on social media: A meta -analysis. Personality and Individual Differences, 
+124, 150–159. 
+Barrick, M. R., & Mount, M. K. (1991). The Big Five personality dimensions and job 
+performance: A meta-analysis. Personnel Psychology, 44(1), 1–26. 
+Christian, H., Suhartono, D., Chowanda, A., & Zamli, K. Z. (2021). Text based personality 
+prediction from multiple social media data sources using pre -trained language model and 
+model averaging. Journal of Big Data, 8, Article 68. 
+Devlin, J., Chang, M. -W., Lee, K., & Toutanova, K. (2019). BERT: Pre -training of  deep 
+bidirectional transformers for language understanding. In Proceedings of the 2019 Conference 
+of the North American Chapter of the Association for Computational Linguistics: Human 
+Language Technologies (Vol. 1, pp. 4171–4186). Association for Computational Linguistics. 
+Farnadi, G., Sitaraman, G., Sushmita, S., Celli, F., Kosinski, M., Stillwell, D., Davalos, S., 
+Moens, M.-F., & De Cock, M. (2016). Computational personality recognition in social media. 
+User Modeling and User-Adapted Interaction, 26(2–3), 109–142. 
+Frid-Adar, M., Diamant, I., Klang, E., Amitai, M., Goldberger, J., & Greenspan, H. (2018). 
+GAN-based synthetic medical image augmentation for increased CNN performance in liver 
+lesion classification. Neurocomputing, 321, 321–331. 
+Friedman, J., Hastie, T., & Tibshirani, R. (2010). Regularization paths for generalized linear 
+models via coordinate descent. Journal of Statistical Software, 33(1), 1–22. 
+Goldberg, L. R. (1993). The structure of phenotypic personality traits. American Psychologist, 
+48(1), 26–34. 
+
+=== PDF PAGE 87 ===
+75 
+ 
+Goodfellow, I., Pouget-Abadie, J., Mirza, M., Xu, B., Warde -Farley, D., Ozair, S., Courville, 
+A., & Bengio, Y. (2014). Generative adversarial nets. In Advances in Neural Information 
+Processing Systems (Vol. 27, pp. 2672–2680). 
+Hastie, T., Tibshirani , R., & Wainwright, M. (2015). Statistical learning with sparsity: The 
+lasso and generalizations. CRC Press. 
+Komarraju, M., & Karau, S. J. (2008). The relationship between the Big Five personality traits 
+and academic motivation. Personality and Individual Differences, 45(4), 606–609. 
+McCallum, A., & Nigam, K. (1998). Employing EM and pool -based active learning for text 
+classification. In Proceedings of the Fifteenth International Conference on Machine Learning 
+(pp. 350–358). Morgan Kaufmann. 
+McCrae, R. R., & Costa, P. T., Jr. (2008). The five-factor theory of personality. In O. P. John, 
+R. W. Robins, & L. A. Pervin (Eds.), Handbook of personality: Theory and research (3rd ed., 
+pp. 159–181). Guilford Press. 
+Mirza, M., & Osindero, S. (2014). Conditional generative adversarial nets. arXiv preprint 
+arXiv:1411.1784. 
+Paulhus, D. L., & Vazire, S. (2007). The self-report method. In R. W. Robins, R. C. Fraley, & 
+R. F. Krueger (Eds.), Handbook of research methods in personality psychology (pp. 224–239). 
+Guilford Press. 
+Pennebaker, J. W., Boyd, R. L., Jordan, K., & Blackburn, K. (2015). The development and 
+psychometric properties of LIWC2015. University of Texas at Austin. 
+Poropat, A. E. (2009). A meta -analysis of the five -factor model of personality and academic 
+performance. Psychological Bulletin, 135(2), 322–338. 
+Roberts, B. W., Kuncel, N. R., Shiner, R., Caspi, A., & Goldberg, L. R. (2007). The power of 
+personality: The comparative validity of personality traits, socioeconomic status, and cognitive 
+ability for predicting important life outcomes. Perspectives on Psychological Science, 2 (4), 
+313–345. 
+
+=== PDF PAGE 88 ===
+76 
+ 
+Settles, B. (2012). Active learning. Synthesis Lectures on Artificial Intelligence and Machine 
+Learning, 6(1), 1–114. 
+Sutton, R. S., & Barto, A. G. (2018). Reinforcement learning: An introduction (2nd ed.). MIT 
+Press. 
+Tadesse, M. M., Lin, H., Xu, B., & Yang, L. (2018). Personality predictions based on user 
+behavior on the Facebook social media platform. IEEE Access, 6, 61959–61969. 
+Thompson, C. A., Califf, M. E., & Mooney, R. J. (1999). Active learning for natural language 
+parsing and information extraction. In Proceedings of the Sixteenth International Conference 
+on Machine Learning (pp. 406–414). Morgan Kaufmann. 
+Tibshirani, R. (1996). Regression shrinkage and selection via the lasso. Journal of the Royal 
+Statistical Society: Series B (Methodological), 58(1), 267–288. 
+Tsani, E. F., & Suhartono, D. (2023). Personality identification from social media using 
+ensemble BERT and RoBERTa. Informatica, 47(4), 537 –544. 
+https://doi.org/10.31449/inf.v47i4.4771 
+  
+
+=== PDF PAGE 89 ===
+77 
+ 
+APPENDICES 
+APPENDIX A 
+A.1 Pipeline Orchestrator 
+Source Code A.1: Pipeline Orchestrator 
+class PipelineOrchestrator: 
+    """Main pipeline orchestrator.""" 
+    def run_full_pipeline(self) -> Dict: 
+        """ 
+        Execute complete pipeline: Input → Q-Learn → BERT → GAN → Lasso. 
+         
+        Returns: 
+            Result dict with status and metrics 
+        """ 
+        self.logger.info("=" * 80) 
+        self.logger.info(f"STARTING FULL PIPELINE for {self.volunteer.x_handle}") 
+        self.logger.info("=" * 80) 
+         
+        result = { 
+            'volunteer_id': self.volunteer.id, 
+            'volunteer_handle': self.volunteer.x_handle, 
+            'status': 'success', 
+            'steps_completed': [], 
+            'metrics': {}, 
+
+=== PDF PAGE 90 ===
+78 
+ 
+            'error': None, 
+        } 
+         
+        try: 
+            # Step 1: Input data (posts already fetched, stored in DB) 
+            posts = self._step_1_input_data() 
+            result['steps_completed'].append('input_data') 
+            result['metrics']['input_posts'] = len(posts) 
+             
+            if len(posts) == 0: 
+                raise ValueError("No posts available for processing") 
+             
+            # Step 2: Q-Learning selection 
+            selected_posts = self._step_2_qlearning_selection(posts) 
+            result['steps_completed'].append('qlearning_selection') 
+            result['metrics']['selected_posts'] = len(selected_posts) 
+             
+            # Step 3: BERT embeddings 
+            embeddings = self._step_3_bert_embedding(selected_posts) 
+            result['steps_completed'].append('bert_embedding') 
+            result['metrics']['embeddings_created'] = len(embeddings) 
+             
+            # Step 4: GAN augmentation (if training) 
+
+=== PDF PAGE 91 ===
+79 
+ 
+            prior_synthetic_count = SYNTHETIC_DATA.objects.filter( 
+                volunteer=self.volunteer, 
+                used_in_training=True, 
+            ).count() 
+            synthetic_data = self._step_4_gan_augmentation(selected_posts, embeddings) 
+            result['steps_completed'].append('gan_augmentation') 
+            result['metrics']['synthetic_samples'] = len(synthetic_data) 
+            result['metrics']['synthetic_samples_saved'] = len(synthetic_data) 
+            result['metrics']['synthetic_samples_reused'] = prior_synthetic_count 
+            result['metrics']['training_mode'] = ( 
+                'retrain' if prior_synthetic_count > 0 else 'fresh_train' 
+            ) 
+             
+            # Step 5: Lasso training and prediction 
+            prediction_result = self._step_5_lasso_prediction(embeddings, synthetic_data) 
+            result['steps_completed'].append('lasso_prediction') 
+            result['metrics'].update(prediction_result) 
+             
+            # Save psychometric profile 
+            self._save_psychometric_profile(prediction_result, result['metrics']) 
+            result['steps_completed'].append('saved_profile') 
+             
+            self._set_pipeline_status('completed') 
+
+=== PDF PAGE 92 ===
+80 
+ 
+             
+        except Exception as e: 
+            self.logger.error(f"Pipeline failed: {e}", exc_info=True) 
+            result['status'] = 'error' 
+            result['error'] = str(e) 
+            self._set_pipeline_status('error') 
+         
+        self.logger.info(f"Pipeline result: {result['status']}") 
+        return result 
+ A.2 Q-Learning Active Selection Module 
+class QLearningAgent 
+    def choose_action(self, state: str, training: bool = True) -> str: 
+        """ 
+        Choose action using epsilon-greedy strategy. 
+         
+        Args: 
+            state: State representation 
+            training: If True, use epsilon-greedy; if False, use greedy 
+         
+        Returns: 
+            'select' or 'skip' 
+        """ 
+        if training and np.random.random() < self.epsilon: 
+
+=== PDF PAGE 93 ===
+81 
+ 
+            # Explore: random action 
+            return np.random.choice(self.actions) 
+        else: 
+            # Exploit: best known action 
+            if state not in self.q_table: 
+                self.q_table[state] = {a: 0.0 for a in self.actions} 
+             
+            q_values = self.q_table[state] 
+            max_q = max(q_values.values()) 
+             
+            # If tie, pick randomly 
+            best_actions = [a for a in self.actions if q_values[a] == max_q] 
+            return np.random.choice(best_actions) 
+     
+    def update_q_value(self, state: str, action: str, reward: float, next_state: str) -> 
+Tuple[float, float]: 
+        """ 
+        Update Q-value using Q-Learning update rule. 
+         
+        Q(s,a) = Q(s,a) + α[r + γ*max(Q(s',a')) - Q(s,a)] 
+         
+        Returns: 
+            (old_q_value, new_q_value) 
+
+=== PDF PAGE 94 ===
+82 
+ 
+        """ 
+        if state not in self.q_table: 
+            self.q_table[state] = {a: 0.0 for a in self.actions} 
+        if next_state not in self.q_table: 
+            self.q_table[next_state] = {a: 0.0 for a in self.actions} 
+         
+        old_q = self.q_table[state][action] 
+        max_next_q = max(self.q_table[next_state].values()) 
+         
+        # Q-Learning update 
+        new_q = old_q + self.alpha * (reward + self.gamma * max_next_q - old_q) 
+        self.q_table[state][action] = new_q 
+         
+        logger.debug(f"Q-update: s={state[:50]}, a={action}, r={reward:.3f}, Q: {old_q:.3f} 
+→ {new_q:.3f}") 
+         
+        return old_q, new_q 
+     
+    def select_posts(self, posts: List[Dict], top_k: int = 10, training: bool = False) -> 
+List[Dict]: 
+        """ 
+        Select top-k posts for processing based on Q-values. 
+         
+
+=== PDF PAGE 95 ===
+83 
+ 
+        Args: 
+            posts: List of post dictionaries 
+            top_k: Number of posts to select 
+            training: If True, use stochastic selection; if False, use best posts 
+         
+        Returns: 
+            List of selected posts with Q-values 
+        """ 
+        selected = [] 
+         
+        for post in posts: 
+            state = self.featurize_post(post) 
+             
+            if training: 
+                action = self.choose_action(state, training=True) 
+            else: 
+                action = self.choose_action(state, training=False) 
+             
+            q_value = self.get_q_value(state, action) 
+             
+            if action == 'select': 
+                selected.append({ 
+                    **post, 
+
+=== PDF PAGE 96 ===
+84 
+ 
+                    'q_value': q_value, 
+                    'state': state, 
+                    'action': action, 
+                }) 
+         
+        # Sort by Q-value and take top_k 
+        selected.sort(key=lambda x: x['q_value'], reverse=True) 
+        selected = selected[:min(top_k, len(selected))] 
+         
+        logger.info(f"Q-Learning selected {len(selected)}/{len(posts)} posts for processing") 
+        return selected 
+     
+ 

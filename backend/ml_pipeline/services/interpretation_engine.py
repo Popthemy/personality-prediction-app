@@ -620,8 +620,10 @@ def _effect_from_row(
     thresholds: InterpretationThresholds,
 ) -> str:
     """Label one stored matched-pair row. Uses MAE/R² when present, else accuracy/F1."""
-    if row.get("delta_mae") is not None or row.get("delta_r2") is not None:
-        return _effect_from_delta_mae(row.get("delta_mae"), row.get("delta_r2"), thresholds)
+    delta_mae = _first_metric(row, "delta_test_mae", "delta_mae")
+    delta_r2 = _first_metric(row, "delta_test_r2", "delta_r2")
+    if delta_mae is not None or delta_r2 is not None:
+        return _effect_from_delta_mae(delta_mae, delta_r2, thresholds)
     acc = _effect_from_higher_better(row.get("delta_accuracy"), thresholds.accuracy_minimal_abs)
     f1 = _effect_from_higher_better(
         row.get("delta_macro_f1") if row.get("delta_macro_f1") is not None else row.get("delta_f1"),
@@ -692,10 +694,10 @@ def _interaction_block(
 def _model_pair_rows(model_comparison: Any) -> List[Dict[str, Any]]:
     rows = []
     for row in _as_records(model_comparison):
-        lasso_mae = _f(row.get("lasso_mae"))
-        lstm_mae = _f(row.get("lstm_mae"))
-        lasso_r2 = _f(row.get("lasso_r2"))
-        lstm_r2 = _f(row.get("lstm_r2"))
+        lasso_mae = _first_metric(row, "lasso_test_mae", "lasso_mae")
+        lstm_mae = _first_metric(row, "lstm_test_mae", "lstm_mae")
+        lasso_r2 = _first_metric(row, "lasso_test_r2", "lasso_r2")
+        lstm_r2 = _first_metric(row, "lstm_test_r2", "lstm_r2")
         lasso_acc = _f(row.get("lasso_accuracy"))
         lstm_acc = _f(row.get("lstm_accuracy"))
         lasso_f1 = _first_metric(row, "lasso_macro_f1", "lasso_f1")
@@ -752,14 +754,16 @@ def interpret_experiment_effects(
     g_label = _summarize_cell_effects(g_rows, thresholds)
 
     model_means = findings.get("model_means") or {}
-    lasso_mae = _f((model_means.get("lasso") or {}).get("mae"))
-    lstm_mae = _f((model_means.get("lstm") or {}).get("mae"))
-    lasso_r2 = _f((model_means.get("lasso") or {}).get("r2"))
-    lstm_r2 = _f((model_means.get("lstm") or {}).get("r2"))
-    lasso_acc = _f((model_means.get("lasso") or {}).get("accuracy"))
-    lstm_acc = _f((model_means.get("lstm") or {}).get("accuracy"))
-    lasso_f1 = _first_metric(model_means.get("lasso") or {}, "macro_f1", "f1")
-    lstm_f1 = _first_metric(model_means.get("lstm") or {}, "macro_f1", "f1")
+    lasso_mean = model_means.get("lasso") or {}
+    lstm_mean = model_means.get("lstm") or {}
+    lasso_mae = _first_metric(lasso_mean, "test_mae", "mae")
+    lstm_mae = _first_metric(lstm_mean, "test_mae", "mae")
+    lasso_r2 = _first_metric(lasso_mean, "test_r2", "r2")
+    lstm_r2 = _first_metric(lstm_mean, "test_r2", "r2")
+    lasso_acc = _first_metric(lasso_mean, "test_accuracy", "accuracy")
+    lstm_acc = _first_metric(lstm_mean, "test_accuracy", "accuracy")
+    lasso_f1 = _first_metric(lasso_mean, "test_f1", "macro_f1", "f1")
+    lstm_f1 = _first_metric(lstm_mean, "test_f1", "macro_f1", "f1")
     mae_delta = None if lasso_mae is None or lstm_mae is None else lstm_mae - lasso_mae
     r2_delta = None if lasso_r2 is None or lstm_r2 is None else lstm_r2 - lasso_r2
     acc_delta = None if lasso_acc is None or lstm_acc is None else lstm_acc - lasso_acc
@@ -835,8 +839,8 @@ def interpret_experiment_effects(
         return {
             "component": component,
             "effect": label,
-            "mean_delta_mae": _f(mean.get("delta_mae")),
-            "mean_delta_r2": _f(mean.get("delta_r2")),
+            "mean_delta_mae": _first_metric(mean, "delta_test_mae", "delta_mae"),
+            "mean_delta_r2": _first_metric(mean, "delta_test_r2", "delta_r2"),
             "mean_delta_accuracy": _f(mean.get("delta_accuracy")),
             "mean_delta_macro_f1": _f(mean.get("delta_macro_f1")),
             "matched_pairs": [

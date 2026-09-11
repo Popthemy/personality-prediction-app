@@ -20,11 +20,11 @@
         <div class="mt-1 font-bold text-stone-900">{{ run.best_condition|default:"n/a" }}</div>
       </div>
       <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
-        <div class="text-sm text-stone-500">Accuracy</div>
+        <div class="text-sm text-stone-500">Secondary accuracy</div>
         <div class="mt-1 text-2xl font-bold text-stone-900">{{ run.best_accuracy|floatformat:3|default:"n/a" }}</div>
       </div>
       <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
-        <div class="text-sm text-stone-500">F1</div>
+        <div class="text-sm text-stone-500">Secondary F1</div>
         <div class="mt-1 text-2xl font-bold text-stone-900">{{ run.best_f1|floatformat:3|default:"n/a" }}</div>
       </div>
       <div class="rounded-lg bg-stone-50 border border-stone-200 p-4">
@@ -57,9 +57,11 @@
             <th class="px-4 py-3">Selection</th>
             <th class="px-4 py-3">GAN</th>
             <th class="px-4 py-3">Model</th>
-            <th class="px-4 py-3">MAE</th>
-            <th class="px-4 py-3">Accuracy</th>
-            <th class="px-4 py-3">F1</th>
+            <th class="px-4 py-3">Test MAE</th>
+            <th class="px-4 py-3">Test RMSE</th>
+            <th class="px-4 py-3">Test R²</th>
+            <th class="px-4 py-3">Secondary accuracy</th>
+            <th class="px-4 py-3">Secondary F1</th>
             <th class="px-4 py-3">Specificity</th>
           </tr>
         </thead>
@@ -71,12 +73,14 @@
               <td class="px-4 py-3">{% if row.gan %}ON{% else %}OFF{% endif %}</td>
               <td class="px-4 py-3">{{ row.model|upper }}</td>
               <td class="px-4 py-3">{{ row.val_mae|floatformat:3|default:"n/a" }}</td>
+              <td class="px-4 py-3">{{ row.metrics.test_rmse|floatformat:3|default:"n/a" }}</td>
+              <td class="px-4 py-3">{{ row.metrics.test_r2|floatformat:3|default:"n/a" }}</td>
               <td class="px-4 py-3">{{ row.accuracy|floatformat:3|default:"n/a" }}</td>
               <td class="px-4 py-3">{{ row.macro_f1|floatformat:3|default:"n/a" }}</td>
               <td class="px-4 py-3">{{ row.specificity|floatformat:3|default:"n/a" }}</td>
             </tr>
           {% empty %}
-            <tr><td colspan="8" class="px-4 py-8 text-center text-stone-500">No condition metrics were stored.</td></tr>
+            <tr><td colspan="10" class="px-4 py-8 text-center text-stone-500">No condition metrics were stored.</td></tr>
           {% endfor %}
         </tbody>
       </table>

@@ -82,6 +82,10 @@ from backend.ml_pipeline.services import metrics_engine as me
 logger = logging.getLogger("ml_pipeline")
 
 TRAIT_KEYS: Tuple[str, ...] = ("O", "C", "E", "A", "N")
+TRAIT_DISPLAY_ALIASES: Tuple[Tuple[str, Tuple[str, ...]], ...] = tuple(
+    (short, (short, str(full)))
+    for short, full in zip(TRAIT_KEYS, OCEAN_TRAITS)
+)
 
 PRESENTATION_METRICS: Tuple[str, ...] = (
     "accuracy",
@@ -114,7 +118,7 @@ EXPERIMENTS: Dict[str, Dict[str, Any]] = {
         "selection": "baseline",
         "gan": False,
         "model": "lasso",
-        "label": "Lasso | baseline-select",
+        "label": "Lasso/ElasticNet sparse regression | baseline-select",
     },
     "lstm_baseline": {
         "selection": "baseline",
@@ -126,7 +130,7 @@ EXPERIMENTS: Dict[str, Dict[str, Any]] = {
         "selection": "baseline",
         "gan": True,
         "model": "lasso",
-        "label": "Lasso | baseline-select + GAN",
+        "label": "Lasso/ElasticNet sparse regression | baseline-select + GAN",
     },
     "lstm_baseline_gan": {
         "selection": "baseline",
@@ -138,7 +142,7 @@ EXPERIMENTS: Dict[str, Dict[str, Any]] = {
         "selection": "qlearning",
         "gan": False,
         "model": "lasso",
-        "label": "Lasso | Q-learning-select",
+        "label": "Lasso/ElasticNet sparse regression | Q-learning-select",
     },
     "lstm_qlearn": {
         "selection": "qlearning",
@@ -150,7 +154,7 @@ EXPERIMENTS: Dict[str, Dict[str, Any]] = {
         "selection": "qlearning",
         "gan": True,
         "model": "lasso",
-        "label": "Lasso | Q-learning-select + GAN",
+        "label": "Lasso/ElasticNet sparse regression | Q-learning-select + GAN",
     },
     "lstm_qlearn_gan": {
         "selection": "qlearning",
@@ -1048,6 +1052,9 @@ def _run_lstm(
         seed=cfg.seed,
     )
     val_pred = np.clip(trainer.predict(val_seqs), 0.0, 1.0)
+    val_regression: Dict[str, Dict[str, float]] = {}
+    for ti, trait in enumerate(TRAIT_KEYS):
+        val_regression[trait] = me.compute_regression_metrics(y_val[:, ti], val_pred[:, ti])
     validation = me.evaluate_lstm_binary_classifier(
         y_val,
         val_pred,
@@ -1059,8 +1066,12 @@ def _run_lstm(
     per_trait: Dict[str, Any] = {}
     for trait in TRAIT_KEYS:
         block = validation["per_trait"][trait]
+        reg = val_regression[trait]
         per_trait[trait] = {
-            "val_mae": None,
+            "val_mae": reg["mae"],
+            "val_rmse": reg["rmse"],
+            "val_r2": reg["r2"],
+            "val_pearson": reg["correlation"],
             "accuracy": block["accuracy"],
             "macro_f1": block["f1"],
             "macro_precision": block["precision"],
@@ -1073,7 +1084,10 @@ def _run_lstm(
         }
 
     overall = {
-        "val_mae": None,
+        "val_mae": _mean([per_trait[t]["val_mae"] for t in TRAIT_KEYS]),
+        "val_rmse": _mean([per_trait[t]["val_rmse"] for t in TRAIT_KEYS]),
+        "val_r2": _mean([per_trait[t]["val_r2"] for t in TRAIT_KEYS]),
+        "val_pearson": _mean([per_trait[t]["val_pearson"] for t in TRAIT_KEYS]),
         "accuracy": validation["aggregate"]["accuracy"],
         "macro_f1": validation["aggregate"]["f1"],
         "specificity": validation["aggregate"]["specificity"],
@@ -1139,6 +1153,9 @@ def _run_condition(
             test_seqs = [features.sequences[int(i)] for i in test_idx]
             y_test = sample.labels_unit[test_idx].astype(np.float32)
             test_pred = np.clip(model.predict(test_seqs), 0.0, 1.0)
+            test_regression: Dict[str, Dict[str, float]] = {}
+            for ti, trait in enumerate(TRAIT_KEYS):
+                test_regression[trait] = me.compute_regression_metrics(y_test[:, ti], test_pred[:, ti])
             test_eval = me.evaluate_lstm_binary_with_thresholds(
                 y_test,
                 test_pred,
@@ -1150,8 +1167,12 @@ def _run_condition(
             test_per_trait = {}
             for trait in TRAIT_KEYS:
                 block = test_eval["per_trait"][trait]
+                reg = test_regression[trait]
                 test_per_trait[trait] = {
-                    "val_mae": None,
+                    "val_mae": reg["mae"],
+                    "val_rmse": reg["rmse"],
+                    "val_r2": reg["r2"],
+                    "val_pearson": reg["correlation"],
                     "accuracy": block["accuracy"],
                     "macro_f1": block["f1"],
                     "f1": block["f1"],
@@ -1169,7 +1190,10 @@ def _run_condition(
             official_result = {
                 "per_trait": test_per_trait,
                 "overall": _reporting_aliases({
-                    "val_mae": None,
+                    "val_mae": _mean([test_per_trait[t]["val_mae"] for t in TRAIT_KEYS]),
+                    "val_rmse": _mean([test_per_trait[t]["val_rmse"] for t in TRAIT_KEYS]),
+                    "val_r2": _mean([test_per_trait[t]["val_r2"] for t in TRAIT_KEYS]),
+                    "val_pearson": _mean([test_per_trait[t]["val_pearson"] for t in TRAIT_KEYS]),
                     "accuracy": test_eval["aggregate"]["accuracy"],
                     "macro_f1": test_eval["aggregate"]["f1"],
                     "specificity": test_eval["aggregate"]["specificity"],
@@ -1381,6 +1405,13 @@ def _measure_experiment_filter(
     sample: Sample,
     cfg: ExperimentConfig,
 ) -> Dict[str, Any]:
+    if not prepared:
+        return {
+            "users_before_filter": sample.n_users,
+            "users_after_filter": sample.n_users,
+            "users_used": sample.n_users,
+            "exclusion_reasons": {},
+        }
     n_before = len(prepared)
     n_no_traits = sum(1 for user in prepared if user.traits is None)
     n_too_few = sum(
@@ -1454,13 +1485,23 @@ def _build_experiment_data(
     val_idx: np.ndarray,
     test_idx: np.ndarray,
     cfg: ExperimentConfig,
+    split_sources: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     train_ids = [sample.user_ids[int(i)] for i in train_idx]
     val_ids = [sample.user_ids[int(i)] for i in val_idx]
     test_ids = [sample.user_ids[int(i)] for i in test_idx]
+    train_set, val_set, test_set = set(train_ids), set(val_ids), set(test_ids)
+    overlap = {
+        "train_validation": sorted(train_set & val_set),
+        "train_test": sorted(train_set & test_set),
+        "validation_test": sorted(val_set & test_set),
+    }
+    overlap_counts = {name: len(ids) for name, ids in overlap.items()}
     return {
         "kind": "experiment_data",
         "dataset_source": "PANDORA",
+        "split_source": "file_defined" if split_sources else "generated",
+        "split_sources": split_sources or {},
         "seed": cfg.seed,
         "n_users": sample.n_users,
         "n_train": int(len(train_idx)),
@@ -1475,6 +1516,9 @@ def _build_experiment_data(
             "test_user_ids": test_ids,
             "held_out_fold": "test",
         },
+        "author_overlap": overlap,
+        "author_overlap_counts": overlap_counts,
+        "participant_level_split_verified": all(count == 0 for count in overlap_counts.values()),
     }
 
 
@@ -1499,7 +1543,7 @@ def _build_reproducibility(
         "test_participant_count": int(len(test_idx)),
         "participant_sample_size": sample.n_users,
         "split": experiment_data["split"],
-        "preprocessing": {"label_scale": sample.scale, "group_by": "traits"},
+        "preprocessing": {"label_scale": sample.scale, "group_by": "author"},
         "config_fingerprint": hashlib.sha1(
             json.dumps(asdict(cfg), sort_keys=True, default=str).encode("utf-8")
         ).hexdigest(),
@@ -1615,7 +1659,7 @@ def run_all(
         if row.get("gan") and row.get("targeted_gan") is not None
     }
 
-    experiment_data = _build_experiment_data(sample, train_idx, val_idx, test_idx, cfg)
+    experiment_data = _build_experiment_data(sample, train_idx, val_idx, test_idx, cfg, split_sources)
     data_quality_source = [] if isinstance(prepared, DatasetSplits) else prepared
     data_quality = _assemble_data_quality(data_quality_source, sample, train_idx, val_idx, test_idx, cfg)
     reproducibility = _build_reproducibility(sample, train_idx, val_idx, test_idx, cfg, experiment_data)
@@ -1765,14 +1809,29 @@ def _winner(a: Optional[float], b: Optional[float], name_a: str, name_b: str,
     return name_a if a > b else name_b
 
 
+def _winner_lower(a: Optional[float], b: Optional[float], name_a: str, name_b: str,
+                  eps: float = 1e-4) -> str:
+    if a is None or b is None:
+        return "n/a"
+    if abs(a - b) < eps:
+        return "tie"
+    return name_a if a < b else name_b
+
+
 def _delta(a: Optional[float], b: Optional[float]) -> Optional[float]:
     if a is None or b is None:
         return None
     return float(a - b)
 
 
+def _fmt_metric(value: Optional[float], *, signed: bool = False) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:+.3f}" if signed else f"{value:.3f}"
+
+
 def comparison_table(results: Dict[str, Any]):
-    """Return headline metrics for the eight Selection/GAN/Model conditions."""
+    """Return test-first headline metrics for the eight experiment conditions."""
     import pandas as pd
 
     rows = []
@@ -1789,9 +1848,15 @@ def comparison_table(results: Dict[str, Any]):
             "model": r["model"],
             "mean_comments_selected": r.get("mean_comments_selected"),
             "training_seconds": r.get("training_seconds"),
-            "val_mae": o["val_mae"],
-            "accuracy": o["accuracy"],
-            "macro_f1": o["macro_f1"],
+            "test_mae": o.get("mae", o.get("val_mae")),
+            "test_rmse": o.get("rmse", o.get("val_rmse")),
+            "test_r2": o.get("r2", o.get("val_r2")),
+            "test_pearson": o.get("val_pearson"),
+            "test_accuracy": o.get("accuracy"),
+            "test_f1": o.get("f1", o.get("macro_f1")),
+            "test_specificity": o.get("specificity"),
+            "test_precision": o.get("precision", o.get("macro_precision")),
+            "test_recall": o.get("recall", o.get("macro_recall")),
         })
     return pd.DataFrame(rows)
 
@@ -1803,7 +1868,18 @@ def presentation_metric_table(results: Dict[str, Any]):
     rows = []
     for exp_id, row in results.items():
         overall = row.get("overall") or {}
-        for metric in ("val_mae", "accuracy", "macro_f1"):
+        metrics = {
+            "test_mae": overall.get("mae", overall.get("val_mae")),
+            "test_rmse": overall.get("rmse", overall.get("val_rmse")),
+            "test_r2": overall.get("r2", overall.get("val_r2")),
+            "test_pearson": overall.get("val_pearson"),
+            "test_accuracy": overall.get("accuracy"),
+            "test_f1": overall.get("f1", overall.get("macro_f1")),
+            "test_specificity": overall.get("specificity"),
+            "test_precision": overall.get("precision", overall.get("macro_precision")),
+            "test_recall": overall.get("recall", overall.get("macro_recall")),
+        }
+        for metric, value in metrics.items():
             rows.append({
                 "condition": exp_id,
                 "description": row.get("label"),
@@ -1811,7 +1887,7 @@ def presentation_metric_table(results: Dict[str, Any]):
                 "gan": row.get("gan"),
                 "model": row.get("model"),
                 "metric": metric,
-                "value": overall.get(metric),
+                "value": value,
             })
     return pd.DataFrame(rows)
 
@@ -1864,10 +1940,7 @@ def threshold_sweep_table(results: Dict[str, Any]):
 
 def model_comparison(results: Dict[str, Any]):
     """
-    Head-to-head **Lasso vs LSTM** at each matched (selection, gan) cell, on the
-    shared tertile accuracy & macro-F1. This is the table that supports a
-    'which model produces the best result' claim, because the two models are
-    compared under identical selection + augmentation.
+    Head-to-head Lasso vs LSTM at each matched cell using test regression first.
     """
     import pandas as pd
 
@@ -1877,11 +1950,28 @@ def model_comparison(results: Dict[str, Any]):
         ls = _find(results, "lstm", sel, gan)
         if not la or not ls:
             continue
-        la_acc, ls_acc = la["overall"]["accuracy"], ls["overall"]["accuracy"]
-        la_f1, ls_f1 = la["overall"]["macro_f1"], ls["overall"]["macro_f1"]
+        lo, so = la["overall"], ls["overall"]
+        la_mae, ls_mae = lo.get("mae", lo.get("val_mae")), so.get("mae", so.get("val_mae"))
+        la_rmse, ls_rmse = lo.get("rmse", lo.get("val_rmse")), so.get("rmse", so.get("val_rmse"))
+        la_r2, ls_r2 = lo.get("r2", lo.get("val_r2")), so.get("r2", so.get("val_r2"))
+        la_pearson, ls_pearson = lo.get("val_pearson"), so.get("val_pearson")
+        la_acc, ls_acc = lo.get("accuracy"), so.get("accuracy")
+        la_f1, ls_f1 = lo.get("f1", lo.get("macro_f1")), so.get("f1", so.get("macro_f1"))
         rows.append({
             "selection": sel,
             "gan": gan,
+            "lasso_test_mae": la_mae,
+            "lstm_test_mae": ls_mae,
+            "mae_winner": _winner_lower(la_mae, ls_mae, "Lasso", "LSTM"),
+            "lasso_test_rmse": la_rmse,
+            "lstm_test_rmse": ls_rmse,
+            "rmse_winner": _winner_lower(la_rmse, ls_rmse, "Lasso", "LSTM"),
+            "lasso_test_r2": la_r2,
+            "lstm_test_r2": ls_r2,
+            "r2_winner": _winner(la_r2, ls_r2, "Lasso", "LSTM"),
+            "lasso_test_pearson": la_pearson,
+            "lstm_test_pearson": ls_pearson,
+            "pearson_winner": _winner(la_pearson, ls_pearson, "Lasso", "LSTM"),
             "lasso_accuracy": la_acc,
             "lstm_accuracy": ls_acc,
             "acc_winner": _winner(la_acc, ls_acc, "Lasso", "LSTM"),
@@ -2037,6 +2127,7 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
     import matplotlib
     matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
+    import pandas as pd
 
     plot_dir = (out / "plots").resolve()
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -2046,6 +2137,10 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
         x = np.arange(len(comparison))
         labels = comparison["condition"].tolist()
         plot_metrics = [
+            ("test_mae" if "test_mae" in comparison else "val_mae", "test_mae"),
+            ("test_rmse" if "test_rmse" in comparison else "val_rmse", "test_rmse"),
+            ("test_r2" if "test_r2" in comparison else "val_r2", "test_r2"),
+            ("test_pearson" if "test_pearson" in comparison else "val_pearson", "test_pearson"),
             ("test_accuracy" if "test_accuracy" in comparison else "accuracy", "accuracy"),
             ("test_f1" if "test_f1" in comparison else "macro_f1", "f1"),
             ("test_specificity" if "test_specificity" in comparison else "specificity", "specificity"),
@@ -2059,8 +2154,9 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
             colors = ["#4C78A8" if model == "lasso" else "#F58518" for model in comparison["model"]]
             ax.bar(x, comparison[metric].astype(float), color=colors)
             ax.set_title(label.replace("_", " ").title())
-            ax.set_ylabel("Score")
-            ax.set_ylim(0, 1)
+            ax.set_ylabel("Error" if label in {"test_mae", "test_rmse"} else "Score")
+            if label not in {"test_r2", "test_pearson"}:
+                ax.set_ylim(0, 1)
             ax.set_xticks(x)
             ax.set_xticklabels(labels, rotation=35, ha="right")
             ax.grid(axis="y", alpha=0.25)
@@ -2075,51 +2171,105 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
         if not len(test_thresholds):
             test_thresholds = thresholds[thresholds["split"] == "validation"]
             threshold_split = "validation"
+        top_threshold_rows = []
+        for (condition, trait), trait_df in test_thresholds.groupby(["condition", "trait"]):
+            trait_df = trait_df.sort_values("threshold").reset_index(drop=True)
+            score_col = "selection_score" if "selection_score" in trait_df else "f1_score"
+            top_df = (
+                trait_df
+                .assign(_rank_score=trait_df[score_col].astype(float))
+                .sort_values(["_rank_score", "f1_score", "specificity"], ascending=False)
+                .head(5)
+                .sort_values("threshold")
+                .reset_index(drop=True)
+            )
+            top_df["display_rank"] = np.arange(1, len(top_df) + 1)
+            top_threshold_rows.append(top_df)
+        display_thresholds = (
+            pd.concat(top_threshold_rows, ignore_index=True)
+            if top_threshold_rows else test_thresholds
+        )
         for metric in THRESHOLD_PLOT_METRICS:
-            if metric not in test_thresholds:
+            if metric not in display_thresholds:
                 continue
             grouped = (
-                test_thresholds
-                .groupby(["condition", "threshold"], as_index=False)[metric]
+                display_thresholds
+                .groupby(["condition", "display_rank"], as_index=False)[metric]
                 .mean()
             )
             fig, ax = plt.subplots(figsize=(10, 5))
             for condition, group in grouped.groupby("condition"):
                 ax.plot(
-                    group["threshold"].astype(float),
+                    group["display_rank"].astype(int),
                     group[metric].astype(float),
                     marker="o",
                     linewidth=1.6,
                     label=condition,
                 )
-            ax.set_title(f"{threshold_split.title()} Threshold Sweep - {metric.replace('_', ' ').title()}")
-            ax.set_xlabel("Decision threshold")
+            ax.set_title(f"{threshold_split.title()} Top 5 Threshold Candidates - {metric.replace('_', ' ').title()}")
+            ax.set_xlabel("Top threshold candidate")
             ax.set_ylabel("Score")
             ax.set_ylim(0, 1)
+            ax.set_xticks([1, 2, 3, 4, 5])
             ax.grid(alpha=0.25)
-            ax.legend(fontsize=7, ncol=2)
-            fig.tight_layout()
+            ax.legend(fontsize=7, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.16))
+            fig.tight_layout(rect=(0, 0.08, 1, 1))
             _save_plot_file(fig, plot_dir / f"threshold_sweep_{threshold_split}_{metric}.png")
             plt.close(fig)
 
         for condition, condition_df in test_thresholds.groupby("condition"):
             fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True, sharey=True)
             axes_flat = axes.flatten()
-            for axis, trait in zip(axes_flat, TRAIT_KEYS):
-                trait_df = condition_df[condition_df["trait"] == trait]
+            for axis, (trait_label, trait_aliases) in zip(axes_flat, TRAIT_DISPLAY_ALIASES):
+                trait_df = (
+                    condition_df[condition_df["trait"].astype(str).isin(trait_aliases)]
+                    .sort_values("threshold")
+                    .reset_index(drop=True)
+                )
+                if trait_df.empty:
+                    axis.set_title(trait_label)
+                    axis.grid(alpha=0.25)
+                    continue
+                score_col = "selection_score" if "selection_score" in trait_df else "f1_score"
+                top_trait_df = (
+                    trait_df
+                    .assign(_rank_score=trait_df[score_col].astype(float))
+                    .sort_values(["_rank_score", "f1_score", "specificity"], ascending=False)
+                    .head(5)
+                    .sort_values("threshold")
+                    .reset_index(drop=True)
+                )
+                trait_df = top_trait_df
+                x_values = np.arange(1, len(trait_df) + 1)
                 for metric in ("accuracy", "f1_score", "specificity"):
                     axis.plot(
-                        trait_df["threshold"].astype(float),
+                        x_values,
                         trait_df[metric].astype(float),
                         marker="o",
                         label=metric,
                     )
-                axis.set_title(trait)
+                selected_rows = trait_df[trait_df.get("selected", False).astype(bool)] if "selected" in trait_df else []
+                if len(selected_rows):
+                    selected_idx = int(selected_rows.index[0])
+                    selected_x = selected_idx + 1
+                    selected_threshold = float(trait_df.loc[selected_idx, "threshold"])
+                    axis.axvline(selected_x, color="#222222", linestyle="--", linewidth=1.0, alpha=0.55)
+                    y_anchor = float(trait_df.loc[selected_idx, "f1_score"]) if "f1_score" in trait_df else 0.5
+                    axis.annotate(
+                        f"{selected_threshold:.3f}",
+                        xy=(selected_x, y_anchor),
+                        xytext=(4, 6),
+                        textcoords="offset points",
+                        fontsize=7,
+                        color="#222222",
+                    )
+                axis.set_title(trait_label)
+                axis.set_xlabel("Top threshold candidate")
                 axis.grid(alpha=0.25)
             axes_flat[-1].axis("off")
             handles, legend_labels = axes_flat[0].get_legend_handles_labels()
             fig.legend(handles, legend_labels, loc="lower center", ncol=3)
-            fig.suptitle(f"{condition} - Five Thresholds by Trait", y=0.98)
+            fig.suptitle(f"{condition} - Top 5 Validation-Derived Thresholds by Trait", y=0.98)
             fig.tight_layout(rect=(0, 0.04, 1, 0.96))
             _save_plot_file(fig, plot_dir / f"{condition}_thresholds_by_trait.png")
             plt.close(fig)
@@ -2142,13 +2292,26 @@ def factor_effects(results: Dict[str, Any]) -> Dict[str, Any]:
             ql = _find(results, model, "qlearning", gan)
             if not base or not ql:
                 continue
+            bo, qo = base["overall"], ql["overall"]
             q_rows.append({
                 "model": model,
                 "gan": gan,
-                "acc_baseline": base["overall"]["accuracy"],
-                "acc_qlearning": ql["overall"]["accuracy"],
-                "delta_accuracy": _delta(ql["overall"]["accuracy"], base["overall"]["accuracy"]),
-                "delta_macro_f1": _delta(ql["overall"]["macro_f1"], base["overall"]["macro_f1"]),
+                "baseline_test_mae": bo.get("mae", bo.get("val_mae")),
+                "qlearning_test_mae": qo.get("mae", qo.get("val_mae")),
+                "delta_test_mae": _delta(qo.get("mae", qo.get("val_mae")), bo.get("mae", bo.get("val_mae"))),
+                "baseline_test_rmse": bo.get("rmse", bo.get("val_rmse")),
+                "qlearning_test_rmse": qo.get("rmse", qo.get("val_rmse")),
+                "delta_test_rmse": _delta(qo.get("rmse", qo.get("val_rmse")), bo.get("rmse", bo.get("val_rmse"))),
+                "baseline_test_r2": bo.get("r2", bo.get("val_r2")),
+                "qlearning_test_r2": qo.get("r2", qo.get("val_r2")),
+                "delta_test_r2": _delta(qo.get("r2", qo.get("val_r2")), bo.get("r2", bo.get("val_r2"))),
+                "baseline_test_pearson": bo.get("val_pearson"),
+                "qlearning_test_pearson": qo.get("val_pearson"),
+                "delta_test_pearson": _delta(qo.get("val_pearson"), bo.get("val_pearson")),
+                "acc_baseline": bo.get("accuracy"),
+                "acc_qlearning": qo.get("accuracy"),
+                "delta_accuracy": _delta(qo.get("accuracy"), bo.get("accuracy")),
+                "delta_macro_f1": _delta(qo.get("macro_f1"), bo.get("macro_f1")),
             })
 
     g_rows = []
@@ -2158,18 +2321,105 @@ def factor_effects(results: Dict[str, Any]) -> Dict[str, Any]:
             gon = _find(results, model, sel, True)
             if not nog or not gon:
                 continue
+            no, go = nog["overall"], gon["overall"]
             g_rows.append({
                 "model": model,
                 "selection": sel,
-                "acc_no_gan": nog["overall"]["accuracy"],
-                "acc_gan": gon["overall"]["accuracy"],
-                "delta_accuracy": _delta(gon["overall"]["accuracy"], nog["overall"]["accuracy"]),
-                "delta_macro_f1": _delta(gon["overall"]["macro_f1"], nog["overall"]["macro_f1"]),
+                "no_gan_test_mae": no.get("mae", no.get("val_mae")),
+                "gan_test_mae": go.get("mae", go.get("val_mae")),
+                "delta_test_mae": _delta(go.get("mae", go.get("val_mae")), no.get("mae", no.get("val_mae"))),
+                "no_gan_test_rmse": no.get("rmse", no.get("val_rmse")),
+                "gan_test_rmse": go.get("rmse", go.get("val_rmse")),
+                "delta_test_rmse": _delta(go.get("rmse", go.get("val_rmse")), no.get("rmse", no.get("val_rmse"))),
+                "no_gan_test_r2": no.get("r2", no.get("val_r2")),
+                "gan_test_r2": go.get("r2", go.get("val_r2")),
+                "delta_test_r2": _delta(go.get("r2", go.get("val_r2")), no.get("r2", no.get("val_r2"))),
+                "no_gan_test_pearson": no.get("val_pearson"),
+                "gan_test_pearson": go.get("val_pearson"),
+                "delta_test_pearson": _delta(go.get("val_pearson"), no.get("val_pearson")),
+                "acc_no_gan": no.get("accuracy"),
+                "acc_gan": go.get("accuracy"),
+                "delta_accuracy": _delta(go.get("accuracy"), no.get("accuracy")),
+                "delta_macro_f1": _delta(go.get("macro_f1"), no.get("macro_f1")),
+            })
+
+    model_rows = []
+    for sel, gan in _CELLS:
+        la = _find(results, "lasso", sel, gan)
+        ls = _find(results, "lstm", sel, gan)
+        if not la or not ls:
+            continue
+        lo, so = la["overall"], ls["overall"]
+        model_rows.append({
+            "selection": sel,
+            "gan": gan,
+            "delta_lstm_minus_lasso_test_mae": _delta(
+                so.get("mae", so.get("val_mae")),
+                lo.get("mae", lo.get("val_mae")),
+            ),
+            "delta_lstm_minus_lasso_test_rmse": _delta(
+                so.get("rmse", so.get("val_rmse")),
+                lo.get("rmse", lo.get("val_rmse")),
+            ),
+            "delta_lstm_minus_lasso_test_r2": _delta(
+                so.get("r2", so.get("val_r2")),
+                lo.get("r2", lo.get("val_r2")),
+            ),
+            "delta_lstm_minus_lasso_accuracy": _delta(so.get("accuracy"), lo.get("accuracy")),
+            "delta_lstm_minus_lasso_macro_f1": _delta(so.get("macro_f1"), lo.get("macro_f1")),
+        })
+
+    interaction_rows = []
+    for model in ("lasso", "lstm"):
+        base_no = _find(results, model, "baseline", False)
+        base_gan = _find(results, model, "baseline", True)
+        q_no = _find(results, model, "qlearning", False)
+        q_gan = _find(results, model, "qlearning", True)
+        if base_no and base_gan and q_no and q_gan:
+            interaction_rows.append({
+                "interaction": "selection_x_gan",
+                "model": model,
+                "delta_test_mae": _delta(
+                    _delta(q_gan["overall"].get("mae", q_gan["overall"].get("val_mae")), base_gan["overall"].get("mae", base_gan["overall"].get("val_mae"))),
+                    _delta(q_no["overall"].get("mae", q_no["overall"].get("val_mae")), base_no["overall"].get("mae", base_no["overall"].get("val_mae"))),
+                ),
+                "delta_accuracy": _delta(
+                    _delta(q_gan["overall"].get("accuracy"), base_gan["overall"].get("accuracy")),
+                    _delta(q_no["overall"].get("accuracy"), base_no["overall"].get("accuracy")),
+                ),
+                "delta_macro_f1": _delta(
+                    _delta(q_gan["overall"].get("macro_f1"), base_gan["overall"].get("macro_f1")),
+                    _delta(q_no["overall"].get("macro_f1"), base_no["overall"].get("macro_f1")),
+                ),
+            })
+    for gan in (False, True):
+        base_lasso = _find(results, "lasso", "baseline", gan)
+        q_lasso = _find(results, "lasso", "qlearning", gan)
+        base_lstm = _find(results, "lstm", "baseline", gan)
+        q_lstm = _find(results, "lstm", "qlearning", gan)
+        if base_lasso and q_lasso and base_lstm and q_lstm:
+            interaction_rows.append({
+                "interaction": "selection_x_model",
+                "gan": gan,
+                "delta_test_mae": _delta(
+                    _delta(q_lstm["overall"].get("mae", q_lstm["overall"].get("val_mae")), base_lstm["overall"].get("mae", base_lstm["overall"].get("val_mae"))),
+                    _delta(q_lasso["overall"].get("mae", q_lasso["overall"].get("val_mae")), base_lasso["overall"].get("mae", base_lasso["overall"].get("val_mae"))),
+                ),
+                "delta_accuracy": _delta(
+                    _delta(q_lstm["overall"].get("accuracy"), base_lstm["overall"].get("accuracy")),
+                    _delta(q_lasso["overall"].get("accuracy"), base_lasso["overall"].get("accuracy")),
+                ),
+                "delta_macro_f1": _delta(
+                    _delta(q_lstm["overall"].get("macro_f1"), base_lstm["overall"].get("macro_f1")),
+                    _delta(q_lasso["overall"].get("macro_f1"), base_lasso["overall"].get("macro_f1")),
+                ),
             })
 
     return {
         "qlearning_effect": pd.DataFrame(q_rows),
         "gan_effect": pd.DataFrame(g_rows),
+        "model_effect": pd.DataFrame(model_rows),
+        "interaction_effect": pd.DataFrame(interaction_rows),
         "model_comparison": model_comparison(results),
     }
 
@@ -2220,43 +2470,69 @@ def hybrid_cell_evaluations(
 
 def summarize_findings(results: Dict[str, Any]) -> Dict[str, Any]:
     """
-    JSON-safe headline claims the report can cite directly: the best condition,
-    each model's mean tertile accuracy/macro-F1, the better model overall, and
-    the mean Q-learning / GAN effects. Also emits human-readable ``notes``.
+    JSON-safe headline claims for the report.
+
+    Continuous OCEAN regression is primary, so the best condition is chosen by
+    lowest held-out test MAE. Binary High/Low classification remains secondary.
     """
     def _model_mean(model: str, metric: str) -> Optional[float]:
-        vals = [r["overall"][metric] for r in results.values()
-                if r["model"] == model and r["overall"][metric] is not None]
+        vals = [
+            r["overall"].get(metric)
+            for r in results.values()
+            if r["model"] == model and r["overall"].get(metric) is not None
+        ]
         return float(np.mean(vals)) if vals else None
 
     def _mean_delta(rows: List[Dict[str, Any]], key: str) -> Optional[float]:
         vals = [row[key] for row in rows if row.get(key) is not None]
         return float(np.mean(vals)) if vals else None
 
-    # Best condition by shared tertile accuracy.
-    scored = {k: r for k, r in results.items() if r["overall"]["accuracy"] is not None}
-    best_id = max(scored, key=lambda k: scored[k]["overall"]["accuracy"]) if scored else None
+    scored = {
+        k: r for k, r in results.items()
+        if r["overall"].get("mae", r["overall"].get("val_mae")) is not None
+    }
+    best_id = min(
+        scored,
+        key=lambda k: scored[k]["overall"].get("mae", scored[k]["overall"].get("val_mae")),
+    ) if scored else None
     best = None
     notes: List[str] = []
     if best_id:
         r = results[best_id]
+        o = r["overall"]
         best = {
             "condition": best_id,
             "label": r["label"],
-            "accuracy": r["overall"]["accuracy"],
-            "macro_f1": r["overall"]["macro_f1"],
+            "primary_metric": "test_mae",
+            "test_mae": o.get("mae", o.get("val_mae")),
+            "test_rmse": o.get("rmse", o.get("val_rmse")),
+            "test_r2": o.get("r2", o.get("val_r2")),
+            "test_pearson": o.get("val_pearson"),
+            "test_accuracy": o.get("accuracy"),
+            "test_f1": o.get("f1", o.get("macro_f1")),
         }
 
+    lasso_mae, lstm_mae = _model_mean("lasso", "mae"), _model_mean("lstm", "mae")
+    lasso_rmse, lstm_rmse = _model_mean("lasso", "rmse"), _model_mean("lstm", "rmse")
+    lasso_r2, lstm_r2 = _model_mean("lasso", "r2"), _model_mean("lstm", "r2")
+    lasso_pearson = _model_mean("lasso", "val_pearson")
+    lstm_pearson = _model_mean("lstm", "val_pearson")
     lasso_acc, lstm_acc = _model_mean("lasso", "accuracy"), _model_mean("lstm", "accuracy")
-    lasso_f1, lstm_f1 = _model_mean("lasso", "macro_f1"), _model_mean("lstm", "macro_f1")
+    lasso_f1, lstm_f1 = _model_mean("lasso", "f1"), _model_mean("lstm", "f1")
 
     effects = factor_effects(results)
     q_df, g_df = effects["qlearning_effect"], effects["gan_effect"]
     q_rows = q_df.to_dict("records") if hasattr(q_df, "to_dict") else []
     g_rows = g_df.to_dict("records") if hasattr(g_df, "to_dict") else []
+    q_mae = _mean_delta(q_rows, "delta_test_mae")
+    g_mae = _mean_delta(g_rows, "delta_test_mae")
     q_acc, q_f1 = _mean_delta(q_rows, "delta_accuracy"), _mean_delta(q_rows, "delta_macro_f1")
     g_acc, g_f1 = _mean_delta(g_rows, "delta_accuracy"), _mean_delta(g_rows, "delta_macro_f1")
 
+    better_by_mae = _winner_lower(lasso_mae, lstm_mae, "Lasso", "LSTM")
+    better_by_rmse = _winner_lower(lasso_rmse, lstm_rmse, "Lasso", "LSTM")
+    better_by_r2 = _winner(lasso_r2, lstm_r2, "Lasso", "LSTM")
+    better_by_pearson = _winner(lasso_pearson, lstm_pearson, "Lasso", "LSTM")
     better_by_acc = _winner(lasso_acc, lstm_acc, "Lasso", "LSTM")
     better_by_f1 = _winner(lasso_f1, lstm_f1, "Lasso", "LSTM")
 
@@ -2265,36 +2541,68 @@ def summarize_findings(results: Dict[str, Any]) -> Dict[str, Any]:
     if best is not None:
         notes.append(
             f"Best condition: {best['condition']} ({best['label']}) - "
-            f"tertile accuracy {best['accuracy']:.3f}, macro-F1 {best['macro_f1']:.3f}."
+            f"lowest test MAE {_fmt_metric(best['test_mae'])}, RMSE {_fmt_metric(best['test_rmse'])}; "
+            f"secondary High/Low F1 {_fmt_metric(best['test_f1'])}."
         )
-    if lasso_acc is not None and lstm_acc is not None:
+    if lasso_mae is not None and lstm_mae is not None:
         notes.append(
             f"Model comparison (mean over the 4 matched cells): "
-            f"Lasso accuracy {lasso_acc:.3f} vs LSTM {lstm_acc:.3f} -> {better_by_acc} wins on accuracy; "
-            f"Lasso macro-F1 {lasso_f1:.3f} vs LSTM {lstm_f1:.3f} -> {better_by_f1} wins on macro-F1."
+            f"Lasso test MAE {_fmt_metric(lasso_mae)} vs LSTM {_fmt_metric(lstm_mae)} -> {better_by_mae} wins on primary MAE; "
+            f"Lasso RMSE {_fmt_metric(lasso_rmse)} vs LSTM {_fmt_metric(lstm_rmse)} -> {better_by_rmse} wins on RMSE."
         )
     if q_acc is not None:
-        verdict = "helps" if q_acc > 0 else ("hurts" if q_acc < 0 else "is neutral")
+        verdict = "helps" if q_mae is not None and q_mae < 0 else ("hurts" if q_mae is not None and q_mae > 0 else "is neutral")
         notes.append(
-            f"Q-learning selection {verdict} on average: mean delta accuracy {q_acc:+.3f}, "
-            f"mean delta macro-F1 {q_f1:+.3f} (vs baseline-select, over model x GAN)."
+            f"Q-learning selection {verdict} on average for primary regression: "
+            f"mean delta test MAE {_fmt_metric(q_mae, signed=True)}; secondary delta accuracy {_fmt_metric(q_acc, signed=True)}, "
+            f"delta macro-F1 {_fmt_metric(q_f1, signed=True)}."
         )
     if g_acc is not None:
-        verdict = "helps" if g_acc > 0 else ("hurts" if g_acc < 0 else "is neutral")
+        verdict = "helps" if g_mae is not None and g_mae < 0 else ("hurts" if g_mae is not None and g_mae > 0 else "is neutral")
         notes.append(
-            f"GAN augmentation {verdict} on average: mean delta accuracy {g_acc:+.3f}, "
-            f"mean delta macro-F1 {g_f1:+.3f} (vs no-GAN, over model x selection)."
+            f"GAN augmentation {verdict} on average for primary regression: "
+            f"mean delta test MAE {_fmt_metric(g_mae, signed=True)}; secondary delta accuracy {_fmt_metric(g_acc, signed=True)}, "
+            f"delta macro-F1 {_fmt_metric(g_f1, signed=True)}."
         )
 
     return {
         "best_condition": best,
         "model_means": {
-            "lasso": {"accuracy": lasso_acc, "macro_f1": lasso_f1},
-            "lstm": {"accuracy": lstm_acc, "macro_f1": lstm_f1},
+            "lasso": {
+                "test_mae": lasso_mae,
+                "test_rmse": lasso_rmse,
+                "test_r2": lasso_r2,
+                "test_pearson": lasso_pearson,
+                "test_accuracy": lasso_acc,
+                "test_f1": lasso_f1,
+            },
+            "lstm": {
+                "test_mae": lstm_mae,
+                "test_rmse": lstm_rmse,
+                "test_r2": lstm_r2,
+                "test_pearson": lstm_pearson,
+                "test_accuracy": lstm_acc,
+                "test_f1": lstm_f1,
+            },
         },
-        "better_model": {"by_accuracy": better_by_acc, "by_macro_f1": better_by_f1},
-        "qlearning_effect_mean": {"delta_accuracy": q_acc, "delta_macro_f1": q_f1},
-        "gan_effect_mean": {"delta_accuracy": g_acc, "delta_macro_f1": g_f1},
+        "better_model": {
+            "by_test_mae": better_by_mae,
+            "by_test_rmse": better_by_rmse,
+            "by_test_r2": better_by_r2,
+            "by_test_pearson": better_by_pearson,
+            "by_accuracy": better_by_acc,
+            "by_macro_f1": better_by_f1,
+        },
+        "qlearning_effect_mean": {
+            "delta_test_mae": q_mae,
+            "delta_accuracy": q_acc,
+            "delta_macro_f1": q_f1,
+        },
+        "gan_effect_mean": {
+            "delta_test_mae": g_mae,
+            "delta_accuracy": g_acc,
+            "delta_macro_f1": g_f1,
+        },
         "notes": notes,
     }
 
@@ -2335,6 +2643,8 @@ def save_artifacts(
     effects = bundle["factor_effects"]
     effects["qlearning_effect"].to_csv(out / "qlearning_effect.csv", index=False)
     effects["gan_effect"].to_csv(out / "gan_effect.csv", index=False)
+    effects["model_effect"].to_csv(out / "model_effect.csv", index=False)
+    effects["interaction_effect"].to_csv(out / "interaction_effect.csv", index=False)
     effects["model_comparison"].to_csv(out / "model_comparison.csv", index=False)
 
     with (out / "findings.json").open("w", encoding="utf-8") as fh:
@@ -2380,6 +2690,8 @@ def save_artifacts(
             "qlearning_effect.csv",
             "qlearning_efficiency.json",
             "gan_effect.csv",
+            "model_effect.csv",
+            "interaction_effect.csv",
             "model_comparison.csv",
             "experiment_data.json",
             "data_quality.json",

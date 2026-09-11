@@ -107,12 +107,12 @@ def _record_pandora_bundle(run, bundle):
                     'selection': row.get("selection") or "",
                     'gan': bool(row.get("gan")),
                     'model': row.get("model") or "",
-                    'val_mae': _json_safe_float(row.get("val_mae")),
-                    'accuracy': _json_safe_float(row.get("accuracy")),
-                    'macro_f1': _json_safe_float(row.get("macro_f1")),
-                    'specificity': _json_safe_float(overall.get("specificity")),
-                    'precision': _json_safe_float(overall.get("macro_precision")),
-                    'recall': _json_safe_float(overall.get("macro_recall")),
+                    'val_mae': _json_safe_float(row.get("test_mae", row.get("val_mae"))),
+                    'accuracy': _json_safe_float(row.get("test_accuracy", row.get("accuracy"))),
+                    'macro_f1': _json_safe_float(row.get("test_f1", row.get("macro_f1"))),
+                    'specificity': _json_safe_float(row.get("test_specificity", overall.get("specificity"))),
+                    'precision': _json_safe_float(row.get("test_precision", overall.get("precision", overall.get("macro_precision")))),
+                    'recall': _json_safe_float(row.get("test_recall", overall.get("recall", overall.get("macro_recall")))),
                     'metrics': _json_safe_value(row),
                 }
             )
@@ -141,8 +141,8 @@ def _record_pandora_bundle(run, bundle):
     best = findings.get("best_condition") or {}
     run.artifact_dir = str(bundle.get("artifact_dir") or "")
     run.best_condition = best.get("condition") or ""
-    run.best_accuracy = _json_safe_float(best.get("accuracy"))
-    run.best_f1 = _json_safe_float(best.get("macro_f1"))
+    run.best_accuracy = _json_safe_float(best.get("test_accuracy", best.get("accuracy")))
+    run.best_f1 = _json_safe_float(best.get("test_f1", best.get("macro_f1")))
     run.audit_status = (bundle.get("audit") or {}).get("status", "")
     run.findings = findings.get("notes", [])
     run.summary = _json_safe_value({

@@ -1,16 +1,18 @@
 """
-Binary LSTM classifier for Big Five personality traits.
+LSTM regressor for continuous Big Five OCEAN trait prediction.
 
 This module is intentionally focused on the current PANDORA experiment path:
 
     selected comment BERT embeddings -> stacked bidirectional LSTM
                                       -> optional auxiliary features
-                                      -> five sigmoid logits
-                                      -> P(High) for O, C, E, A, N
+                                      -> five continuous OCEAN scores
 
-Continuous OCEAN labels are used only to derive supervised Low/High targets
-with a fixed ground-truth cutoff. Decision thresholds are selected later by the
-metrics engine's validation sweep. There is no Medium class in this module.
+Continuous regression metrics are the primary evaluation target. Binary
+High/Low metrics are derived later by thresholding the continuous scores in the
+metrics engine; those thresholded metrics are secondary operating-point
+analysis, not the model's core training objective.
+
+The module keeps its historical file name for import compatibility.
 """
 
 from __future__ import annotations
@@ -166,10 +168,10 @@ def compute_regression_metrics(
         mae = float(mean_absolute_error(yt, yp))
         rmse = float(np.sqrt(mean_squared_error(yt, yp)))
         r2 = float(r2_score(yt, yp))
-        try:
+        if len(yt) < 2 or np.std(yt) == 0 or np.std(yp) == 0:
+            pearson_r, pearson_p = 0.0, 1.0
+        else:
             pearson_r, pearson_p = pearsonr(yt, yp)
-        except Exception:
-            pearson_r, pearson_p = float('nan'), float('nan')
         per_trait[name] = {
             'mae': mae,
             'rmse': rmse,

@@ -1,18 +1,14 @@
 """
-Metrics engine for Big Five personality classification.
+Metrics engine for Big Five OCEAN evaluation.
 
-The current PANDORA experiment path treats LSTM as the final classifier. The
-LSTM emits five probabilities, one P(High) for each OCEAN trait, and this
-module selects/applies binary Low/High decision thresholds.
+The PANDORA experiment treats continuous OCEAN regression as the primary task:
+models emit five normalized trait scores and are compared with MAE, RMSE, R^2,
+and Pearson correlation on the untouched test split.
 
-Primary PANDORA evaluation:
-- fixed five-threshold sweep: 0.30, 0.40, 0.50, 0.60, 0.70
-- validation fold chooses the best threshold per trait
-- test fold applies the validation-selected threshold once
-- reports Accuracy, Precision, Recall, F1, Specificity, ROC-AUC, and PR-AUC
-
-There is no Medium class in the active PANDORA path. Older regression and
-hybrid helpers remain below only for leftover callers outside the new runner.
+Binary High/Low classification is a secondary operating-point analysis. The
+decision threshold is selected from validation predictions, then frozen and
+applied once to the test split. Threshold sweeps are sensitivity diagnostics;
+they are not psychological cutoffs.
 """
 
 import logging
@@ -38,7 +34,7 @@ logger = logging.getLogger('ml_pipeline')
 
 ArrayLike = Union[Sequence[float], np.ndarray]
 
-# Candidate decision thresholds for the active binary LSTM probability sweep.
+# Legacy fixed thresholds retained for old callers and sensitivity reports.
 CANDIDATE_THRESHOLDS = [0.30, 0.40, 0.50, 0.60, 0.70]
 
 # Explicit High/Low cutoff on the normalized [0, 1] OCEAN scale. Not inferred

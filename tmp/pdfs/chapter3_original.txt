@@ -1,0 +1,468 @@
+=== PDF PAGE 49 ===
+37 
+ 
+CHAPTER THREE 
+RESEARCH METHODOLOGY 
+3.1 Introduction 
+This chapter presents the methodology adopted for the design and development of the proposed 
+personality prediction system. The system was developed as a web -based research platform 
+that predicts the Big Five (OCEAN) personality traits from multi-source data obtained from X 
+(formerly Twitter). The implementation integrates BFI-44 questionnaire scoring, social media 
+data acquisition, contextual language representation using BERT, Q -learning-based post 
+selection, GAN -style embedding augmentation, and Lasso/ ElasticNet regression within a 
+unified processing framework. 
+The methodology emphasizes a modular system architecture in which data are collected, 
+validated, transformed, and analysed through a sequence of interconnected processing stages. 
+Each stage performs a specific function, beginning with participant data acquisition and ending 
+with the generation of interpretable personality profiles supported by quantitative evaluation 
+metrics. The chapter therefore presents the methodological procedures, system design, 
+processing workflow, database structure, and evaluation approach adopted in implementing the 
+proposed system. 
+3.2 Research Methodology 
+The development of the proposed personality prediction system followed a Design and 
+Development Research (DDR) methodology. This approach is appropriate for studies that 
+involve the design, implementation, and evaluation of a technological artifact intended to solve 
+an identified problem. Rather than investigating existing phenomena alone, the methodology 
+emphasizes the construction of a functional system, iterative validation of its components, and 
+assessment of its ability to satisfy the research objectives. 
+The methodology was selected because the study extends beyond personality analysis to the 
+development of an integrated web -based platform capable of acquiring social media data, 
+
+=== PDF PAGE 50 ===
+38 
+ 
+processing textual information, predicting Big Five personality traits, and presenting the results 
+through an interactive research dashboard. The resulting software artifact serves as the primary 
+outcome of the research and provides a practical environment for evaluating the effectiveness 
+of the proposed prediction framework. 
+The development process was organized into five major activities: 
+1. Requirements Analysis: Functional and non-functional requirements were identified 
+from the research objectives, domain literature, and expected researcher workflow. 
+These requirements defined the core capabilities of the platform, including participant 
+management, BFI -44 survey  processing, social media data acquisition, personality 
+prediction, and result visualization. 
+2. System Design: The overall architecture, database schema, processing pipeline, and 
+user interaction flow were designed before implementation. This stage established the 
+relationships between the application modules, machine learning pipeline, and 
+persistent data storage. 
+3. System Implementation:  The application was implemented using Django as the 
+primary web framework. Individual modules for authentication, survey management, 
+data collection, preprocessing, machine learning, and reporting were developed as 
+independent but interconnected components to improve maintainability and scalability. 
+4. System Testing: The completed modules were evaluated through functional testing to 
+verify that each component performed its intended operation. Integration testing was 
+subsequently conducted to ensure that data flowed correctly throughout the complete 
+personality prediction pipeline. 
+5. System Evaluation:  The developed system was evaluated using quantitative 
+performance metrics generated during personality prediction. The evaluation assessed 
+the correctness of the implemented workflow, prediction quality, and the effectiveness 
+of the integrated processing pipeline in achieving the objectives of the study. 
+
+=== PDF PAGE 51 ===
+39 
+ 
+3.3 System Analysis 
+System analysis defines the functional structure and operational workflow of the proposed 
+personality prediction platform before implementation. The analysis identifies the major 
+software components, the interactions between those components, and the flow of information 
+from participant registration to personality prediction. This process provides the foundation for 
+the subsequent architectural design and implementation of the system. 
+The proposed system was designed as a web -based research platform that combines 
+psychometric assessment, social media data acquisition, machine learning, and interactive 
+visualization within a unified environment. Rather than operating as independent softw are 
+modules, these components are integrated into a single workflow that enables researchers to 
+manage participants, acquire data, execute the prediction pipeline, and analyse the generated 
+personality profiles through a centralized dashboard. 
+The platform adopts a modular architecture to improve maintainability, scalability, and 
+separation of responsibilities. Each module performs a well -defined task while exchanging 
+information through the application's service layer and relational database. T his modular 
+organization also simplifies future extension of the system without affecting the overall 
+processing workflow. 
+The principal functional modules of the proposed system are summarized as follows. 
+3.3.1 Researcher Management Module 
+This module provides authentication and access control for researchers. It manages user 
+registration, login, researcher profiles, and authorization to ensure that participant records, 
+uploaded datasets, and prediction results remain associated with the app ropriate researcher 
+throughout the study. 
+  
+
+=== PDF PAGE 52 ===
+40 
+ 
+3.3.2 Data Acquisition Module 
+The data acquisition module manages the collection of personality assessment data and social 
+media content. It imports BFI -44 questionnaire responses from CSV files, creates participant 
+records, retrieves posts from X (formerly Twitter), and validates the collected information 
+before further processing. 
+3.3.3 Personality Prediction Module 
+The personality prediction module coordinates the machine learning workflow. It preprocesses 
+the collected text, selects informative posts, generates contextual embeddings, performs 
+embedding augmentation during training, and predicts the five Big Five personality traits. The 
+resulting personality scores and evaluation metrics are subsequently stored for analysis. 
+3.3.4 Reporting and Visualization Module 
+This module presents prediction outcomes through an interactive dashboard. Researchers can 
+review participant information, examine predicted personality profiles, compare predictions 
+with ground-truth BFI scores, and visualize the five personality dimensio ns using graphical 
+reports. 
+The interaction between these modules forms a complete research workflow, enabling 
+participant management, data collection, personality prediction, and result visualization within 
+a single integrated platform. 
+                     
+
+=== PDF PAGE 53 ===
+41 
+ 
+     
+ 
+Figure 3.1: High-Level Functional Architecture of the Proposed System 
+3.4 Overall System Architecture 
+The proposed personality prediction system adopts a modular, service -oriented architecture 
+that integrates participant management, psychometric assessment, social media data 
+acquisition, machine learning, and result visualization within a unified web appli cation. The 
+architecture was designed to separate system responsibilities into independent but 
+interconnected modules, thereby improving maintainability, scalability, and ease of future 
+enhancement. 
+The application is implemented using the Django web framework, which coordinates 
+communication between the user interface, application services, machine learning pipeline, and 
+database. Researchers interact with the system through a web -based dashboard to register 
+participants, import BFI -44 questionnaire responses, retrieve social media posts, execute the 
+prediction pipeline, and review generated personality profiles. 
+The machine learning pipeline operates as the analytical core of the system. Following data 
+acquisition and preprocessing, informative posts are selected using the Q -learning module 
+Researcher
+Authentication Module
+Research Dashboard
+Data Acquisition, Prediction, Pipeline 
+Reporting
+System Database
+
+=== PDF PAGE 54 ===
+42 
+ 
+before contextual representations are generated using BERT embeddings. During model 
+training, embedding augmentation is performed to increase the diversity of the training data, 
+after which Lasso/ElasticNet  regression predicts the five Big Five personality traits. The 
+generated predictions, together with the corresponding evaluation metrics, are stored in the 
+database and presented through the reporting dashboard. 
+To improve system responsiveness, computationally intensive prediction tasks are executed 
+asynchronously using Celery workers, allowing researchers to continue interacting with the 
+application while the prediction pipeline executes in the background. This architecture 
+separates user interaction from long -running machine learning processes, resulting in a more 
+responsive and reliable research platform. 
+The overall architecture establishes a clear separation between presentation, application logic, 
+machine learning services, and data persistence, enabling each component to operate 
+independently while contributing to the complete personality prediction workflow. 
+3.5 Data Acquisition and Preparation 
+The quality of personality prediction depends largely on the quality of the data supplied to the 
+prediction pipeline. Consequently, the proposed system adopts a structured data acquisition 
+and preparation process that integrates psychometric assessment wit h social media content. 
+Two primary data sources are used throughout the study: BFI -44 questionnaire responses, 
+which provide the ground-truth personality labels, and publicly available posts collected from 
+X (formerly Twitter), which provide the textual data used for personality prediction. 
+Before prediction, all collected data undergo validation and preprocessing to ensure 
+consistency, completeness, and suitability for machine learning. The preparation process 
+removes invalid records, standardizes textual content, and organizes the data into  a format 
+compatible with the subsequent processing stages. 
+
+=== PDF PAGE 55 ===
+43 
+ 
+3.5.1 Participant Registration and BFI-44 Data Acquisition 
+The prediction process begins with participant registration. Each participant is represented 
+within the system as a volunteer and is associated with the researcher responsible for the study. 
+During data collection, participants complete the Big Five Invent ory (BFI-44) questionnaire, 
+and their responses are exported as a comma-separated values (CSV) file. 
+The researcher uploads the CSV file through the system's data acquisition interface. During 
+import, each record is validated to ensure that the participant identifier is unique and that 
+informed consent has been provided before further processing. Valid records are automatically 
+converted into participant profiles, while the forty -four questionnaire responses are stored as 
+BFI survey records. 
+The imported questionnaire responses are subsequently processed by the BFI scoring module, 
+which applies reverse scoring where required and computes the five OCEAN personality trait 
+scores. These scores serve as the ground-truth labels for training and evaluating the personality 
+prediction model. 
+3.5.2 Social Media Data Acquisition 
+Following participant registration and questionnaire processing, the system acquires textual 
+data from X (formerly Twitter) to provide the input required for personality prediction. Each 
+participant is associated with a unique X username, which serves as the identifier for retrieving 
+publicly available posts through the system's data collection service. 
+Data acquisition is initiated by the researcher through the system interface after a participant 
+has been successfully registered. The application queries  the configured retrieval service to 
+obtain recent posts associated with the participant's account. The retrieved records include the 
+post content together with relevant metadata such as the publication date, engagement statistics, 
+hashtags, mentions, and embedded links where available. 
+Each retrieved post is validated before storage to ensure that incomplete, duplicated, or invalid 
+records are excluded from subsequent processing. Valid posts are persisted within the POST 
+
+=== PDF PAGE 56 ===
+44 
+ 
+table and linked to their corresponding participant through the volunteer identifier. This 
+association enables the prediction pipeline to retrieve only the posts belonging to the selected 
+participant during model execution. 
+Separating data acquisition from the machine learning pipeline improves system modularity by 
+allowing additional posts to be collected independently of prediction. It also enables 
+researchers to verify the collected data before initiating personality predi ction, thereby 
+improving data quality and reducing unnecessary processing. 
+ 
+
+=== PDF PAGE 57 ===
+45 
+ 
+ 
+Figure 3.2: Social Media Data Acquisition Process 
+
+
+=== PDF PAGE 58 ===
+46 
+ 
+3.5.3 Data Validation 
+Following data acquisition, the collected questionnaire responses and social media records 
+undergo a validation process to ensure that only complete and consistent data are forwarded 
+to the personality prediction pipeline. The objective of this stage is to  identify missing 
+values, duplicate records, and invalid entries that may negatively affect model performance. 
+For BFI-44 questionnaire data, the validation process verifies that all required questionnaire 
+items are present, participant identifiers are unique, and informed consent has been 
+recorded before the responses are processed for personality score computatio n. Records 
+containing incomplete questionnaire responses or invalid participant information are 
+rejected during import. 
+Similarly, social media records are validated after retrieval. The system checks that each 
+post contains valid textual content and is correctly associated with an existing participant. 
+Duplicate posts, empty records, and retrieval errors are excluded from further processing. 
+Metadata associated with each post, including publication date and engagement statistics, 
+is also verified before storage. 
+Validated records are committed to the database and become available for preprocessing 
+and feature extraction. By performing validation before machine learning, the system 
+minimizes data inconsistencies, reduces unnecessary computational overhead, and 
+improves the reliability of the generated personality predictions. 
+3.5.4 Data Preprocessing 
+After validation, the collected social media posts undergo preprocessing to improve data 
+quality and ensure compatibility with the personality prediction pipeline. The objective of 
+this stage is to transform raw textual data into a consistent format suitab le for feature 
+extraction while preserving the semantic information required for personality analysis. 
+The preprocessing module first removes duplicate entries and records containing 
+insufficient textual content. Hyperlinks, unnecessary whitespace, and unsupported 
+
+=== PDF PAGE 59 ===
+47 
+ 
+characters are eliminated to reduce noise within the dataset. Depending on the 
+preprocessing rules, user mentions and hashtags are either retained as meaningful 
+contextual features or normalized into a standard representation. The processed text is then 
+standardized before being forwarded to the embedding generation stage. 
+Each cleaned post remains linked to its corresponding participant and retains relevant 
+metadata, including publication date and engagement statistics. This information is 
+preserved because subsequent stages of the pipeline use both textual content and 
+behavioural indicators during informative post selection. 
+The output of this stage is a collection of validated and standardized posts that serve as the 
+input for Q-learning-based post selection and contextual embedding generation. 
+3.6 Personality Prediction Pipeline 
+The personality prediction pipeline constitutes the analytical core of the proposed system. 
+Following data acquisition and preprocessing, the validated dataset is processed through a 
+sequence of interconnected machine learning stages that transform raw soc ial media posts 
+into quantitative Big Five personality predictions. Each stage receives the output of the 
+preceding stage, ensuring a structured and reproducible workflow. 
+The pipeline begins by selecting the most informative posts for each participant before 
+generating contextual semantic representations. The resulting feature vectors are 
+subsequently expanded during model training to improve data diversity and are then 
+supplied to the prediction model to estimate the five personality traits. The generated 
+personality scores, together with the associated evaluation metrics, are finally stored in the 
+database and made available through the researcher dashboard. 
+The modular organization of the pipeline enables each processing stage to perform a 
+specific responsibility while maintaining independence from other components. This 
+improves maintainability, facilitates future enhancements, and allows individual stages t o 
+be evaluated without affecting the overall system. 
+
+=== PDF PAGE 60 ===
+48 
+ 
+3.6.1 Q-Learning-Based Post Selection 
+The first stage of the personality prediction pipeline identifies the most informative posts 
+for personality analysis. Rather than processing every retrieved post, the system applies a 
+Q-learning-based selection strategy to prioritize posts that are likely  to contribute more 
+useful information to the prediction model. This approach reduces the volume of text 
+processed by subsequent stages while preserving representative behavioural and linguistic 
+information. 
+For each participant, the system retrieves the validated posts stored in the database and 
+computes a state representation based on selected post characteristics. These characteristics 
+include engagement level, publication recency, text length, the presence  of hashtags, and 
+the presence of external links. Using these state features, the Q-learning agent estimates the 
+expected value of selecting each post and determines whether it should proceed to the 
+embedding stage. 
+The selection policy follows an epsilon-greedy strategy in which the agent primarily selects 
+posts with the highest estimated utility while occasionally exploring alternative posts 
+during training. This balance between exploitation and exploration improves  the diversity 
+of the selected dataset and prevents the selection process from becoming biased toward a 
+small subset of posts. 
+The selected posts are flagged within the database and forwarded to the BERT embedding 
+module. Posts that are not selected remain available for future processing but are excluded 
+from the current prediction cycle. By reducing the number of posts requiring contextual 
+encoding, the selection stage decreases computational cost and improves the efficiency of 
+the overall prediction pipeline. 
+ 
+
+=== PDF PAGE 61 ===
+49 
+ 
+3.6.3 GAN-Style Embedding Augmentation 
+Following BERT embedding extraction, the generated feature vectors undergo an 
+augmentation stage during model training. The purpose of this stage is to increase the 
+diversity of the available training data and improve the robustness of the personality 
+prediction models when trained on relatively small datasets. 
+The augmentation module operates on the stored BERT embeddings rather than the original 
+textual content. For each embedding, the system generates additional synthetic feature 
+vectors by applying controlled perturbations while preserving the overall semanti c 
+characteristics of the original representation. This process increases the effective number 
+of training samples without requiring additional participant data. 
+The generated synthetic embeddings are stored separately from the original embeddings 
+and are used only during model training. They are not presented to researchers or used as 
+participant records. Separating augmented data from the original observations pr eserves 
+data integrity while allowing the prediction models to learn from a more diverse feature 
+space. 
+The augmented dataset is subsequently supplied to the regression stage, where personality 
+prediction models are trained for each of the five Big Five personality traits. 
+  
+
+=== PDF PAGE 62 ===
+50 
+ 
+3.6.4 Lasso Personality Prediction 
+After feature augmentation, the resulting embedding vectors are supplied to the prediction 
+module, where the personality traits are estimated using sparse regression models. The 
+objective of this stage is to learn the relationship between the contextual fe ature 
+representations extracted from social media posts and the corresponding Big Five 
+personality scores obtained from the BFI-44 questionnaire. 
+The system trains an independent regression model for each of the five personality 
+dimensions: Openness, Conscientiousness, Extraversion, Agreeableness, and Neuroticism. 
+During training, the augmented embeddings serve as the input features, while the computed 
+BFI-44 scores provide the target values. Feature normalization is performed before model 
+fitting to ensure that all embedding dimensions contribute consistently to the learning 
+process. 
+The prediction models employ Lasso and ElasticNet  regression to produce sparse and 
+interpretable models. Following training, each model estimates the personality score 
+corresponding to its assigned trait. In addition to the predicted scores, the system computes 
+evaluation metrics, including the Mean Absolute Error (MAE), coefficient of determination 
+(R²), and correlation coefficient whenever sufficient labelled data are available. 
+The trained models, predicted personality scores, and evaluation metrics are stored within 
+the database for subsequent reporting and visualization through the researcher dashboard. 
+  
+
+=== PDF PAGE 63 ===
+51 
+ 
+Output Description 
+Openness Score Predicted openness trait value 
+Conscientiousness Score Predicted conscientiousness trait value 
+Extraversion Score Predicted extraversion trait value 
+Agreeableness Score Predicted agreeableness trait value 
+Neuroticism Score Predicted neuroticism trait value 
+MAE Mean Absolute Error 
+R² Coefficient of determination 
+Correlation Relationship between predicted and observed scores 
+Table 3.1: Personality Prediction Outputs 
+3.6.5 Personality Profile Generation and Result Presentation 
+Upon completion of the prediction stage, the estimated Big Five personality scores are 
+consolidated into a psychometric profile for the selected participant. This profile represents 
+the final output of the personality prediction pipeline and provides a str uctured summary 
+of the participant's predicted personality characteristics. 
+The generated profile includes the predicted scores for Openness, Conscientiousness, 
+Extraversion, Agreeableness, and Neuroticism together with the associated evaluation 
+metrics produced during model execution. These results are stored within the 
+PSYCHOMETRIC_PROFILE table, allowing previously generated predictions to be 
+retrieved without re-executing the complete pipeline. 
+To support interpretation, the application presents the predicted personality profile through 
+the researcher dashboard. Individual participant pages display the predicted trait scores, 
+model performance indicators, and supporting information generated during the prediction 
+process. Radar charts are used to visualize the relative distribution of the five personality 
+dimensions, enabling researchers to compare trait strengths within a participant's profile. 
+
+=== PDF PAGE 64 ===
+52 
+ 
+The system also records the execution status of each prediction task, ensuring that 
+completed analyses, processing history, and generated reports remain available for future 
+review. This persistence mechanism improves reproducibility and allows researchers  to 
+monitor prediction outcomes across multiple participants throughout the study. 
+3.7 System Modeling and Design 
+The design of the proposed personality prediction platform is represented using system 
+modeling techniques that describe the flow of information and the organization of persistent 
+data. Data Flow Diagrams (DFDs) illustrate the movement of information throu gh the 
+application, while the Entity Relationship Diagram (ERD) describes the logical structure of the 
+database used to support the system. 
+3.7.1 Data Flow Diagram (DFD) Decomposition 
+DFD Level 0 (Context Diagram): Represents the proposed personality prediction platform as 
+a single process interacting with external entities, including the researcher and the X (Twitter) 
+platform. The researcher supplies participant information and BFI-44 survey responses, while 
+the X platform provides social media posts used for personality prediction. The system returns 
+the predicted Big Five personality profile and supporting evaluation results.
+ 
+Figure 3.3:  Data Flow Diagram – Level 0 
+DFD Level 1 (Functional Overview): Breaks the system into data Acquisition, selection (Q-
+Learning), encoding (BERT), augmentation (GAN), and modeling (Lasso). 
+
+
+=== PDF PAGE 65 ===
+53 
+ 
+DFD Level 2: Decomposes the Personality Prediction process into feature normalization, 
+model loading, trait prediction, evaluation metric computation, and result storage. 
+ 
+Figure 3.4:  Data Pipeline Diagram for the Big Five Personality Prediction System. 
+3.7.2 Database Schema (ERD) 
+
+
+=== PDF PAGE 66 ===
+54 
+ 
+ 
+Figure 3.5: Entity-Relationship Diagram (ERD) 
+
+
+=== PDF PAGE 67 ===
+55 
+ 
+3.8 Ethical Considerations and Data Protection 
+Personality prediction involves the processing of sensitive behavioural data and therefore 
+requires appropriate ethical safeguards throughout the research process. This study complies 
+with the principles of the Nigeria Data Protection Regulation (NDPR) 201 9 and the Nigeria 
+Data Protection Act (NDPA) 2023 by ensuring that participants provide informed consent 
+before any questionnaire responses or social media data are collected. 
+Only the information required for personality prediction is processed, in accordance with the 
+principle of data minimization. Participant records are linked through system -generated 
+identifiers, while personally identifiable information is restricted to au thorized researchers. 
+Access to the platform is controlled through authenticated researcher accounts, and all 
+prediction records are stored within the secured database. 
+To improve transparency, the proposed prediction model employs sparse regression techniques 
+that allow the contribution of selected features to be examined. This supports the 
+interpretability of prediction outcomes and enables researchers to understand the  basis of the 
+generated personality scores. The system is intended solely for research and educational 
+purposes and is not designed to make automated decisions affecting participants without human 
+review. 
+3.9 Model Evaluation Metrics 
+The effectiveness of the proposed personality prediction system is assessed using standard 
+regression performance measures and model validation techniques. These metrics provide an 
+objective basis for evaluating the accuracy, reliability, and generalizatio n capability of the 
+trained models. 
+3.9.1 Prediction Accuracy 
+Prediction accuracy is evaluated using the Mean Absolute Error (MAE) and the Root Mean 
+Square Error (RMSE). MAE measures the average magnitude of prediction errors without 
+considering their direction, while RMSE assigns greater weight to larger prediction errors. 
+
+=== PDF PAGE 68 ===
+56 
+ 
+Together, these metrics provide a comprehensive assessment of how closely the predicted 
+OCEAN scores correspond to the ground-truth BFI-44 scores. 
+3.9.2 Model Goodness of Fit 
+The Coefficient of Determination (R²) is used to determine how well the regression models 
+explain variations in the observed personality trait scores. Higher R² values indicate stronger 
+predictive performance and better agreement between the predicted and actual personality 
+profiles. 
+3.9.3 Model Validation 
+To assess the robustness and generalization capability of the proposed pipeline, the trained 
+models are evaluated using 5-fold cross-validation. The dataset is partitioned into five subsets, 
+with each subset serving as the validation set once while the rem aining subsets are used for 
+training. This evaluation strategy minimizes the likelihood of overfitting and provides a more 
+reliable estimate of model performance on unseen data. 
+ 
+

@@ -958,6 +958,8 @@ def _run_lasso(
         )
         y_bin, gt_cut = me.derive_binary_ground_truth(y_val_unit, gt_input)
         sweep = me.sweep_thresholds_on_scores(y_bin, val_pred)
+        roc = me.compute_roc_curve_metrics(y_bin, val_pred)
+        pr = me.compute_precision_recall_curve_metrics(y_bin, val_pred)
 
         true_unit[:, ti] = y_val_unit
         lasso_pred_mat[:, ti] = val_pred
@@ -973,10 +975,18 @@ def _run_lasso(
             "macro_f1": _f(cls["f1"]),
             "macro_precision": _f(cls["precision"]),
             "macro_recall": _f(cls["recall"]),
+            "specificity": sweep.get("specificity"),
+            "precision": sweep.get("precision"),
+            "recall": sweep.get("recall"),
+            "f1": sweep.get("f1"),
+            "roc_auc": roc.get("auc"),
+            "pr_auc": pr.get("average_precision"),
             "confusion_matrix": cls["confusion_matrix"],
             "threshold_sweep": {
                 "best_threshold": sweep["best_threshold"],
                 "best_f1": sweep["best_f1"],
+                "selection_score": sweep.get("selection_score"),
+                "selection_policy": "max_harmonic_mean_f1_specificity",
                 "ground_truth_cutoff": _f(gt_cut),
             },
             "tertile_cuts": [low_cut, high_cut],
@@ -990,6 +1000,12 @@ def _run_lasso(
         "val_pearson": _mean([per_trait[t]["val_pearson"] for t in OCEAN_TRAITS]),
         "accuracy": _mean([per_trait[t]["accuracy"] for t in OCEAN_TRAITS]),
         "macro_f1": _mean([per_trait[t]["macro_f1"] for t in OCEAN_TRAITS]),
+        "specificity": _mean([per_trait[t]["specificity"] for t in OCEAN_TRAITS]),
+        "precision": _mean([per_trait[t]["precision"] for t in OCEAN_TRAITS]),
+        "recall": _mean([per_trait[t]["recall"] for t in OCEAN_TRAITS]),
+        "f1": _mean([per_trait[t]["f1"] for t in OCEAN_TRAITS]),
+        "roc_auc": _mean([per_trait[t]["roc_auc"] for t in OCEAN_TRAITS]),
+        "pr_auc": _mean([per_trait[t]["pr_auc"] for t in OCEAN_TRAITS]),
     }
     raw = {"true_unit": true_unit, "lasso_pred": lasso_pred_mat, "true_classes": true_classes}
     return {"per_trait": per_trait, "overall": overall, "targeted_gan": gan_report}, trainer, raw
@@ -1196,6 +1212,11 @@ def _run_condition(
                     "val_pearson": _mean([test_per_trait[t]["val_pearson"] for t in TRAIT_KEYS]),
                     "accuracy": test_eval["aggregate"]["accuracy"],
                     "macro_f1": test_eval["aggregate"]["f1"],
+                    "f1": test_eval["aggregate"]["f1"],
+                    "macro_precision": test_eval["aggregate"].get("precision"),
+                    "precision": test_eval["aggregate"].get("precision"),
+                    "macro_recall": test_eval["aggregate"].get("recall"),
+                    "recall": test_eval["aggregate"].get("recall"),
                     "specificity": test_eval["aggregate"]["specificity"],
                     "roc_auc": test_eval["aggregate"].get("roc_auc"),
                     "pr_auc": test_eval["aggregate"].get("pr_auc"),
@@ -1230,6 +1251,8 @@ def _run_condition(
                 y_bin, gt_cut = me.derive_binary_ground_truth(y_test_unit, gt_input)
                 official = me.compute_classification_metrics_at_threshold(y_bin, pred, selected_tau)
                 sweep = me.sweep_thresholds_on_scores(y_bin, pred, None)
+                roc = me.compute_roc_curve_metrics(y_bin, pred)
+                pr = me.compute_precision_recall_curve_metrics(y_bin, pred)
                 true_unit[:, ti] = y_test_unit
                 pred_mat[:, ti] = pred
                 true_classes[:, ti] = y_cls
@@ -1246,6 +1269,8 @@ def _run_condition(
                     "precision": official["precision"],
                     "recall": official["recall"],
                     "f1": official["f1_score"],
+                    "roc_auc": roc.get("auc"),
+                    "pr_auc": pr.get("average_precision"),
                     "selected_threshold": selected_tau,
                     "threshold_source": "validation",
                     "threshold_sweep": sweep["results"],
@@ -1351,7 +1376,49 @@ def _reporting_aliases(overall: Dict[str, Any]) -> Dict[str, Any]:
         out["official_f1"] = out.get("macro_f1")
     if out.get("official_accuracy") is None:
         out["official_accuracy"] = out.get("accuracy")
+    if out.get("precision") is None:
+        out["precision"] = out.get("macro_precision")
+    if out.get("recall") is None:
+        out["recall"] = out.get("macro_recall")
+    if out.get("f1") is None:
+        out["f1"] = out.get("macro_f1")
     return out
+
+
+def _threshold_selection_from_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose validation-selected thresholds in an audit-friendly top-level block."""
+    validation = result.get("validation") or {}
+    per_trait = validation.get("per_trait") or result.get("per_trait") or {}
+    selected: Dict[str, Any] = {}
+    for trait, block in per_trait.items():
+        if not isinstance(block, dict):
+            continue
+        tau = block.get("best_threshold")
+        sweep = block.get("threshold_sweep")
+        if tau is None and isinstance(sweep, dict):
+            tau = sweep.get("best_threshold")
+        if tau is None and block.get("selected_threshold") is not None:
+            tau = block.get("selected_threshold")
+        if tau is None:
+            continue
+        selected[str(trait)] = {
+            "threshold": _f(tau),
+            "source_split": "validation",
+            "selection_policy": (
+                block.get("selection_policy")
+                or (sweep[0].get("selection_policy") if isinstance(sweep, list) and sweep and isinstance(sweep[0], dict) else None)
+                or "max_harmonic_mean_f1_specificity"
+            ),
+            "ground_truth_cutoff": _f(block.get("ground_truth_cutoff")),
+        }
+    return {
+        "split": "validation",
+        "per_trait": selected,
+        "notes": [
+            "Thresholds are selected on validation predictions only.",
+            "The frozen validation thresholds are applied to the test split for secondary High/Low metrics.",
+        ],
+    }
 
 
 def _json_default(obj: Any) -> Any:
@@ -1410,7 +1477,18 @@ def _measure_experiment_filter(
             "users_before_filter": sample.n_users,
             "users_after_filter": sample.n_users,
             "users_used": sample.n_users,
-            "exclusion_reasons": {},
+            "exclusion_reasons": {
+                "missing_traits": exclusion(
+                    0,
+                    "No sampled file-defined participant was excluded for missing OCEAN traits.",
+                    stage="experiment_filter",
+                ),
+                "too_few_comments": exclusion(
+                    0,
+                    f"No sampled file-defined participant was excluded for having fewer than {cfg.min_comments_per_user} comments.",
+                    stage="experiment_filter",
+                ),
+            },
         }
     n_before = len(prepared)
     n_no_traits = sum(1 for user in prepared if user.traits is None)
@@ -1468,7 +1546,7 @@ def _assemble_data_quality(
     ]
     if not ingestion or not ingestion.get("available"):
         notes.append("Ingestion/cleaning counts were not measured in this process.")
-    return build_experiment_data_quality(
+    quality = build_experiment_data_quality(
         ingestion=ingestion,
         users_before_filter=filt["users_before_filter"],
         users_after_filter=filt["users_after_filter"],
@@ -1477,6 +1555,30 @@ def _assemble_data_quality(
         comment_volume=volume,
         notes=notes,
     )
+    if not ingestion or not ingestion.get("available"):
+        total_comments = int(sum(all_counts))
+        quality["cleaning"] = {
+            "available": True,
+            "source": "file_defined_dataset_loaded_as_cleaned",
+            "comments_before_cleaning": total_comments,
+            "comments_after_cleaning": total_comments,
+            "comments_retained": total_comments,
+            "excluded_too_short": exclusion(0, "No additional too-short comment filtering was applied inside the experiment runner.", stage="experiment_cleaning"),
+            "excluded_duplicate": exclusion(0, "No additional duplicate comment filtering was applied inside the experiment runner.", stage="experiment_cleaning"),
+            "excluded_invalid_content": exclusion(0, "No additional invalid-content filtering was applied inside the experiment runner.", stage="experiment_cleaning"),
+            "comment_retention": {
+                "numerator": total_comments,
+                "denominator": total_comments,
+                "denominator_name": "comments_loaded_from_file_defined_splits",
+                "percent": 100.0 if total_comments else None,
+            },
+        }
+        quality["retention"]["comments_cleaning"] = quality["cleaning"]["comment_retention"]
+        quality["notes"].append(
+            "Excel/file-defined splits are treated as the cleaned input to the experiment runner; no additional in-run text cleaning removed comments."
+        )
+        quality["thesis_rows"] = thesis_rows(quality)
+    return quality
 
 
 def _build_experiment_data(
@@ -1635,6 +1737,7 @@ def run_all(
             trait_label_thresholds=trait_label_thresholds,
         )
         out["training_seconds"] = _f(time.perf_counter() - condition_start)
+        out["threshold_selection"] = _threshold_selection_from_result(out)
         results[exp_id] = out
         models[exp_id] = model
 

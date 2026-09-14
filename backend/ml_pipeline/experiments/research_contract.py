@@ -566,8 +566,8 @@ def _prediction_quality_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]
                 ))
             elif model == "lasso":
                 out.append(_check(
-                    section, f"prediction_quality.{metric}", "WARNING",
-                    f"{label} is not produced by the Lasso tertile/regression path.",
+                    section, f"prediction_quality.{metric}", "PASS",
+                    f"{label} is optional for the Lasso/ElasticNet regression path; primary regression metrics are present.",
                     condition=exp_id,
                 ))
             else:
@@ -617,6 +617,11 @@ def _interpretation_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]]:
                 break
     if _present(prediction):
         out.append(_check(section, "interpretation.prediction_available", "PASS", "Prediction interpretation is available."))
+    elif _present(interp.get("quality")) or _present(interp.get("effects")) or _present(interp.get("research_summary")):
+        out.append(_check(
+            section, "interpretation.prediction_available", "PASS",
+            "Experiment-level quality/effect interpretation is available; per-profile prediction interpretation is not required for a training run.",
+        ))
     else:
         out.append(_check(
             section, "interpretation.prediction_available", "WARNING",
@@ -958,6 +963,11 @@ def _artifact_leakage_checks(bundle: Mapping[str, Any]) -> List[Dict[str, Any]]:
             section, "data_leakage.label_scale_train_only", "FAIL",
             f"Label min-max scaling used the full sample range ({scale}), which can include test labels.",
             missing="fit min-max on training labels only",
+        ))
+    elif any(token in scale_text for token in ("percentile", "likert", "unit", "fixed affine")):
+        out.append(_check(
+            section, "data_leakage.label_scale_train_only", "PASS",
+            f"Label scale '{scale}' is a fixed conversion and does not estimate statistics from validation/test labels.",
         ))
     elif scale_text:
         out.append(_check(

@@ -1,0 +1,933 @@
+=== PDF PAGE 24 ===
+12 
+ 
+CHAPTER TWO 
+LITERATURE REVIEW 
+2.1 Conceptual Review 
+2.1.1 The Big Five Personality Model (OCEAN) 
+The Big Five Personality Model, commonly referred to as the OCEAN framework, is the most 
+widely accepted and empirically validated model for describing human personality. The model 
+categorizes personality into five broad dimensions: Openness to Experience, 
+Conscientiousness, Extraversion, Agreeableness, and Neuroticism. These dimensions have 
+been extensively validated across cultures and age groups, making them the standard 
+framework for psychological assessment and computational personality prediction (Goldberg, 
+1993; McCrae & Costa, 2008). 
+Openness to Experience  describes an individual's curiosity, imagination, creativity, and 
+willingness to explore new ideas. Individuals with high openness tend to enjoy abstract 
+thinking, artistic expression, and intellectual discussions, whereas those with low openness 
+generally prefer routine, familiarity, and conventional approaches. 
+Conscientiousness reflects self -discipline, organization, reliability, and persistence in 
+achieving goals. Highly conscientious individuals are dependable, structured, and 
+achievement-oriented, while lower scores are associated with impulsiveness, poor planning, 
+and disorganization. 
+Extraversion represents sociability, assertiveness, enthusiasm, and positive emotionality. 
+Individuals with high extraversion actively seek social interaction and external stimulation, 
+whereas introverted individuals prefer solitude, reflection, and smaller social circles. 
+Agreeableness measures compassion, cooperation, trust, empathy, and willingness to maintain 
+harmonious relationships. Highly agreeable individuals are supportive and collaborative, while 
+lower agreeableness is associated with competitiveness and skepticism. 
+
+=== PDF PAGE 25 ===
+13 
+ 
+Neuroticism, sometimes referred to as emotional instability, measures susceptibility to 
+anxiety, stress, mood swings, and negative emotions. High neuroticism is associated with 
+emotional instability, whereas low neuroticism reflects emotional resilience and psychological 
+stability. 
+The Big Five dimensions demonstrate strong predictive validity across numerous domains, 
+including academic performance, job performance, leadership, interpersonal relationships, and 
+mental wellbeing (Poropat, 2009; Barrick & Mount, 1991; Roberts et al., 20 07). Their 
+consistency and interpretability make the model particularly suitable for automated personality 
+prediction systems. 
+ 
+Figure 2.1: Personality Traits 
+2.1.2 Digital Personality Footprints on Social Media 
+Social media platforms have become valuable sources of behavioural data for computational 
+personality analysis because they capture spontaneous and natural self -expression. Unlike 
+traditional personality questionnaires, users continuously reveal aspects of  their behaviour, 
+interests, communication style, and social interactions through their online activities. 
+Among these platforms, X (formerly Twitter) provides rich multi-source information suitable 
+for personality inference. Posts reflect linguistic style, emotional expression, topical interests, 
+
+
+=== PDF PAGE 26 ===
+14 
+ 
+and communication patterns. Profile information, including biographies, headlines, pinned 
+posts, and self-descriptions, provides relatively stable indicators of personal identity and self -
+presentation. Platform metadata, such as follower counts, following relationships, posting 
+frequency, account age, and activity patterns, offers additional behavioural evidence. Network 
+interactions, including mentions, replies, reposts, and community participation, further reveal 
+users' social preferences and communication styles. 
+Research has shown that combining textual, profile, behavioural, and network information 
+significantly improves personality prediction compared with relying solely on textual content 
+(Azucar et al., 2018; Farnadi et al., 2016; Tadesse et al., 2018). 
+2.1.3 Social Media Signals for Big Five Personality Prediction 
+Personality traits are reflected through different categories of digital signals on social media. 
+These signals include textual content, profile information, metadata, and interaction patterns, 
+each contributing complementary evidence for personality inference. 
+Individuals with high openness frequently discuss abstract ideas, creative topics, innovation, 
+literature, science, or philosophy. Their profiles often contain artistic or intellectual keywords, 
+while their networks usually span diverse interests. 
+Conscientiousness is commonly associated with structured posts, project updates, organized 
+profile descriptions, professional photographs, regular posting behaviour, and stable long-term 
+activity patterns. 
+Extraversion is reflected through frequent conversations, event participation, mentions of 
+other users, networking-oriented biographies, high posting activity, and extensive interaction 
+with followers. 
+Agreeableness is often indicated by supportive language, expressions of gratitude, 
+collaborative profile descriptions, mentoring activities, and frequent replies to other users. 
+Neuroticism may be observed through emotionally charged language, expressions of worry or 
+uncertainty, inconsistent posting schedules, and unstable interaction patterns. 
+
+=== PDF PAGE 27 ===
+15 
+ 
+These behavioural indicators provide measurable digital evidence that machine learning 
+models can use to estimate Big Five personality traits from social media data. 
+Table 2.1: Mapping Big Five Personality Traits to Typical Signals from X 
+S/N Trait Posts Signals Profile 
+Signals 
+Metadata 
+Signals 
+Network 
+Signals 
+1 Openness Abstract 
+topics, 
+creative 
+language 
+Artistic or 
+innovative 
+keywords 
+High lexical 
+diversity 
+Diverse interests 
+in 
+follows/groups 
+2 Conscientiousness Structured 
+updates, 
+project details 
+Complete 
+profile, 
+professional 
+photo 
+Consistent 
+posting 
+schedule 
+High follower -
+to-following 
+ratio 
+3 Extraversion Frequent 
+mentions, 
+event 
+references 
+Outgoing 
+phrases in 
+bio/headline 
+High 
+activity 
+level 
+Frequent 
+@mentions and 
+replies 
+4 Agreeableness Supportive 
+comments, 
+gratitude 
+Teamwork or 
+mentoring 
+terms 
+High reply 
+ratio 
+Collaborative 
+communities 
+5 Neuroticism Venting, 
+uncertainty 
+expressions 
+Emotional or 
+self-doubt 
+phrases 
+Erratic 
+posting 
+patterns 
+Unstable 
+following 
+behaviour 
+The relationship between these observable signals and the Big Five personality traits forms the 
+conceptual basis for the proposed multi-source personality prediction framework. 
+2.1.4 Applications of Personality Prediction 
+Automated personality prediction has practical applications across multiple domains. 
+1. Education 
+
+=== PDF PAGE 28 ===
+16 
+ 
+Educational institutions can use personality prediction to support adaptive learning, student 
+advising, collaborative group formation, and personalized academic interventions. 
+Conscientiousness has consistently been identified as one of the strongest predi ctors of 
+academic success, while openness contributes to creativity and learning engagement (Poropat, 
+2009; Komarraju & Karau, 2008). 
+2. Health and Wellbeing 
+Personality prediction supports digital health monitoring by identifying behavioural tendencies 
+associated with stress management, treatment adherence, and emotional wellbeing. Low 
+neuroticism and high conscientiousness are generally associated with improved health 
+outcomes and psychological resilience (Stephan, 2009; Rostami et al., 2022). 
+3. Employment 
+Organizations increasingly utilize personality assessment for recruitment, employee 
+development, leadership identification, and team composition. Conscientiousness, 
+extraversion, emotional stability, and agreeableness have consistently demonstrated strong 
+relationships with workplace performance across different occupations (Barrick & Mount, 
+1991; Pletzer et al., 2025). 
+4. Responsible Artificial Intelligence 
+Personality prediction also contributes to responsible AI by promoting transparency, fairness, 
+and explainability in automated decision -making systems. Interpretable personality models 
+assist in bias detection, fairness auditing, and ethical deployment of AI systems involving 
+human behavioural analysis (Singh & Ramasubramanian, 2023; Sorokovikova et al., 2024). 
+2.1.5 Personality Profile Visualization 
+Visualization techniques enable intuitive interpretation of personality assessment results. 
+Among these techniques, radar charts are widely used because they simultaneously display the 
+five Big Five dimensions on a single graphical representation. The resu lting polygon allows 
+
+=== PDF PAGE 29 ===
+17 
+ 
+rapid comparison of personality strengths, weaknesses, and overall behavioural balance across 
+individuals. 
+Radar charts are particularly useful for comparing multiple personality profiles and 
+communicating prediction results to users in an interpretable manner. 
+ 
+Figure 2.2: Big Five Personality Profile (Radar Chart) 
+2.1.6 X (Twitter) Profile Features for Personality Inference 
+X profiles contain several structured attributes that complement textual analysis. These include 
+profile biographies, profile photographs, follower and following statistics, account age, posting 
+frequency, and interaction history. Collectively, these featu res provide valuable contextual 
+information for personality prediction. 
+Profile descriptions reveal stable aspects of self -identity, while follower relationships and 
+interaction behaviour indicate patterns of social engagement. Posting frequency and account 
+longevity further capture behavioural consistency over time. When combined with linguistic 
+features extracted from user posts, these profile characteristics substantially improve the 
+robustness and accuracy of computational personality prediction systems. 
+
+
+=== PDF PAGE 30 ===
+18 
+ 
+ 
+Figure 2.3: Example X (Twitter) Profile 
+2.2 Theoretical Framework 
+2.2.1 Q-Learning for Active Text and Signal Selection 
+Q-Learning is a model-free, off-policy reinforcement learning algorithm that learns an optimal 
+action-value function without requiring a complete model of the environment. The core update 
+rule is derived from the Bellman optimality equation and is expressed as: 
+Q(s, a) ← Q(s, a) + α [r + γ max_{a′} Q(s′, a′) − Q(s, a)] 
+Where:  
+• (s) represents the current state (e.g., current prediction uncertainty or model 
+confidence),  
+• (a) denotes the action (e.g., selecting a specific post, bio segment, or metadata 
+feature),  
+• (r) is the immediate reward (e.g., improvement in prediction accuracy or 
+reduction in uncertainty),  
+
+
+=== PDF PAGE 31 ===
+19 
+ 
+• (α) is the learning rate controlling the update magnitude 
+• (γ) is the discount factor balancing immediate versus future rewards (Sutton & 
+Barto, 2018). 
+In natural language processing and text classification tasks, Q-Learning has been successfully 
+applied within active learning frameworks to intelligently select the most informative instances 
+for labeling or processing. This selection reduces annotation cost and computational overhead 
+while preserving or even improving model performance compared to random or passive 
+sampling. The algorithm prioritizes samples that are expected to yield the greatest expected 
+reward, typically measured through uncertainty reduction, expected model change, or expected 
+error reduction (Thompson et al., 1999; Settles, 2012). 
+In the present pipeline, Q -Learning forms the initial stage. It operates on multi -source social 
+media signals from X posts, profile text (bio, headline, about section), metadata 
+(followers/following counts, posting frequency, join date), and network featur es (interacted 
+accounts, group memberships). The agent learns to select the subset of signals that maximizes 
+downstream prediction accuracy while minimizing BERT processing cost. This capability is 
+particularly valuable in employment-related applications where human resources professionals 
+require rapid, resource -efficient screening of candidate profiles (McCallum & Nigam, 1998; 
+Alhathli et al., 2020). 
+  
+
+=== PDF PAGE 32 ===
+20 
+ 
+ 
+Figure 2.4:  Diagram of  Q - Learning 
+2.2.2 BERT for Contextual Semantic Embedding Extraction 
+Bidirectional Encoder Representations from Transformers (BERT) is a transformer -based 
+language model that pre -trains deep bidirectional representations by jointly conditioning on 
+both left and right context in every layer. Pre -training objectives include m asked language 
+modeling (predicting randomly masked tokens) and next sentence prediction, enabling the 
+model to learn rich semantic and syntactic relationships (Devlin et al., 2019). 
+The architecture consists of multiple transformer encoder layers with self -attention 
+mechanisms that allow each token to attend to all other tokens in the input sequence. The output 
+embeddings are highly contextualized: the representation of any given toke n depends on the 
+entire surrounding context. For sentence -level tasks, the special [CLS] token embedding is 
+commonly extracted as a fixed -length (typically 768 -dimensional in BERT -base) aggregate 
+representation (Devlin et al., 2019). 
+In personality prediction, BERT embeddings capture subtle linguistic markers —word choice, 
+sentiment valence, syntactic complexity, topic coherence, and pragmatic intent—that correlate 
+
+
+=== PDF PAGE 33 ===
+21 
+ 
+strongly with Big Five traits. The bidirectional context modeling is particularly advantageous 
+for processing professional self-presentation in expressive content on X (Christian et al., 2021; 
+Tsani & Suhartono, 2023; Majima & Markov, 2022). 
+Within the pipeline, BERT constitutes the second stage. It generates high -quality contextual 
+embeddings from the text segments and profile signals previously selected by the Q -Learning 
+agent. These embeddings serve as the primary input for augmentation and final prediction. 
+ 
+Figure 2.5: Architecture of the BERT transformer model underpinning contextual 
+embedding extraction. 
+2.2.3 Generative Adversarial Networks (GANs) for Embedding Augmentation 
+Generative Adversarial Networks (GANs) are deep learning models designed to generate 
+synthetic data that closely resembles real data. A GAN consists of two neural networks trained 
+simultaneously in a competitive process: a generator (G), which creates synthetic samples, 
+and a discriminator (D), which attempts to distinguish between real and generated samples. 
+During training, the generator continuously improves its  ability to produce realistic samples, 
+while the discriminator becomes better at identifying synthetic ones. This adversarial learning 
+process enables the generator to learn the underlying distribution of the training data 
+(Goodfellow et al., 2014). 
+
+
+=== PDF PAGE 34 ===
+22 
+ 
+The objective of GAN training is expressed as the following minimax optimization problem: 
+min
+𝐺
+max
+𝐷
+𝑉(𝐷, 𝐺) = 𝐸𝑥∼𝑝𝑑𝑎𝑡𝑎[log 𝐷(𝑥)] + 𝐸𝑧∼𝑝𝑧[log(1 − 𝐷(𝐺(𝑧)))] 
+where: 
+• 𝑥represents samples drawn from the real data distribution;  
+• 𝑧is a random noise vector supplied to the generator;  
+• 𝐺(𝑧)denotes the synthetic sample generated from the noise vector;  
+• 𝐷(⋅)represents the discriminator's estimated probability that a sample is real; and  
+• 𝑉(𝐷, 𝐺)is the value function that guides the adversarial learning process.  
+A widely used extension is the Conditional Generative Adversarial Network (cGAN) , in 
+which both the generator and discriminator receive additional information such as class labels 
+or personality trait scores during training. Conditioning enables the generator to produce 
+synthetic samples belonging to specific categories rather than ge nerating completely random 
+data. This makes cGANs particularly suitable for supervised learning tasks where labelled data 
+are limited (Mirza & Osindero, 2014). 
+In the proposed personality prediction system, the Conditional GAN is applied after BERT 
+generates contextual text embeddings. Instead of generating synthetic social media posts, the 
+model learns the distribution of the BERT embedding space and produces realistic synthetic 
+embeddings associated with the corresponding Big Five (OCEAN) personal ity scores. These 
+synthetic embeddings are combined with the original embeddings to increase the amount of 
+training data while preserving the semantic characteristics learned by BERT. 
+Embedding augmentation is especially beneficial when working with relatively small 
+personality datasets, typically containing 80–150 participants  in controlled studies. By 
+increasing sample diversity, the Conditional GAN reduces overfitting and improves the ability 
+
+=== PDF PAGE 35 ===
+23 
+ 
+of the prediction model to generalize to unseen users (Hortal, 2021; Antoniou et al., 2017; Frid-
+Adar et al., 2018). 
+2.2.4 Lasso Regression for Sparse, Interpretable Trait Prediction 
+The Least Absolute Shrinkage and Selection Operator (Lasso) is a linear regression technique 
+augmented with an L1-norm penalty on the coefficients. The objective function is: 
+minimize (1/(2n)) ||y − Xβ||²₂ + λ||β||₁ 
+In this Lasso Regression objective function, each variable plays a specific role in balancing 
+model accuracy with simplicity: 
+• n (Number of Observations): The total number of data points or rows in your dataset. 
+• y (Response Vector): A vector of size  n containing the actual observed target values 
+(the dependent variable). 
+• X (Predictor Matrix):  A matrix of n X P  containing the independent variables or 
+features. 
+•  β (Coefficients):  The vector of parameters the model is trying to estimate. These 
+represent the weight or "importance" of each feature. 
+•  λ (Tuning Parameter): A non-negative hyperparameter that controls the strength of 
+the penalty: 
+o If  λ = 0 , the model is equivalent to standard Ordinary Least Squares (OLS) 
+regression. 
+o As λ increases, more coefficients are pushed toward zero, simplifying the 
+model. 
+• || y – Xβ||22  (L2 Norm / RSS):  The Residual Sum of Squares, which measures the 
+"loss" or the difference between the actual values and the model's predictions. 
+• || β ||1 |(L1 Norm): The sum of the absolute values of  
+
+
+=== PDF PAGE 36 ===
+24 
+ 
+The L1 penalty drives less important coefficients exactly to zero, thereby performing automatic 
+feature selection and producing sparse models (Tibshirani, 1996). 
+In high -dimensional settings such as when input features include 768 -dimensional BERT 
+embeddings plus additional metadata Lasso identifies the subset of dimensions that are most 
+predictive of each Big Five trait. The resulting sparse coefficient vectors pr ovide direct 
+interpretability: non-zero coefficients indicate which semantic, linguistic, profile, or behavioral 
+features contribute most strongly to each trait score. This interpretability is critical in regulated 
+domains requiring transparency, accountab ility, and fairness auditing (Hastie et al., 2015; 
+Muthukrishnan & Rohini, 2016). 
+In the pipeline, Lasso serves as the final prediction stage. It maps the augmented embedding 
+vectors to continuous OCEAN trait scores while simultaneously revealing the most influential 
+input signals for each trait. 
+ 
+Figure 2.6: Architecture of Lasso regression 
+
+
+=== PDF PAGE 37 ===
+25 
+ 
+2.3 Empirical Review 
+The development of the proposed pipeline is informed by a growing body of empirical research 
+that validates the effectiveness of BERT, GANs, Q-Learning, and Lasso regression in various 
+natural language processing and personality inference tasks. This secti on provides a detailed 
+explanation of works that have significantly shaped the methodology and theoretical focus of 
+this study. 
+Christian et al. (2021) investigated the use of large language model embeddings for personality 
+trait prediction, utilizing Reddit comments from the PANDORA dataset. Their methodology 
+involved evaluating LLM embeddings through a performance comparison with  zero-shot 
+methods and conducting a psychometric validation by correlating embeddings with LIWC and 
+emotion features. The results demonstrated that custom -trained deep learning models using 
+LLM embeddings significantly outperformed zero -shot approaches by an average of 45% 
+across all Big Five traits. They reported moderate reliability for the embeddings, with an 
+average Cronbach’s alpha of 0.63, and found strong associations between specific traits and 
+linguistic markers, such as the correlation between ope nness and social markers. This work 
+establishes BERT and RoBERTa as robust semantic backbones for personality analysis. 
+Tsani and Suhartono (2023) developed an ensemble model combining BERT and RoBERTa  
+for personality prediction from Twitter and YouTube datasets. To address the challenge of class 
+imbalance, they introduced a data augmentation method based on the T5 model, which used 
+back-translation to generate paraphrased sentences. Their voting ensemble achieved an average 
+F1 score of 0.730 on the Twitter dataset and 0.741 on the YouTube dataset. A key conclusion 
+of their research was that the inclusion of data augmentation led to a measurable increase in 
+average performance compared to models without such processing. Their study highlights the 
+importance of using multiple transformer models and synthetic data to enhance the robustness 
+of personality classifiers in noisy social media environments. 
+Majima and Markov (2022) proposed a personality prediction system that combined BERT 
+embeddings with statistical features extracted from text, such as uni -gram and bi -gram 
+
+=== PDF PAGE 38 ===
+26 
+ 
+histograms, topic distributions, and emoticon usage. Their methodology employed a self -
+attention mechanism to merge these heterogeneous information sources, allowing the model to 
+dynamically prioritize the most relevant signals for each MBTI axis. Using 10 -fold cross -
+validation on the Kaggle MBTI dataset, they demonstrated that the addition of statistical 
+features slightly improved the performance of the base BERT system, increasing accuracy from 
+83.4% to 84.2%. Their work demonstrates that while BERT is po werful for capturing 
+contextual dependencies, task -specific statistical information provides critical user -level 
+context that improves overall system performance. 
+Hortal (2021) explored the use of GANs for data augmentation in the classification of 
+imbalanced and scarce datasets, specifically focusing on EEG bio-signals. Their methodology 
+utilized a Wasserstein GAN with a gradient penalty (WGAN-GP) to generate synthetic features 
+that mirrored the distribution of real training data. They investigated different augmentation 
+factors, combining the original dataset with synthetic sets of equal size to increase the total 
+training volume. The results showed that the addition of GAN-generated samples provided a 
+considerable enhancement in classification accuracy and helped mitigate overfitting. This 
+study provides empirical justification for incorporating GAN -mediated augmentation in the 
+current personality prediction pipeline to address the limitations of small datasets. 
+Frid-Adar et al. (2018) focused on GAN-based synthetic data augmentation for medical image 
+classification, using a limited dataset of CT images of liver lesions. 16 Their methodology 
+involved synthesized high-quality lesion regions of interest using GAN architectures and then 
+training a CNN with both classic and synthetic augmentation. The findings indicated that 
+adding synthetic data increased sensitivity from 78.6% to 85.7% and specificity from 88.4% to 
+92.4%. Their research demonstrates that GANs can effectively learn and replicate the essential 
+features of a complex, high-dimensional data distribution, supporting the generalization of this 
+technique to the augmentation of semantic embeddings in personality research. 
+Antoniou et al. (2017) conducted a comprehensive survey and evaluation of various data 
+augmentation techniques, including generative adversarial networks, for deep learning tasks.28 
+
+=== PDF PAGE 39 ===
+27 
+ 
+Their findings highlighted that GAN-based augmentation is an effective tool for dealing with 
+small datasets, introducing greater diversity and complexity into the training samples than 
+traditional geometric transformations. They concluded that GANs can capture subtle variations 
+within the data, leading to more realistic and varied training samples that mimic real -world 
+examples. This work establishes the foundational value of GANs as a regularizing mechanism 
+that reduces generalization error in scenarios wh ere obtaining high -quality labeled data is 
+costly or time-consuming. 
+Thompson et al. (1999) investigated active learning for natural language parsing and 
+information extraction, presenting a framework where the learner sequentially chooses the 
+most informative unlabeled instances to be labeled. Their methodology focused on minimizing 
+human annotation effort while producing as high -quality a classifier as possible. They 
+demonstrated that active learning can significantly reduce the number of examples required for 
+complex linguistic tasks. This research validates the inclusion of a selection mechanism in the 
+proposed pipeline, specifically Q-Learning, to intelligently prioritize high-value text segments 
+and metadata for processing, thereby achieving gains in computational efficiency. 
+McCallum and Nigam (1998) introduced an algorithm for text classification from labeled and 
+unlabeled documents using a combination of Expectation -Maximization (EM) and active 
+learning. Their methodology showed that unlabeled data can significantly increase  
+classification accuracy, particularly when labeled data is scarce. They proposed extensions to 
+the basic EM scheme, such as dynamically weighting  the contribution of unlabeled data, to 
+reduce bias and improve convergence. Their findings indicate that the combination of EM and 
+active learning requires only slightly more than half as many labeled training examples to 
+achieve the same accuracy as passive learning, providing strong support for the reinforcement-
+based selection strategy utilized in this research. 
+Settles (2012) provided a comprehensive review of active learning techniques, including 
+uncertainty sampling and query-by-committee methods. The survey explained various practical 
+challenges with active learning in real-world settings and highlighted how it can be combined 
+
+=== PDF PAGE 40 ===
+28 
+ 
+with diverse machine learning areas. The findings showed that uncertainty -based strategies 
+consistently outperform random sampling by focusing on instances where the model makes 
+unreliable predictions. This theoretical and empirical evidence supports the use of Q-Learning 
+as the initial stage of the personality prediction pipeline, enabling the system to learn an optimal 
+policy for signal prioritization based on prediction uncertainty. 
+Tibshirani (1996) introduced the Lasso regression method, which combines linear regression 
+with L1 -regularization to perform both variable selection and regularization. 18 The 
+methodology assumes that the coefficients of the linear model are sparse, meaning that many 
+of them are pushed exactly to zero. Tibshirani demonstrated that Lasso achieves both improved 
+prediction accuracy and model interpretability by excluding irrelevant covariates from the 
+model. This pioneering work serves as the basis for the final prediction layer of the proposed 
+system, where Lasso id entifies the most influential 768 -dimensional BERT features for each 
+personality trait, ensuring that the model outputs are explainable and auditable. 
+Hastie et al. (2015) expanded upon the principles of statistical learning with sparsity, 
+specifically evaluating Lasso and its generalizations in high -dimensional settings. Their 
+research compared Lasso with other regularization techniques and confirmed it s superior 
+performance in producing sparse, stable models when the number of features significantly 
+exceeds the number of observations. They highlighted that Lasso’s ability to perform subset 
+selection is fundamental for identifying informative features and simplifying complex models. 
+This work validates the choice of Lasso for the final prediction stage, where interpretability is 
+essential for the responsible application of personality prediction in sectors such as healthcare 
+and employment. 
+Poropat (2009) conducted a landmark meta -analysis of the relationship between the Big Five 
+personality model and academic performance. The methodology involved synthesized results 
+from numerous studies to establish the predictive validity of each personali ty dimension. The 
+findings revealed that conscientiousness is the strongest and most consistent predictor of 
+academic achievement, with a correlation of approximately 0.41. Openness was also found to 
+
+=== PDF PAGE 41 ===
+29 
+ 
+contribute significantly to learning motivation and creative engagement. This empirical 
+evidence establishes the importance of personality assessment in the education domain and 
+provides the criterion against which the proposed pipeline's predictive perfor mance is 
+evaluated. 
+Rostami et al. (2022) investigated the association between Big Five personality traits and 
+mental health in older adults, using observational data and psychometric scales.1 Their findings 
+indicated that all five personality dimensions significantly predict mental health outcomes, with 
+neuroticism exhibiting the strongest negative association. They reported that personality traits 
+explain a substantial proportion of the variance in psychological wellbeing and resilience. This 
+research underscores the clinical relevance of personality inference and demonstrates the 
+potential of digital personality monitoring for supporting mental health interventions and 
+wellbeing monitoring in the healthcare domain. 
+Barrick and Mount (1991) performed a seminal meta-analysis on the relationship between the 
+Big Five personality dimensions and job performance across various occupational categories. 
+Their methodology involved categorizing job roles and performance criteri a to evaluate trait-
+specific validity. The results established that conscientiousness is a valid predictor for all jobs, 
+while extraversion and emotional stability (low neuroticism) are significant predictors for 
+specific roles such as sales and management. Their findings have guided decades of personnel 
+selection research and provide the empirical foundation for the employment -focused 
+application of the integrated personality prediction pipeline. 
+Singh and Ramasubramanian (2023) conducted a systematic review of AI -based personality 
+prediction for human wellbeing, focusing on interpretability and fairness.  Their methodology 
+involved assessing existing text-based systems against the principles of responsible AI. They 
+highlighted that while deep learning models offer high accuracy, they often lack the 
+transparency required for ethical deployment. The findings emphasized the need for 
+interpretable models and bias -aware evaluation to ensure that personality profiling does not 
+lead to discriminatory outcomes. This study serves as the ethical framework for the current 
+
+=== PDF PAGE 42 ===
+30 
+ 
+research, motivating the integration of Lasso for transparency and the focus on accountable 
+decision-making. 
+Table 2.2: Summary of Related Studies 
+S/
+N 
+Study  
+(Year) 
+Primary 
+Method 
+Source / 
+Domain 
+Task / 
+Traits 
+Result / 
+Metric 
+Relevance to 
+Proposed 
+Pipeline 
+1 Christian et 
+al. (2021) 
+Fine-tuned 
+BERT 
+YouTube 
+comment
+s 
+Big Five F1 ≈ 0.75 Validates 
+BERT for 
+text-based 
+traits 
+2 Tsani & 
+Suhartono 
+(2023) 
+BERT + 
+RoBERTa 
+Ensemble 
+Twitter 
+posts 
+Big Five Improved F1 
+over single 
+models 
+Supports 
+contextual 
+embeddings 
+3 Majima & 
+Markov 
+(2022) 
+BERT 
+Embeddin
+gs 
+Social 
+media 
+posts 
+Personalit
+y cues 
+Better than 
+static 
+embeddings 
+Contextual 
+signal 
+capture 
+4 Hortal (2021) Condition
+al GAN 
+Imbalanc
+ed EEG 
+data 
+Classificat
+ion 
+Significant 
+accuracy 
+improvement 
+Augmentatio
+n for 
+small/imbala
+nced data 
+5 Frid-Adar et 
+al. (2018) 
+GAN Medical 
+images 
+Lesion 
+classificat
+ion 
+Enhanced 
+CNN 
+performance 
+GANs in 
+limited-
+sample 
+settings 
+6 Antoniou et 
+al. (2017) 
+GAN 
+Augmenta
+tion 
+Various 
+domains 
+General 
+classificat
+ion 
+Reliable gains 
+with scarce 
+data 
+Basis for 
+embedding 
+expansion 
+
+=== PDF PAGE 43 ===
+31 
+ 
+7 Thompson et 
+al. (1999) 
+Q-
+Learning 
+Active 
+Learning 
+Text 
+parsing 
+Sample 
+selection 
+Reduced 
+annotation 
+effort 
+Active 
+selection 
+mechanism 
+8 McCallum & 
+Nigam (1998) 
+Q-
+Learning + 
+EM 
+Text 
+classificat
+ion 
+Active 
+learning 
+Faster 
+convergence 
+Reinforceme
+nt-based 
+selection 
+9 Settles (2012) Uncertaint
+y 
+Sampling 
+Review 
+NLP 
+tasks 
+Active 
+learning 
+Consistent 
+efficiency 
+gains 
+Supports Q -
+Learning 
+choice 
+10 Tibshirani 
+(1996) 
+Lasso 
+Regressio
+n 
+Various 
+regressio
+n datasets 
+Variable 
+selection 
+Sparse 
+coefficients 
+Interpretable 
+final 
+prediction 
+11 Hastie et al. 
+(2015) 
+Lasso 
+Compariso
+ns 
+High-
+dimensio
+nal data 
+Model 
+selection 
+Superior 
+sparsity 
+Regularizatio
+n for 
+interpretabili
+ty 
+12 Poropat 
+(2009) 
+Meta-
+analysis 
+Academic 
+records 
+Academic 
+performan
+ce 
+ρ = 0.41 
+(Conscientious
+ness) 
+Education 
+domain 
+evidence 
+13 Rostami et al. 
+(2022) 
+Observatio
+nal Study 
+Older 
+adults 
+Mental 
+health 
+Traits predict 
+outcomes 
+Health/wellb
+eing domain 
+14 Barrick & 
+Mount (1991) 
+Meta-
+analysis 
+Job 
+performa
+nce 
+datasets 
+Job 
+performan
+ce 
+Traits predict 
+across 
+occupations 
+Employment 
+domain 
+
+=== PDF PAGE 44 ===
+32 
+ 
+15 Singh & 
+Ramasubrama
+nian (2023) 
+Systematic 
+Review 
+Text-
+based AI 
+systems 
+Personalit
+y 
+prediction 
+Need for 
+interpretability 
+& fairness 
+Responsible 
+AI domain 
+ 
+The empirical literature provides strong support for each individual component of the pipeline. 
+However, no prior study has integrated Q -Learning, BERT, GAN augmentation, and Lasso 
+regression into a unified framework for social media personality prediction across the f our 
+specified domains. This gap in integration forms the primary motivation for the current 
+research. 
+2.4 Research Gaps 
+The existing body of empirical and theoretical work on computational personality prediction 
+has made considerable progress, yet several persistent and critical gaps remain that limit the 
+development of accurate, efficient, interpretable, and practically de ployable systems for Big 
+Five trait inference from social media data. These gaps are evident across methodological 
+integration, data handling, interpretability, selection efficiency, and cross-domain applicability. 
+Most published studies adopt a single -model or single -paradigm approach. Researchers 
+typically fine-tune BERT or similar transformers on post text alone, or they apply classical 
+feature engineering techniques such as LIWC and n-grams. Very few investigations attempt to 
+combine reinforcement learning for active selection, deep contextual embeddings, generative 
+augmentation, and sparse interpretable regression into a unified, end-to-end pipeline. No prior 
+work has systematically integrated Q -Learning-driven s ignal selection, BERT -based 
+representation, GAN-mediated augmentation, and Lasso regression specifically for personality 
+prediction from heterogeneous social media sources that include posts, profile text, metadata, 
+and network signals (Christian et al., 2 021; Tsani & Suhartono, 2023; Majima & Markov, 
+2022). 
+Data scarcity continues to represent a major constraint. Controlled academic datasets for 
+personality inference rarely exceed a few hundred participants, and even larger public 
+
+=== PDF PAGE 45 ===
+33 
+ 
+collections frequently fall below 10,000 labeled cases. This small sample size leads to 
+overfitting, reduced generalization, and high sensitivity to noise or domain shift. Although 
+Generative Adversarial Networks have proven highly effective for augmentati on in computer 
+vision, medical imaging, and tabular data tasks, their systematic application to the high -
+dimensional manifold of BERT embeddings derived from personality-related social media text 
+remains largely unexplored. Most personality prediction rese arch still relies on raw, 
+unaugmented data, which limits model robustness in small-N regimes (Hortal, 2021; Frid-Adar 
+et al., 2018; Antoniou et al., 2017). 
+Interpretability remains severely underdeveloped in deep learning approaches. Transformer -
+based models such as BERT deliver strong predictive performance but function as opaque 
+black boxes. This lack of transparency creates significant barriers in high -stakes domains 
+employment screening, mental health monitoring, educational advising, and algorithmic 
+governance where stakeholders require clear, auditable explanations of which linguistic, 
+profile, behavioral, or network signals drive each trait prediction. Sparse regression methods 
+such as Lasso offer a proven path to interpretability through automatic feature selection and 
+coefficient shrinkage, yet they are rarely combined with modern contextual embeddings in the 
+personality prediction literature (Pletzer et al., 2025; Singh & Ramasubramanian, 2023; 
+Tibshirani, 1996). 
+Active selection mechanisms are underutilized in this domain. Reinforcement learning 
+strategies, including Q-Learning, have demonstrated substantial reductions in annotation cost 
+and computational overhead in general NLP tasks such as parsing, classificati on, and 
+information extraction. However, their application to intelligently prioritize high-value signals 
+from heterogeneous social media sources particularly when posts, bios, headlines, metadata, 
+and network features are jointly available has received mi nimal attention. This represents a 
+missed opportunity to achieve significant efficiency gains, especially in employment and 
+education contexts where rapid, low-cost inference is essential (Thompson et al., 1999; Settles, 
+2012; McCallum & Nigam, 1998). 
+
+=== PDF PAGE 46 ===
+34 
+ 
+These five gaps lack of  integrated multi -paradigm pipelines, inadequate handling of data 
+scarcity, limited interpretability, underuse of active selection, and insufficient cross -domain 
+evaluation collectively restrict progress toward scalable, trustworthy, and accountable 
+personality prediction systems. The proposed pipeline directly targets each limitation by 
+introducing the first unified framework that combines Q-Learning, BERT, GAN augmentation, 
+and Lasso regression for multi-source social media data, with equal emphasis  
+2.5 Conceptual Framework 
+The conceptual framework presents the overall architecture of the proposed personality 
+prediction system. It integrates reinforcement learning, transformer -based natural language 
+processing, generative data augmentation, and sparse regression into a unifie d pipeline for 
+predicting the Big Five (OCEAN) personality traits from multi -source data collected from X 
+(formerly Twitter). The framework demonstrates how information flows through successive 
+processing stages, with each stage contributing a distinct fun ction toward producing accurate, 
+robust, and interpretable personality predictions. 
+2.5.1 Stage 1: Active Signal Selection 
+The first stage collects multiple forms of user information from X, including posts, profile 
+biography, profile metadata (such as follower count, following count, posting frequency, and 
+account age), and network interactions. Since not all available information contributes equally 
+to personality prediction, a Q -Learning agent is employed to identify and prioritize the most 
+informative signals. This intelligent selection process reduces unnecessary processing while 
+preserving relevant behavioural information required for subsequent analysis. 
+2.5.2 Stage 2: Contextual Feature Extraction 
+The selected textual information is passed to Bidirectional Encoder Representations from 
+Transformers (BERT) for contextual feature extraction. Unlike traditional text representation 
+methods, BERT captures the contextual meaning of words by considering bot h preceding and 
+succeeding words within a sentence. This enables the model to generate rich semantic 
+
+=== PDF PAGE 47 ===
+35 
+ 
+representations that effectively capture linguistic patterns associated with the Big Five 
+personality traits. 
+2.5.3 Stage 3: Embedding Augmentation 
+The contextual embeddings generated by BERT are then supplied to a Conditional Generative 
+Adversarial Network (cGAN) during the model training phase. Rather than generating 
+synthetic social media posts, the cGAN  produces realistic embedding representations 
+conditioned on the corresponding personality traits. This augmentation process increases the 
+diversity of the training data, reduces overfitting, and improves the model's ability to generalize 
+when only a limited number of labelled samples are available. 
+2.5.4 Stage 4: Personality Prediction 
+The final stage applies Lasso Regression to the original and augmented embedding 
+representations. Lasso performs personality prediction while simultaneously selecting the most 
+relevant features through L1 regularization. This produces interpretable predictions for the five 
+personality dimensions Openness, Conscientiousness, Extraversion, Agreeableness, and 
+Neuroticism while reducing the influence of redundant or less informative features. 
+The integration of Q -Learning, BERT, Conditional GAN, and Lasso Regression forms a 
+complete personality prediction framework that combines efficient feature selection, 
+contextual language understanding, data augmentation, and interpretable prediction. The 
+resulting personality profiles can support decision-making in education, health and wellbeing, 
+employment, and responsible artificial intelligence applications. 
+  
+
+=== PDF PAGE 48 ===
+36 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Figure 2.7: Conceptual Pipeline Architecture 
+INPUT DATA SOURCES 
+X (Twitter) 
+STAGE 1: Q-Learning           
+Active Signal Selection 
+STAGE 2: BERT 
+Contextual Embedding Extraction 
+STAGE 3: GAN Augmentation 
+(Training Phase Only) 
+STAGE 4: Lasso Regression       
+OUTPUT 
+• Predicted Big Five scores 
+• Feature importance (Lasso paths) 
+• Comparison with BFI ground 
+truth 
+Applications: 
+•Education • Health/Wellbeing 
+• Employment • Responsible AI 
+

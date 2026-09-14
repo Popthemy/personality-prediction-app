@@ -787,13 +787,39 @@ class PandoraRunDetailView(LoginRequiredMixin, DetailView):
         context['conditions'] = run.condition_results.all()
         context['thresholds'] = run.threshold_results.all()
         context['plot_files'] = []
+        context['primary_plots'] = []
+        context['diagnostic_plots'] = []
         if run.artifact_dir:
             plot_dir = Path(run.artifact_dir) / "plots"
             if plot_dir.exists():
-                context['plot_files'] = [
-                    {'name': p.name, 'url': reverse_lazy('tools:experiment_plot', kwargs={'pk': run.pk, 'filename': p.name})}
-                    for p in sorted(plot_dir.glob("*.png"))
-                ]
+                all_plots = []
+                for p in sorted(plot_dir.glob("*.png")):
+                    title = p.stem
+                    description = ""
+                    if title.startswith("01_"):
+                        title = "1. Overall Condition Comparison"
+                        description = "Side-by-side comparison of Macro F1-Score, Accuracy, and Specificity across all 8 experiment conditions, highlighting the winning model."
+                    elif title.startswith("02_"):
+                        title = "2. Winning Model: Trait Performance & Frozen Thresholds"
+                        description = "Shows the validation-frozen classification threshold (τ) and resulting test/val metrics (F1, Accuracy, Specificity) for each OCEAN trait."
+                    elif title.startswith("03_"):
+                        title = "3. Threshold Decision Curves (F1 vs Threshold τ)"
+                        description = "Directly plots performance against actual threshold values (0.2–0.8). The dashed red vertical line pinpoints the optimal frozen threshold (τ)."
+                    else:
+                        title = title.replace("_", " ").title()
+
+                    plot_item = {
+                        'name': p.name,
+                        'title': title,
+                        'description': description,
+                        'url': reverse_lazy('tools:experiment_plot', kwargs={'pk': run.pk, 'filename': p.name})
+                    }
+                    all_plots.append(plot_item)
+                    if p.name.startswith(("01_", "02_", "03_")):
+                        context['primary_plots'].append(plot_item)
+                    else:
+                        context['diagnostic_plots'].append(plot_item)
+                context['plot_files'] = all_plots
         return context
 
 

@@ -2231,101 +2231,226 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
     matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
     import pandas as pd
+    import numpy as np
 
     plot_dir = (out / "plots").resolve()
     plot_dir.mkdir(parents=True, exist_ok=True)
 
     comparison = comparison_table(results)
-    if len(comparison):
-        x = np.arange(len(comparison))
-        labels = comparison["condition"].tolist()
-        plot_metrics = [
-            ("test_mae" if "test_mae" in comparison else "val_mae", "test_mae"),
-            ("test_rmse" if "test_rmse" in comparison else "val_rmse", "test_rmse"),
-            ("test_r2" if "test_r2" in comparison else "val_r2", "test_r2"),
-            ("test_pearson" if "test_pearson" in comparison else "val_pearson", "test_pearson"),
-            ("test_accuracy" if "test_accuracy" in comparison else "accuracy", "accuracy"),
-            ("test_f1" if "test_f1" in comparison else "macro_f1", "f1"),
-            ("test_specificity" if "test_specificity" in comparison else "specificity", "specificity"),
-            ("test_precision" if "test_precision" in comparison else "macro_precision", "precision"),
-            ("test_recall" if "test_recall" in comparison else "macro_recall", "recall"),
-        ]
-        for metric, label in plot_metrics:
-            if metric not in comparison:
-                continue
-            fig, ax = plt.subplots(figsize=(12, 5))
-            colors = ["#4C78A8" if model == "lasso" else "#F58518" for model in comparison["model"]]
-            ax.bar(x, comparison[metric].astype(float), color=colors)
-            ax.set_title(label.replace("_", " ").title())
-            ax.set_ylabel("Error" if label in {"test_mae", "test_rmse"} else "Score")
-            if label not in {"test_r2", "test_pearson"}:
-                ax.set_ylim(0, 1)
-            ax.set_xticks(x)
-            ax.set_xticklabels(labels, rotation=35, ha="right")
-            ax.grid(axis="y", alpha=0.25)
-            fig.tight_layout()
-            _save_plot_file(fig, plot_dir / f"{label}_by_condition.png")
-            plt.close(fig)
-
     thresholds = threshold_sweep_table(results)
+
+    # -------------------------------------------------------------
+    # 1. PRIMARY PLOT 1: Overall Condition Comparison (01_overall_condition_comparison.png)
+    # -------------------------------------------------------------
+    best_condition = ""
+    if len(comparison):
+        f1_col = "test_f1" if "test_f1" in comparison else "f1"
+        acc_col = "test_accuracy" if "test_accuracy" in comparison else "accuracy"
+        spec_col = "test_specificity" if "test_specificity" in comparison else "specificity"
+
+        valid_f1 = comparison[f1_col].fillna(0).astype(float)
+        best_idx = int(valid_f1.idxmax()) if len(valid_f1) else 0
+        best_condition = str(comparison.loc[best_idx, "condition"]) if len(comparison) else ""
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        n_conditions = len(comparison)
+        x = np.arange(n_conditions)
+        width = 0.25
+
+        f1_vals = comparison[f1_col].fillna(0).astype(float).values
+        acc_vals = comparison[acc_col].fillna(0).astype(float).values if acc_col in comparison else np.zeros(n_conditions)
+        spec_vals = comparison[spec_col].fillna(0).astype(float).values if spec_col in comparison else np.zeros(n_conditions)
+
+        ax.bar(x - width, f1_vals, width, label="Macro F1-Score", color="#2563EB", alpha=0.9)
+        ax.bar(x, acc_vals, width, label="Accuracy", color="#059669", alpha=0.9)
+        ax.bar(x + width, spec_vals, width, label="Specificity", color="#7C3AED", alpha=0.9)
+
+        if 0 <= best_idx < n_conditions:
+            ax.axvspan(best_idx - 0.45, best_idx + 0.45, color="#FEF3C7", alpha=0.45, zorder=0)
+            ax.text(
+                best_idx, 1.02, f"★ Best Model: {best_condition}",
+                ha="center", va="bottom", fontsize=9, fontweight="bold", color="#B45309"
+            )
+
+        ax.set_title("Overall Condition Comparison (Key Classification Metrics)", fontsize=13, fontweight="bold", pad=20)
+        ax.set_ylabel("Score", fontsize=11)
+        ax.set_ylim(0, 1.1)
+        ax.set_xticks(x)
+        ax.set_xticklabels(comparison["condition"].tolist(), rotation=25, ha="right", fontsize=9)
+        ax.grid(axis="y", linestyle="--", alpha=0.35)
+        ax.legend(loc="upper right", framealpha=0.9)
+        fig.tight_layout()
+        _save_plot_file(fig, plot_dir / "01_overall_condition_comparison.png")
+        plt.close(fig)
+
+    # -------------------------------------------------------------
+    # 2. PRIMARY PLOT 2: Best Condition Trait Summary & Frozen Thresholds (02_best_condition_trait_summary.png)
+    # -------------------------------------------------------------
+    test_thresholds = pd.DataFrame()
     if len(thresholds):
         test_thresholds = thresholds[thresholds["split"] == "test"]
-        threshold_split = "test"
         if not len(test_thresholds):
             test_thresholds = thresholds[thresholds["split"] == "validation"]
-            threshold_split = "validation"
-        top_threshold_rows = []
-        for (condition, trait), trait_df in test_thresholds.groupby(["condition", "trait"]):
-            trait_df = trait_df.sort_values("threshold").reset_index(drop=True)
-            score_col = "selection_score" if "selection_score" in trait_df else "f1_score"
-            top_df = (
-                trait_df
-                .assign(_rank_score=trait_df[score_col].astype(float))
-                .sort_values(["_rank_score", "f1_score", "specificity"], ascending=False)
-                .head(5)
-                .sort_values("threshold")
-                .reset_index(drop=True)
-            )
-            top_df["display_rank"] = np.arange(1, len(top_df) + 1)
-            top_threshold_rows.append(top_df)
-        display_thresholds = (
-            pd.concat(top_threshold_rows, ignore_index=True)
-            if top_threshold_rows else test_thresholds
-        )
-        for metric in THRESHOLD_PLOT_METRICS:
-            if metric not in display_thresholds:
-                continue
-            grouped = (
-                display_thresholds
-                .groupby(["condition", "display_rank"], as_index=False)[metric]
-                .mean()
-            )
-            fig, ax = plt.subplots(figsize=(10, 5))
-            for condition, group in grouped.groupby("condition"):
-                ax.plot(
-                    group["display_rank"].astype(int),
-                    group[metric].astype(float),
-                    marker="o",
-                    linewidth=1.6,
-                    label=condition,
+
+    best_res = None
+    if best_condition and best_condition in results:
+        best_res = results[best_condition]
+    elif len(results):
+        best_condition = list(results.keys())[0]
+        best_res = results[best_condition]
+
+    if best_res:
+        val_block = best_res.get("validation") or best_res
+        per_trait = val_block.get("per_trait") or {}
+        trait_labels = []
+        trait_f1 = []
+        trait_acc = []
+        trait_spec = []
+        trait_tau = []
+
+        for short, aliases in TRAIT_DISPLAY_ALIASES:
+            alias_lowers = [a.lower() for a in aliases] + [short.lower()]
+            matched_key = None
+            for k in per_trait.keys():
+                if str(k).lower() in alias_lowers:
+                    matched_key = k
+                    break
+            if matched_key is not None:
+                info = per_trait[matched_key]
+                tau = info.get("best_threshold")
+                if tau is None:
+                    sweep_info = info.get("threshold_sweep")
+                    if isinstance(sweep_info, dict):
+                        tau = sweep_info.get("best_threshold")
+                trait_labels.append(short)
+                trait_f1.append(float(info.get("f1") or info.get("macro_f1") or 0.0))
+                trait_acc.append(float(info.get("accuracy") or 0.0))
+                trait_spec.append(float(info.get("specificity") or 0.0))
+                trait_tau.append(float(tau) if tau is not None else 0.5)
+
+        if trait_labels:
+            fig, ax = plt.subplots(figsize=(10, 5.5))
+            x_traits = np.arange(len(trait_labels))
+            bar_width = 0.24
+
+            ax.bar(x_traits - bar_width, trait_f1, bar_width, label="F1-Score", color="#2563EB")
+            ax.bar(x_traits, trait_acc, bar_width, label="Accuracy", color="#059669")
+            ax.bar(x_traits + bar_width, trait_spec, bar_width, label="Specificity", color="#7C3AED")
+
+            for i, tau_val in enumerate(trait_tau):
+                max_bar = max(trait_f1[i], trait_acc[i], trait_spec[i])
+                ax.annotate(
+                    f"Frozen τ = {tau_val:.3f}",
+                    xy=(x_traits[i], max_bar),
+                    xytext=(0, 10),
+                    textcoords="offset points",
+                    ha="center",
+                    va="bottom",
+                    fontsize=9,
+                    fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="#EFF6FF", ec="#3B82F6", lw=1),
                 )
-            ax.set_title(f"{threshold_split.title()} Top 5 Threshold Candidates - {metric.replace('_', ' ').title()}")
-            ax.set_xlabel("Top threshold candidate")
-            ax.set_ylabel("Score")
-            ax.set_ylim(0, 1)
-            ax.set_xticks([1, 2, 3, 4, 5])
-            ax.grid(alpha=0.25)
-            ax.legend(fontsize=7, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.16))
-            fig.tight_layout(rect=(0, 0.08, 1, 1))
-            _save_plot_file(fig, plot_dir / f"threshold_sweep_{threshold_split}_{metric}.png")
+
+            ax.set_title(f"Winning Condition ({best_condition}): Performance and Frozen Thresholds by Trait", fontsize=12, fontweight="bold", pad=15)
+            ax.set_ylabel("Score", fontsize=11)
+            ax.set_ylim(0, 1.15)
+            ax.set_xticks(x_traits)
+            ax.set_xticklabels(trait_labels, fontsize=10, fontweight="bold")
+            ax.grid(axis="y", linestyle="--", alpha=0.35)
+            ax.legend(loc="lower right", framealpha=0.9)
+            fig.tight_layout()
+            _save_plot_file(fig, plot_dir / "02_best_condition_trait_summary.png")
             plt.close(fig)
 
+    # -------------------------------------------------------------
+    # 3. PRIMARY PLOT 3: Threshold Decision Curves on Actual Threshold X-Axis (03_threshold_decision_curves.png)
+    # -------------------------------------------------------------
+    if len(test_thresholds) and best_condition:
+        best_threshold_df = test_thresholds[test_thresholds["condition"] == best_condition]
+        if not best_threshold_df.empty:
+            fig, axes = plt.subplots(2, 3, figsize=(14, 8), sharey=True)
+            axes_flat = axes.flatten()
+
+            for axis, (trait_label, trait_aliases) in zip(axes_flat[:5], TRAIT_DISPLAY_ALIASES):
+                alias_lowers = [a.lower() for a in trait_aliases] + [trait_label.lower()]
+                trait_df = (
+                    best_threshold_df[best_threshold_df["trait"].astype(str).str.lower().isin(alias_lowers)]
+                    .sort_values("threshold")
+                    .reset_index(drop=True)
+                )
+                if trait_df.empty:
+                    axis.set_title(trait_label, fontweight="bold")
+                    axis.grid(True, linestyle=":", alpha=0.5)
+                    continue
+
+                # USE ACTUAL THRESHOLD ON X-AXIS!
+                x_thresholds = trait_df["threshold"].astype(float).values
+                f1_vals = trait_df["f1_score"].astype(float).values
+                acc_vals = trait_df["accuracy"].astype(float).values
+                spec_vals = trait_df["specificity"].astype(float).values
+
+                axis.plot(x_thresholds, f1_vals, marker="o", color="#2563EB", linewidth=1.8, label="F1-Score")
+                axis.plot(x_thresholds, acc_vals, marker="s", color="#059669", linewidth=1.5, linestyle="--", label="Accuracy")
+                axis.plot(x_thresholds, spec_vals, marker="^", color="#7C3AED", linewidth=1.5, linestyle=":", label="Specificity")
+
+                selected_rows = trait_df[trait_df.get("selected", False).astype(bool)] if "selected" in trait_df else pd.DataFrame()
+                if not selected_rows.empty:
+                    sel_idx = selected_rows.index[0]
+                    sel_tau = float(trait_df.loc[sel_idx, "threshold"])
+                    sel_f1 = float(trait_df.loc[sel_idx, "f1_score"])
+                else:
+                    max_f1_idx = int(np.argmax(f1_vals))
+                    sel_tau = float(x_thresholds[max_f1_idx])
+                    sel_f1 = float(f1_vals[max_f1_idx])
+
+                axis.axvline(sel_tau, color="#DC2626", linestyle="--", linewidth=1.5, alpha=0.85)
+                axis.scatter([sel_tau], [sel_f1], color="#DC2626", s=60, zorder=5)
+                axis.annotate(
+                    f"Frozen τ = {sel_tau:.3f}\nF1 = {sel_f1:.3f}",
+                    xy=(sel_tau, sel_f1),
+                    xytext=(8, 8),
+                    textcoords="offset points",
+                    fontsize=8,
+                    fontweight="bold",
+                    color="#991B1B",
+                    bbox=dict(boxstyle="round,pad=0.2", fc="#FEF2F2", ec="#F87171", lw=0.8),
+                )
+
+                axis.set_title(f"Trait: {trait_label} (Frozen τ = {sel_tau:.3f})", fontsize=10, fontweight="bold")
+                axis.set_xlabel("Classification Threshold (τ)", fontsize=9)
+                axis.set_ylabel("Score", fontsize=9)
+                axis.set_ylim(0, 1.05)
+                axis.grid(True, linestyle=":", alpha=0.45)
+
+            summary_axis = axes_flat[5]
+            summary_axis.axis("off")
+            handles, labels_leg = axes_flat[0].get_legend_handles_labels()
+            summary_axis.legend(handles, labels_leg, loc="center", fontsize=10, frameon=True)
+            summary_axis.text(
+                0.5, 0.25,
+                "The dashed red vertical line marks\nthe frozen threshold (τ) selected\nduring validation for prediction.",
+                ha="center", va="center", fontsize=9, color="#4B5563",
+                transform=summary_axis.transAxes,
+                bbox=dict(boxstyle="round,pad=0.4", fc="#F3F4F6", ec="#D1D5DB", lw=0.8)
+            )
+
+            fig.suptitle(f"{best_condition} - Validation Threshold Decision Curves Across Traits", fontsize=13, fontweight="bold", y=0.98)
+            fig.tight_layout(rect=(0, 0, 1, 0.96))
+            _save_plot_file(fig, plot_dir / "03_threshold_decision_curves.png")
+            plt.close(fig)
+
+    # -------------------------------------------------------------
+    # 4. FIX PER-CONDITION PLOTS ({condition}_thresholds_by_trait.png)
+    #    Plot against real float thresholds (τ), NOT candidate rank indices 1..5!
+    # -------------------------------------------------------------
+    if len(test_thresholds):
         for condition, condition_df in test_thresholds.groupby("condition"):
-            fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True, sharey=True)
+            fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharey=True)
             axes_flat = axes.flatten()
             for axis, (trait_label, trait_aliases) in zip(axes_flat, TRAIT_DISPLAY_ALIASES):
+                alias_lowers = [a.lower() for a in trait_aliases] + [trait_label.lower()]
                 trait_df = (
-                    condition_df[condition_df["trait"].astype(str).isin(trait_aliases)]
+                    condition_df[condition_df["trait"].astype(str).str.lower().isin(alias_lowers)]
                     .sort_values("threshold")
                     .reset_index(drop=True)
                 )
@@ -2333,46 +2458,45 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
                     axis.set_title(trait_label)
                     axis.grid(alpha=0.25)
                     continue
-                score_col = "selection_score" if "selection_score" in trait_df else "f1_score"
-                top_trait_df = (
-                    trait_df
-                    .assign(_rank_score=trait_df[score_col].astype(float))
-                    .sort_values(["_rank_score", "f1_score", "specificity"], ascending=False)
-                    .head(5)
-                    .sort_values("threshold")
-                    .reset_index(drop=True)
-                )
-                trait_df = top_trait_df
-                x_values = np.arange(1, len(trait_df) + 1)
-                for metric in ("accuracy", "f1_score", "specificity"):
-                    axis.plot(
-                        x_values,
-                        trait_df[metric].astype(float),
-                        marker="o",
-                        label=metric,
-                    )
-                selected_rows = trait_df[trait_df.get("selected", False).astype(bool)] if "selected" in trait_df else []
-                if len(selected_rows):
+
+                x_vals = trait_df["threshold"].astype(float).values
+                for metric, col_color in [("accuracy", "#059669"), ("f1_score", "#2563EB"), ("specificity", "#7C3AED")]:
+                    if metric in trait_df:
+                        axis.plot(
+                            x_vals,
+                            trait_df[metric].astype(float).values,
+                            marker="o",
+                            markersize=4,
+                            linewidth=1.5,
+                            label=metric.replace("_", " ").title(),
+                            color=col_color,
+                        )
+
+                selected_rows = trait_df[trait_df.get("selected", False).astype(bool)] if "selected" in trait_df else pd.DataFrame()
+                if not selected_rows.empty:
                     selected_idx = int(selected_rows.index[0])
-                    selected_x = selected_idx + 1
                     selected_threshold = float(trait_df.loc[selected_idx, "threshold"])
-                    axis.axvline(selected_x, color="#222222", linestyle="--", linewidth=1.0, alpha=0.55)
+                    axis.axvline(selected_threshold, color="#DC2626", linestyle="--", linewidth=1.2, alpha=0.7)
                     y_anchor = float(trait_df.loc[selected_idx, "f1_score"]) if "f1_score" in trait_df else 0.5
                     axis.annotate(
-                        f"{selected_threshold:.3f}",
-                        xy=(selected_x, y_anchor),
-                        xytext=(4, 6),
+                        f"τ = {selected_threshold:.3f}",
+                        xy=(selected_threshold, y_anchor),
+                        xytext=(6, 6),
                         textcoords="offset points",
-                        fontsize=7,
-                        color="#222222",
+                        fontsize=8,
+                        fontweight="bold",
+                        color="#DC2626",
                     )
-                axis.set_title(trait_label)
-                axis.set_xlabel("Top threshold candidate")
-                axis.grid(alpha=0.25)
+                axis.set_title(trait_label, fontweight="bold")
+                axis.set_xlabel("Classification Threshold (τ)", fontsize=9)
+                axis.set_ylabel("Score", fontsize=9)
+                axis.set_ylim(0, 1.05)
+                axis.grid(True, linestyle=":", alpha=0.35)
+
             axes_flat[-1].axis("off")
             handles, legend_labels = axes_flat[0].get_legend_handles_labels()
-            fig.legend(handles, legend_labels, loc="lower center", ncol=3)
-            fig.suptitle(f"{condition} - Top 5 Validation-Derived Thresholds by Trait", y=0.98)
+            fig.legend(handles, legend_labels, loc="lower center", ncol=3, fontsize=9)
+            fig.suptitle(f"{condition} - Validation Threshold Curves by Trait", fontsize=12, fontweight="bold", y=0.98)
             fig.tight_layout(rect=(0, 0.04, 1, 0.96))
             _save_plot_file(fig, plot_dir / f"{condition}_thresholds_by_trait.png")
             plt.close(fig)

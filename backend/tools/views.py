@@ -139,15 +139,20 @@ def _record_pandora_bundle(run, bundle):
 
     findings = bundle.get("findings") or {}
     best = findings.get("best_condition") or {}
+    best_cls = findings.get("best_classification_condition") or {}
+    best_reg = findings.get("best_regression_condition") or {}
     run.artifact_dir = str(bundle.get("artifact_dir") or "")
     run.best_condition = best.get("condition") or ""
-    run.best_accuracy = _json_safe_float(best.get("test_accuracy", best.get("accuracy")))
-    run.best_f1 = _json_safe_float(best.get("test_f1", best.get("macro_f1")))
+    run.best_accuracy = _json_safe_float(best_cls.get("test_accuracy") or best.get("test_accuracy", best.get("accuracy")))
+    run.best_f1 = _json_safe_float(best_cls.get("test_f1") or best.get("test_f1", best.get("macro_f1")))
+    run.best_specificity = _json_safe_float(best_cls.get("test_specificity") or best.get("test_specificity", best.get("specificity")))
     run.audit_status = (bundle.get("audit") or {}).get("status", "")
     run.findings = findings.get("notes", [])
     run.summary = _json_safe_value({
         'comparison': comparison.to_dict("records") if comparison is not None else [],
         'artifact_dir': run.artifact_dir,
+        'best_regression_condition': best_reg,
+        'best_classification_condition': best_cls,
     })
     run.status = 'completed'
     run.completed_at = timezone.now()

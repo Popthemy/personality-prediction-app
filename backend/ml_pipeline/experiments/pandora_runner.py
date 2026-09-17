@@ -2248,11 +2248,6 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
         acc_col = "test_accuracy" if "test_accuracy" in comparison else "accuracy"
         spec_col = "test_specificity" if "test_specificity" in comparison else "specificity"
 
-        valid_f1 = comparison[f1_col].fillna(0).astype(float)
-        best_idx = int(valid_f1.idxmax()) if len(valid_f1) else 0
-        best_condition = str(comparison.loc[best_idx, "condition"]) if len(comparison) else ""
-
-        fig, ax = plt.subplots(figsize=(12, 6))
         n_conditions = len(comparison)
         x = np.arange(n_conditions)
         width = 0.25
@@ -2261,14 +2256,39 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
         acc_vals = comparison[acc_col].fillna(0).astype(float).values if acc_col in comparison else np.zeros(n_conditions)
         spec_vals = comparison[spec_col].fillna(0).astype(float).values if spec_col in comparison else np.zeros(n_conditions)
 
+        # Balanced harmonic score across the 3 key classification metrics (Macro F1, Accuracy, Specificity):
+        pos_mask = (f1_vals > 0) & (acc_vals > 0) & (spec_vals > 0)
+        inv_sum = np.zeros(n_conditions, dtype=float)
+        np.divide(1.0, f1_vals, out=inv_sum, where=pos_mask)
+        inv_sum += np.where(pos_mask, 1.0 / np.maximum(acc_vals, 1e-9), 0.0)
+        inv_sum += np.where(pos_mask, 1.0 / np.maximum(spec_vals, 1e-9), 0.0)
+        balanced_scores = np.where(inv_sum > 0, 3.0 / inv_sum, (f1_vals + acc_vals + spec_vals) / 3.0)
+
+        # Dedicated classifier selection (LSTMs are designated for high/low classification):
+        is_lstm = np.array([
+            ("lstm" in str(c).lower()) or (str(m).lower() == "lstm")
+            for c, m in zip(comparison["condition"], comparison.get("model", [""] * n_conditions))
+        ])
+
+        if np.any(is_lstm):
+            lstm_indices = np.where(is_lstm)[0]
+            best_idx = int(lstm_indices[np.argmax(balanced_scores[lstm_indices])])
+        else:
+            best_idx = int(np.argmax(balanced_scores)) if len(balanced_scores) else 0
+
+        best_condition = str(comparison.loc[best_idx, "condition"]) if len(comparison) else ""
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+
         ax.bar(x - width, f1_vals, width, label="Macro F1-Score", color="#2563EB", alpha=0.9)
         ax.bar(x, acc_vals, width, label="Accuracy", color="#059669", alpha=0.9)
         ax.bar(x + width, spec_vals, width, label="Specificity", color="#7C3AED", alpha=0.9)
 
         if 0 <= best_idx < n_conditions:
             ax.axvspan(best_idx - 0.45, best_idx + 0.45, color="#FEF3C7", alpha=0.45, zorder=0)
+            model_tag = "Classifier (LSTM)" if is_lstm[best_idx] else "Classifier"
             ax.text(
-                best_idx, 1.02, f"★ Best Model: {best_condition}",
+                best_idx, 1.02, f"★ Best {model_tag}: {best_condition}",
                 ha="center", va="bottom", fontsize=9, fontweight="bold", color="#B45309"
             )
 
@@ -2739,6 +2759,74 @@ def summarize_findings(results: Dict[str, Any]) -> Dict[str, Any]:
             "test_f1": o.get("f1", o.get("macro_f1")),
         }
 
+    # Best continuous regression model (Lasso models evaluated by lowest test MAE)
+    lasso_scored = {
+        k: r for k, r in scored.items()
+        if r.get("model") == "lasso" or "lasso" in str(k).lower()
+    }
+    best_reg_id = min(
+        lasso_scored,
+        key=lambda k: lasso_scored[k]["overall"].get("mae", lasso_scored[k]["overall"].get("val_mae")),
+    ) if lasso_scored else best_id
+
+    best_regression = None
+    if best_reg_id:
+        r = results[best_reg_id]
+        o = r["overall"]
+        best_regression = {
+            "condition": best_reg_id,
+            "label": r["label"],
+            "primary_metric": "test_mae",
+            "test_mae": o.get("mae", o.get("val_mae")),
+            "test_rmse": o.get("rmse", o.get("val_rmse")),
+            "test_r2": o.get("r2", o.get("val_r2")),
+            "test_pearson": o.get("val_pearson"),
+            "test_accuracy": o.get("accuracy"),
+            "test_f1": o.get("f1", o.get("macro_f1")),
+        }
+
+    # Best high/low classification model (LSTM models evaluated by balanced harmonic mean of Macro F1 & Accuracy)
+    lstm_scored = {
+        k: r for k, r in results.items()
+        if r.get("model") == "lstm" or "lstm" in str(k).lower()
+    }
+    def _cls_harmonic_score(res_or_key):
+        res = results.get(res_or_key, res_or_key) if isinstance(res_or_key, str) else res_or_key
+        if not isinstance(res, dict):
+            return 0.0
+        o = res.get("overall") or {}
+        f1 = float(o.get("f1") or o.get("macro_f1") or 0.0)
+        acc = float(o.get("accuracy") or 0.0)
+        spec = float(o.get("specificity") or 0.0)
+        if f1 > 0 and acc > 0 and spec > 0:
+            return 3.0 / (1.0 / f1 + 1.0 / acc + 1.0 / spec)
+        return (f1 + acc + spec) / 3.0 if (f1 + acc + spec) > 0 else 0.0
+
+    best_cls_id = max(
+        lstm_scored,
+        key=lambda k: _cls_harmonic_score(lstm_scored[k]),
+    ) if lstm_scored else None
+
+    best_classification = None
+    if best_cls_id:
+        r = results[best_cls_id]
+        o = r["overall"]
+        f1_val = o.get("f1", o.get("macro_f1"))
+        acc_val = o.get("accuracy")
+        spec_val = o.get("specificity")
+        harmonic_val = _cls_harmonic_score(r)
+        best_classification = {
+            "condition": best_cls_id,
+            "label": r["label"],
+            "primary_metric": "balanced_f1_accuracy_harmonic",
+            "balanced_score": round(harmonic_val, 4),
+            "test_accuracy": acc_val,
+            "test_f1": f1_val,
+            "test_specificity": spec_val,
+            "test_mae": o.get("mae", o.get("val_mae")),
+            "test_rmse": o.get("rmse", o.get("val_rmse")),
+        }
+
     lasso_mae, lstm_mae = _model_mean("lasso", "mae"), _model_mean("lstm", "mae")
     lasso_rmse, lstm_rmse = _model_mean("lasso", "rmse"), _model_mean("lstm", "rmse")
     lasso_r2, lstm_r2 = _model_mean("lasso", "r2"), _model_mean("lstm", "r2")
@@ -2767,9 +2855,21 @@ def summarize_findings(results: Dict[str, Any]) -> Dict[str, Any]:
     notes: List[str] = []
     if best is not None:
         notes.append(
-            f"Best condition: {best['condition']} ({best['label']}) - "
+            f"Best overall condition (primary MAE): {best['condition']} ({best['label']}) - "
             f"lowest test MAE {_fmt_metric(best['test_mae'])}, RMSE {_fmt_metric(best['test_rmse'])}; "
             f"secondary High/Low F1 {_fmt_metric(best['test_f1'])}."
+        )
+    if best_regression is not None and best_regression['condition'] != (best or {}).get('condition'):
+        notes.append(
+            f"Best continuous regression model (Lasso): {best_regression['condition']} ({best_regression['label']}) - "
+            f"lowest test MAE {_fmt_metric(best_regression['test_mae'])}, RMSE {_fmt_metric(best_regression['test_rmse'])}."
+        )
+    if best_classification is not None:
+        notes.append(
+            f"Best high/low classification model (LSTM): {best_classification['condition']} ({best_classification['label']}) - "
+            f"balanced harmonic score {_fmt_metric(best_classification.get('balanced_score'))} "
+            f"(accuracy {_fmt_metric(best_classification.get('test_accuracy'))}, macro-F1 {_fmt_metric(best_classification.get('test_f1'))}, "
+            f"specificity {_fmt_metric(best_classification.get('test_specificity'))})."
         )
     if lasso_mae is not None and lstm_mae is not None:
         notes.append(
@@ -2794,6 +2894,8 @@ def summarize_findings(results: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "best_condition": best,
+        "best_regression_condition": best_regression,
+        "best_classification_condition": best_classification,
         "model_means": {
             "lasso": {
                 "test_mae": lasso_mae,

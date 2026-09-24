@@ -3300,7 +3300,9 @@ def load_file_defined_splits(
         if split == "train":
             split_sample_n = cfg.sample_n_users
         elif split == "validation":
-            split_sample_n = max(1, round(cfg.sample_n_users * cfg.val_ratio))
+            # Thresholds must use every eligible participant in the supplied
+            # validation file, independent of the training sample size.
+            split_sample_n = len(prepared_all)
         else:
             split_sample_n = max(1, round(cfg.sample_n_users * cfg.test_ratio))
         split_cfg = ExperimentConfig(

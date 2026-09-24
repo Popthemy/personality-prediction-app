@@ -12,6 +12,7 @@ urlpatterns = [
     path('experiments/', views.PandoraRunListView.as_view(), name='experiment_history'),
     path('experiments/<int:pk>/', views.PandoraRunDetailView.as_view(), name='experiment_detail'),
     path('experiments/<int:pk>/plots/<path:filename>/', views.PandoraRunPlotView.as_view(), name='experiment_plot'),
+    path('experiments/<int:pk>/metric-tables.xlsx', views.PandoraRunWorkbookView.as_view(), name='experiment_workbook'),
     path('predict/', views.CohortPredictionView.as_view(), name='predict'),
     path('pandora-predictions/<int:pk>/', views.PandoraPredictionRunDetailView.as_view(), name='pandora_prediction_run_detail'),
     path('pandora-profiles/<int:pk>/', views.PandoraTestProfileDetailView.as_view(), name='pandora_test_profile_detail'),

@@ -1,0 +1,3 @@
+Reference: C:\Users\STADIUM B C\Downloads\rewritten_chapter_one.docx
+SHA256 5a8aac3b98c876c17214191cf79e60198b7f6a2429098f44250761e1983feaa9
+Chapter body replaced; reference retained unchanged. Letter portrait; inherited section geometry, footer, styles and Times New Roman 12 pt body. Tables use 10 pt for readable numerical comparisons, repeated headers, non-splitting rows and light gray borders. Exact user headings 4.0 to 4.4 retained. Actual screenshots unavailable because browser provider fails policy initialization; figure slots explicitly marked pending. Packaged renderer failed due to absent LibreOffice; use Word PDF export and page raster review.

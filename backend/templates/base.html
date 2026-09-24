@@ -67,7 +67,10 @@
                         <a href="{% url 'tools:index' %}" class="text-white hover:text-gray-200">Tools</a>
                         <a href="{% url 'dashboard:insights' %}" class="text-white hover:text-gray-200">Insights</a>
                         <a href="{% url 'accounts:profile' %}" class="text-white hover:text-gray-200">{{ user.username }}</a>
-                        <a href="{% url 'accounts:logout' %}" class="text-white hover:text-gray-200">Logout</a>
+                        <form method="post" action="{% url 'accounts:logout' %}" class="inline m-0 p-0">
+                            {% csrf_token %}
+                            <button type="submit" class="text-white hover:text-gray-200 bg-transparent border-0 cursor-pointer p-0 font-medium">Logout</button>
+                        </form>
                     {% else %}
                         <a href="{% url 'public:live_prediction' %}" class="text-white hover:text-gray-200">Live Prediction</a>
                         <a href="{% url 'accounts:login' %}" class="text-white hover:text-gray-200">Login</a>

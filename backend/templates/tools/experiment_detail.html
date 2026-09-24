@@ -48,6 +48,7 @@
   <div class="bg-white border border-stone-200 rounded-lg shadow-sm overflow-hidden">
     <div class="px-6 py-4 border-b border-stone-200">
       <h2 class="text-xl font-bold text-stone-900">8-Condition Comparison</h2>
+      <p class="text-sm text-stone-600">Binary metric score scale: 0–1 (0.8 = 80%). MAE and RMSE use normalized BFI score units; R² can be negative.</p>
     </div>
     <div class="overflow-x-auto">
       <table class="min-w-full divide-y divide-stone-200 text-sm">
@@ -87,6 +88,44 @@
     </div>
   </div>
 
+  {% if metric_sections %}
+  <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6 space-y-8">
+    <div class="flex items-center justify-between gap-4">
+      <div><h2 class="text-xl font-bold text-stone-900">Binary classification results</h2>
+        <p class="text-sm text-stone-600">Five shared validation thresholds across all traits and experiments.</p></div>
+      <a href="{{ workbook_url }}" class="rounded bg-blue-700 px-4 py-2 text-sm font-semibold text-white">Download all 25 Excel tables</a>
+    </div>
+    {% for section in metric_sections %}
+    <section class="space-y-5">
+      <h3 class="text-lg font-bold">{{ section.title }}</h3>
+      {% for table in section.tables %}
+      <div class="overflow-x-auto">
+        <h4 class="font-semibold">{{ section.title }} at threshold {{ table.threshold|floatformat:3 }}</h4>
+        <p class="text-sm text-stone-600">Metric score scale: 0–1 (0.8 = 80%)</p>
+        <table class="min-w-full border-collapse text-sm">
+          <thead><tr class="bg-stone-100"><th class="border p-2 text-left">Trait</th><th class="border p-2">Threshold</th>
+            {% for condition in section.conditions %}<th class="border p-2">{{ condition|upper }}</th>{% endfor %}
+          </tr></thead>
+          <tbody>{% for row in table.rows %}<tr><td class="border p-2">{{ row.name }}</td><td class="border p-2 text-center">{{ table.threshold|floatformat:3 }}</td>
+            {% for score in row.scores %}<td class="border p-2 text-center">{{ score|floatformat:3 }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+        </table>
+      </div>
+      {% endfor %}
+      <div><h4 class="font-semibold">{{ section.title }} across thresholds</h4>
+        <p class="text-sm text-stone-600">Metric score scale: 0–1 (0.8 = 80%). Each line averages five traits.</p>
+        <img src="{{ section.image_url }}" alt="{{ section.title }} across shared thresholds" class="max-w-full">
+        <a href="{{ section.image_url }}?download=1" class="text-sm font-semibold text-blue-700">Download graph image</a>
+      </div>
+    </section>
+    {% endfor %}
+    <div class="space-y-2 text-sm text-stone-700"><h3 class="text-lg font-bold">Continuous regression metrics</h3>
+      <p>MAE and RMSE measure prediction error on the normalized BFI score scale; lower values are better. R² measures fit; higher values are better. These metrics do not use binary thresholds.</p>
+      {% for note in regression_notes %}<p>For {{ note.title }}, {{ note.condition|upper }} has the {{ note.direction }} result across the eight experiments: {{ note.value|floatformat:3 }}.</p>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not metric_sections %}
   <div class="bg-white border border-stone-200 rounded-lg shadow-sm p-6 space-y-6">
     <div class="flex flex-col md:flex-row md:items-center md:justify-between border-b border-stone-200 pb-4">
       <div>
@@ -162,5 +201,6 @@
       <div class="text-stone-500 py-6 text-center text-sm">No plot files found for this run.</div>
     {% endif %}
   </div>
+  {% endif %}
 </div>
 {% endblock %}

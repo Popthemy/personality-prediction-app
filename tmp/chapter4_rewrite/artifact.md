@@ -1,0 +1,4 @@
+Reference: C:/Users/STADIUM B C/Downloads/rewritten_chapter_one.docx. Preserve its section geometry, body font and rhythm, paragraph styles and footer. Rewrite the chapter body to the user-supplied 4.1–4.5.6.5 outline; replace long technical insertion instructions with short numbered markers. No run identifiers, source filenames or development metadata in the chapter. Preserve original references and author-date style where used. New output preserves the previous draft. Figures 4.1–4.22 and Tables 4.1–4.18 are intentional insertion slots. Final pipeline verdict remains blank. Native Word rendering is the verified Windows fallback after the packaged renderer could not find LibreOffice; use page PNGs for all-page inspection.
+
+Reference SHA256: 5a8aac3b98c876c17214191cf79e60198b7f6a2429098f44250761e1983feaa9
+Preserve-only package parts verified identical.

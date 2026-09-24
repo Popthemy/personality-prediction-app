@@ -16,11 +16,8 @@ This runner trains all eight combinations of:
     GAN:       off or on
     model:     Lasso or LSTM
 
-Lasso emits five normalized continuous OCEAN scores. LSTM emits five
-probabilities, one P(High) for each OCEAN trait. Low/High decisions are made
-with the supervisor-facing candidate thresholds:
-
-    0.30, 0.40, 0.50, 0.60, 0.70
+Lasso and LSTM emit five normalized OCEAN scores. Validation BFI trait means
+produce one shared five-point threshold grid for all eight conditions.
 """
 
 from __future__ import annotations
@@ -203,7 +200,6 @@ class ExperimentConfig:
     lstm_learning_rate: float = 1e-3
 
     ground_truth_cutoff: float = me.DEFAULT_GROUND_TRUTH_CUTOFF
-    candidate_thresholds: Tuple[float, ...] = tuple(me.CANDIDATE_THRESHOLDS)
 
     output_dir: Optional[str] = None
     embedding_cache_dir: Optional[str] = None
@@ -858,6 +854,7 @@ def _run_lasso(
     use_gan: bool,
     train_sample_weights: Optional[np.ndarray] = None,
     trait_label_thresholds: Optional[Dict[str, float]] = None,
+    shared_thresholds: Optional[Sequence[float]] = None,
 ) -> Tuple[Dict[str, Any], LassoTrainer, Dict[str, np.ndarray]]:
     """
     Per-trait ElasticNet on mean-pooled features, mirroring the orchestrator's
@@ -957,7 +954,8 @@ def _run_lasso(
             else cfg.ground_truth_cutoff
         )
         y_bin, gt_cut = me.derive_binary_ground_truth(y_val_unit, gt_input)
-        sweep = me.sweep_thresholds_on_scores(y_bin, val_pred)
+        sweep = me.sweep_thresholds_on_scores(y_bin, val_pred,
+            list(shared_thresholds) if shared_thresholds is not None else None)
         roc = me.compute_roc_curve_metrics(y_bin, val_pred)
         pr = me.compute_precision_recall_curve_metrics(y_bin, val_pred)
 
@@ -1020,6 +1018,7 @@ def _run_lstm(
     use_gan: bool,
     train_sample_weights: Optional[np.ndarray] = None,
     trait_label_thresholds: Optional[Dict[str, float]] = None,
+    shared_thresholds: Optional[Sequence[float]] = None,
 ) -> Tuple[Dict[str, Any], LSTMTrainer, Dict[str, np.ndarray]]:
     """Train the current joint 5-output LSTM and score validation Low/High metrics."""
     seqs = features.sequences
@@ -1076,7 +1075,7 @@ def _run_lstm(
         val_pred,
         trait_names=list(TRAIT_KEYS),
         ground_truth_cutoff=trait_label_thresholds or cfg.ground_truth_cutoff,
-        candidate_thresholds=None,
+        candidate_thresholds=list(shared_thresholds) if shared_thresholds is not None else None,
     )
 
     per_trait: Dict[str, Any] = {}
@@ -1128,6 +1127,7 @@ def _run_condition(
     test_idx: Optional[np.ndarray] = None,
     train_sample_weights: Optional[np.ndarray] = None,
     trait_label_thresholds: Optional[Dict[str, float]] = None,
+    shared_thresholds: Optional[Sequence[float]] = None,
 ) -> Tuple[Dict[str, Any], Any, Dict[str, np.ndarray]]:
     """
     Run a single condition and return ``(out_dict, fitted_model, raw_arrays)``.
@@ -1146,6 +1146,7 @@ def _run_condition(
             use_gan=spec["gan"],
             train_sample_weights=train_sample_weights,
             trait_label_thresholds=trait_label_thresholds,
+            shared_thresholds=shared_thresholds,
         )
     elif spec["model"] == "lstm":
         result, model, raw = _run_lstm(
@@ -1153,6 +1154,7 @@ def _run_condition(
             use_gan=spec["gan"],
             train_sample_weights=train_sample_weights,
             trait_label_thresholds=trait_label_thresholds,
+            shared_thresholds=shared_thresholds,
         )
     else:
         raise ValueError(f"Unknown model for {exp_id}: {spec['model']}")
@@ -1161,6 +1163,8 @@ def _run_condition(
         "per_trait": result["per_trait"],
         "overall": _reporting_aliases(result["overall"]),
     }
+    if shared_thresholds is not None:
+        _apply_shared_sweep(validation_result, raw, spec["model"], shared_thresholds)
     official_result = validation_result
     raw["split"] = "validation"
 
@@ -1178,7 +1182,7 @@ def _run_condition(
                 validation_result,
                 trait_names=list(TRAIT_KEYS),
                 ground_truth_cutoff=trait_label_thresholds or cfg.ground_truth_cutoff,
-                candidate_thresholds=None,
+                candidate_thresholds=list(shared_thresholds) if shared_thresholds is not None else None,
             )
             test_per_trait = {}
             for trait in TRAIT_KEYS:
@@ -1242,7 +1246,7 @@ def _run_condition(
                 pred_cls = to_tertile_classes(pred, low_cut, high_cut)
                 reg = me.compute_regression_metrics(y_test_unit, pred)
                 cls = me.compute_multiclass_metrics(y_cls, pred_cls, labels=[0, 1, 2])
-                selected_tau = validation_result["per_trait"][trait]["threshold_sweep"]["best_threshold"]
+                selected_tau = validation_result["per_trait"][trait]["best_threshold"]
                 gt_input = (
                     _cutoff_for_trait(trait_label_thresholds, trait, ti)
                     if trait_label_thresholds is not None
@@ -1250,7 +1254,7 @@ def _run_condition(
                 )
                 y_bin, gt_cut = me.derive_binary_ground_truth(y_test_unit, gt_input)
                 official = me.compute_classification_metrics_at_threshold(y_bin, pred, selected_tau)
-                sweep = me.sweep_thresholds_on_scores(y_bin, pred, None)
+                sweep = me.sweep_thresholds_on_scores(y_bin, pred, list(shared_thresholds) if shared_thresholds is not None else None)
                 roc = me.compute_roc_curve_metrics(y_bin, pred)
                 pr = me.compute_precision_recall_curve_metrics(y_bin, pred)
                 true_unit[:, ti] = y_test_unit
@@ -1294,6 +1298,10 @@ def _run_condition(
             }
             raw = {"true_unit": true_unit, "lasso_pred": pred_mat, "true_classes": true_classes, "split": "test"}
 
+        if shared_thresholds is not None:
+            _apply_shared_sweep(official_result, raw, spec["model"], shared_thresholds,
+                                validation_result=validation_result)
+
     out = {
         "experiment": exp_id,
         "label": spec["label"],
@@ -1307,7 +1315,7 @@ def _run_condition(
         "per_trait": official_result["per_trait"],
         "overall": official_result["overall"],
         "validation": {
-            "candidate_thresholds": "validation_score_percentiles_per_trait",
+            "candidate_thresholds": list(shared_thresholds) if shared_thresholds is not None else "validation_score_percentiles_per_trait",
             "split": "validation",
             **validation_result,
         },
@@ -1325,6 +1333,45 @@ def _run_condition(
         out["overall"]["accuracy"], out["overall"]["macro_f1"],
     )
     return out, model, raw
+
+
+def _apply_shared_sweep(result: Dict[str, Any], raw: Dict[str, np.ndarray],
+                        model_type: str, thresholds: Sequence[float],
+                        validation_result: Optional[Dict[str, Any]] = None) -> None:
+    """Replace trait-specific binary sweeps with the shared BFI operating points."""
+    predictions = raw["lasso_pred" if model_type == "lasso" else "lstm_pred"]
+    truth = raw["true_unit"]
+    per_trait = result["per_trait"]
+    trait_order = OCEAN_TRAITS if model_type == "lasso" else TRAIT_KEYS
+    for i, trait in enumerate(trait_order):
+        block = per_trait[trait]
+        sweep = me.sweep_shared_bfi_thresholds(truth[:, i], predictions[:, i], thresholds)
+        selected = (validation_result["per_trait"][trait]["best_threshold"]
+                    if validation_result is not None else sweep["best_threshold"])
+        official = next(row for row in sweep["results"] if row["threshold"] == selected)
+        block.update({
+            "best_threshold": selected,
+            "selected_threshold": selected,
+            "threshold_sweep": sweep["results"],
+            "ground_truth_cutoff": selected,
+            "accuracy": official["accuracy"],
+            "precision": official["precision"],
+            "recall": official["recall"],
+            "f1": official["f1_score"],
+            "macro_f1": official["f1_score"],
+            "macro_precision": official["precision"],
+            "macro_recall": official["recall"],
+            "specificity": official["specificity"],
+            "threshold_source": "validation",
+        })
+    overall = result["overall"]
+    for metric, key in (("accuracy", "accuracy"), ("precision", "precision"),
+                        ("recall", "recall"), ("f1", "f1"),
+                        ("specificity", "specificity")):
+        overall[metric] = _mean([per_trait[t][key] for t in trait_order])
+    overall.update({"macro_f1": overall["f1"], "macro_precision": overall["precision"],
+                    "macro_recall": overall["recall"], "official_accuracy": overall["accuracy"],
+                    "official_f1": overall["f1"]})
 
 
 def run_experiment(
@@ -1347,6 +1394,7 @@ def run_experiment(
     a caller can persist the trained model; the default is just the dict.
     """
     trait_label_thresholds = derive_trait_label_thresholds(sample, train_idx)
+    shared_thresholds = me.shared_thresholds_from_validation(sample.labels_unit[val_idx])["thresholds"]
     out, model, _raw = _run_condition(
         sample,
         exp_id,
@@ -1356,6 +1404,7 @@ def run_experiment(
         val_idx,
         test_idx,
         trait_label_thresholds=trait_label_thresholds,
+        shared_thresholds=shared_thresholds,
     )
     return (out, model) if return_model else out
 
@@ -1710,6 +1759,8 @@ def run_all(
     agent = train_qlearning_agent(qlearning_train_sample, cfg)
     sample_weights = training_sample_weights(sample, train_idx)
     trait_label_thresholds = derive_trait_label_thresholds(sample, train_idx)
+    shared_threshold_plan = me.shared_thresholds_from_validation(sample.labels_unit[val_idx])
+    shared_thresholds = shared_threshold_plan["thresholds"]
     imbalance = build_imbalance_report(sample, train_idx, val_idx, test_idx, trait_label_thresholds)
 
     feature_build_seconds: Dict[str, float] = {}
@@ -1735,6 +1786,7 @@ def run_all(
             test_idx=test_idx,
             train_sample_weights=sample_weights,
             trait_label_thresholds=trait_label_thresholds,
+            shared_thresholds=shared_thresholds,
         )
         out["training_seconds"] = _f(time.perf_counter() - condition_start)
         out["threshold_selection"] = _threshold_selection_from_result(out)
@@ -1799,9 +1851,10 @@ def run_all(
             "notes": [
                 "These cutoffs convert continuous OCEAN labels into binary Low/High labels.",
                 "They are learned only from the train split, then reused unchanged for validation and test.",
-                "Model decision thresholds are still selected on validation predictions and applied once to test.",
+                "Shared decision thresholds are derived from validation BFI means and applied across all traits and experiments.",
             ],
         },
+        "shared_thresholds": shared_threshold_plan,
         "targeted_gan": targeted_gan,
         "results": results,
         "comparison": comparison,
@@ -2235,6 +2288,29 @@ def save_presentation_plots(results: Dict[str, Any], out: Path) -> None:
 
     plot_dir = (out / "plots").resolve()
     plot_dir.mkdir(parents=True, exist_ok=True)
+
+    # One image for each binary metric. Each line is the mean of five traits.
+    from backend.ml_pipeline.experiments.result_exports import METRICS, EXPERIMENT_ORDER
+    sweep = threshold_sweep_table(results)
+    for title, key in METRICS:
+        if sweep.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for label, condition in EXPERIMENT_ORDER:
+            rows = sweep[sweep["condition"] == condition]
+            points = rows.groupby("threshold", as_index=False)[key].mean().sort_values("threshold")
+            ax.plot(points["threshold"], points[key], marker="o", linewidth=1.7, label=f"{label} {condition}")
+        ax.set_title(f"{title}\nMetric score scale: 0–1 (0.8 = 80%)", pad=18)
+        ax.set_xlabel("Shared BFI threshold")
+        ax.set_ylabel(f"Mean {title} across five traits (0–1)")
+        ax.set_ylim(0, 1)
+        ax.set_xticks(sorted(sweep["threshold"].dropna().unique()))
+        ax.grid(alpha=0.25)
+        ax.legend(title="Experiment", ncol=2, fontsize=8)
+        fig.tight_layout()
+        _save_plot_file(fig, plot_dir / f"{key}_by_threshold.png")
+        plt.close(fig)
+    return
 
     comparison = comparison_table(results)
     thresholds = threshold_sweep_table(results)
@@ -2968,6 +3044,11 @@ def save_artifacts(
     bundle["comparison"].to_csv(out / "comparison.csv", index=False)
     bundle["presentation_metrics"].to_csv(out / "presentation_metrics_long.csv", index=False)
     bundle["threshold_sweeps"].to_csv(out / "threshold_sweeps_long.csv", index=False)
+    from backend.ml_pipeline.experiments.result_exports import export_metric_tables
+    export_metric_tables(out / "binary_metric_tables.xlsx", bundle["results"],
+                         bundle["shared_thresholds"]["thresholds"],
+                         ("O", "C", "A", "N", "E"),
+                         ("Openness", "Conscientiousness", "Agreeableness", "Neuroticism", "Extraversion"))
     bundle["prediction_evidence"].to_csv(out / "prediction_evidence.csv", index=False)
     effects = bundle["factor_effects"]
     effects["qlearning_effect"].to_csv(out / "qlearning_effect.csv", index=False)
@@ -2990,6 +3071,7 @@ def save_artifacts(
         ("imbalance_report.json", "imbalance"),
         ("qlearning_efficiency.json", "qlearning_efficiency"),
         ("trait_label_thresholds.json", "trait_label_thresholds"),
+        ("shared_thresholds.json", "shared_thresholds"),
         ("targeted_gan_report.json", "targeted_gan"),
     ):
         if bundle.get(key) is not None:
@@ -3014,6 +3096,8 @@ def save_artifacts(
             "comparison.csv",
             "presentation_metrics_long.csv",
             "threshold_sweeps_long.csv",
+            "binary_metric_tables.xlsx",
+            "shared_thresholds.json",
             "prediction_evidence.csv",
             "classification_audit.json",
             "qlearning_effect.csv",
@@ -3034,14 +3118,14 @@ def save_artifacts(
         "run_created_at": datetime.now().isoformat(timespec="seconds"),
         "metric_policy": {
             "official_test_metrics": "Use validation-selected thresholds only.",
-            "candidate_thresholds": "validation_score_percentiles_per_trait",
+            "candidate_thresholds": "five shared validation-BFI-mean thresholds at 0.1 spacing",
             "threshold_selection": "max_harmonic_mean_f1_specificity",
-            "ground_truth_cutoff": "train_split_median_per_trait",
+            "ground_truth_cutoff": "same threshold as the predicted score at each operating point",
             "audit_requirement": "classification_audit.json status must be PASS before presenting results.",
         },
         "graph_policy": {
             "condition_metric_bars": "One PNG per headline metric across all 8 conditions.",
-            "threshold_sweeps": "One PNG per threshold metric across all 8 conditions plus per-condition trait graphs.",
+            "threshold_sweeps": "One PNG per binary metric; eight experiment lines averaged across five traits.",
         },
     }
     with (out / "artifact_manifest.json").open("w", encoding="utf-8") as fh:
@@ -3245,13 +3329,6 @@ def _default_pandora_file() -> Optional[Path]:
     return candidates[0] if candidates else None
 
 
-def _parse_thresholds(value: str) -> Tuple[float, ...]:
-    thresholds = tuple(float(part.strip()) for part in value.split(",") if part.strip())
-    if len(thresholds) < 1:
-        raise argparse.ArgumentTypeError("Provide at least one threshold.")
-    return thresholds
-
-
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the local PANDORA binary LSTM experiment.",
@@ -3266,7 +3343,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--qlearning-train-epochs", type=int, default=3)
     parser.add_argument("--lstm-epochs", type=int, default=35)
     parser.add_argument("--gan-epochs", type=int, default=150)
-    parser.add_argument("--candidate-thresholds", type=_parse_thresholds, default=tuple(me.CANDIDATE_THRESHOLDS))
     parser.add_argument("--ground-truth-cutoff", type=float, default=me.DEFAULT_GROUND_TRUTH_CUTOFF)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--refresh-prepared", action="store_true")
@@ -3304,7 +3380,6 @@ def main(argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         qlearning_train_epochs=args.qlearning_train_epochs,
         lstm_epochs=args.lstm_epochs,
         gan_epochs=args.gan_epochs,
-        candidate_thresholds=args.candidate_thresholds,
         ground_truth_cutoff=args.ground_truth_cutoff,
         seed=args.seed,
         embedding_cache_dir=str(cache_dir),

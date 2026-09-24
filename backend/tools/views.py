@@ -794,7 +794,45 @@ class PandoraRunDetailView(LoginRequiredMixin, DetailView):
         context['plot_files'] = []
         context['primary_plots'] = []
         context['diagnostic_plots'] = []
+        context['metric_sections'] = []
         if run.artifact_dir:
+            summary_path = Path(run.artifact_dir) / "run_summary.json"
+            workbook_path = Path(run.artifact_dir) / "binary_metric_tables.xlsx"
+            if summary_path.exists() and workbook_path.exists():
+                from backend.ml_pipeline.experiments.result_exports import METRICS, EXPERIMENT_ORDER
+                payload = json.loads(summary_path.read_text(encoding="utf-8"))
+                results = payload.get("results") or {}
+                thresholds = (payload.get("shared_thresholds") or {}).get("thresholds") or []
+                conditions = [key for _, key in EXPERIMENT_ORDER]
+                condition_headers = [f"{label} ({key.replace('_', ' ')})" for label, key in EXPERIMENT_ORDER]
+                trait_keys = ("O", "C", "A", "N", "E")
+                trait_names = ("Openness", "Conscientiousness", "Agreeableness", "Neuroticism", "Extraversion")
+                for title, key in METRICS:
+                    tables = []
+                    for threshold in thresholds:
+                        trait_rows = []
+                        for trait_key, trait_name in zip(trait_keys, trait_names):
+                            scores = []
+                            for condition in conditions:
+                                per_trait = (results[condition].get("validation") or {}).get("per_trait", {})
+                                sweep = (per_trait.get(trait_key) or per_trait.get(trait_name) or {}).get("threshold_sweep", [])
+                                item = next((entry for entry in sweep if abs(float(entry["threshold"]) - threshold) < 1e-8), {})
+                                scores.append(item.get(key))
+                            trait_rows.append({"name": trait_name, "scores": scores})
+                        tables.append({"threshold": threshold, "rows": trait_rows})
+                    context['metric_sections'].append({"title": title, "tables": tables,
+                        "conditions": condition_headers, "image_url": reverse_lazy('tools:experiment_plot',
+                        kwargs={'pk': run.pk, 'filename': f'{key}_by_threshold.png'})})
+                context['regression_notes'] = []
+                for title, key in (("MAE", "val_mae"), ("RMSE", "val_rmse"), ("R²", "val_r2")):
+                    values = [(condition, (results[condition].get("overall") or {}).get(key))
+                              for condition in conditions]
+                    values = [(condition, float(value)) for condition, value in values if value is not None]
+                    if values:
+                        best = min(values, key=lambda item: item[1]) if key != "val_r2" else max(values, key=lambda item: item[1])
+                        context['regression_notes'].append({"title": title, "condition": best[0],
+                            "value": best[1], "direction": "lowest" if key != "val_r2" else "highest"})
+                context['workbook_url'] = reverse_lazy('tools:experiment_workbook', kwargs={'pk': run.pk})
             plot_dir = Path(run.artifact_dir) / "plots"
             if plot_dir.exists():
                 all_plots = []
@@ -839,7 +877,22 @@ class PandoraRunPlotView(LoginRequiredMixin, View):
         target = (plot_dir / Path(filename).name).resolve()
         if plot_dir not in target.parents or not target.exists() or target.suffix.lower() != ".png":
             raise Http404("Plot not found")
-        return FileResponse(target.open("rb"), content_type="image/png")
+        return FileResponse(target.open("rb"), content_type="image/png",
+                            as_attachment=request.GET.get("download") == "1", filename=target.name)
+
+
+class PandoraRunWorkbookView(LoginRequiredMixin, View):
+    """Download the metric tables for a run owned by the current researcher."""
+
+    def get(self, request, pk):
+        run = PANDORA_EXPERIMENT_RUN.objects.filter(pk=pk, researcher=request.user).first()
+        if not run or not run.artifact_dir:
+            raise Http404("Workbook not found")
+        target = Path(run.artifact_dir) / "binary_metric_tables.xlsx"
+        if not target.is_file():
+            raise Http404("Workbook not found")
+        return FileResponse(target.open("rb"), as_attachment=True, filename=target.name,
+                            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 class CohortPredictionView(LoginRequiredMixin, FormView):

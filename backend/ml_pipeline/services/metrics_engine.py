@@ -1017,3 +1017,51 @@ def evaluate(
             },
         },
     }
+
+
+def shared_thresholds_from_validation(y_true: np.ndarray) -> Dict[str, Any]:
+    """Five common operating points from the five validation BFI trait means."""
+    values = _require_ocean_matrix(y_true, "validation BFI scores")
+    if not len(values) or not np.all(np.isfinite(values)):
+        raise ValueError("Validation BFI scores must be nonempty and finite.")
+    if np.any((values < 0) | (values > 1)):
+        raise ValueError("Validation BFI scores must be normalized to [0, 1].")
+    trait_means = np.mean(values, axis=0)
+    overall_mean = float(np.mean(trait_means))
+    start = min(0.5, max(0.1, overall_mean - 0.2))
+    thresholds = [round(start + 0.1 * i, 6) for i in range(5)]
+    return {
+        "source_split": "validation",
+        "trait_means": {trait: float(value) for trait, value in zip(_DEFAULT_TRAIT_NAMES, trait_means)},
+        "overall_mean": overall_mean,
+        "thresholds": thresholds,
+        "rule": "five points spaced 0.1 apart, centered on the mean where possible and shifted inside [0.1, 0.9]",
+    }
+
+
+def sweep_shared_bfi_thresholds(y_true: np.ndarray, scores: np.ndarray,
+                                thresholds: Sequence[float]) -> Dict[str, Any]:
+    """At every point use the same BFI cutoff for truth and predicted score."""
+    truth = np.asarray(y_true, dtype=float)
+    predictions = np.asarray(scores, dtype=float)
+    if truth.shape != predictions.shape or truth.ndim != 1:
+        raise ValueError("Truth and prediction arrays must be matching vectors.")
+    if not 1 <= len(thresholds) <= 5 or len(set(thresholds)) != len(thresholds):
+        raise ValueError("Provide one to five distinct shared thresholds.")
+    results = []
+    for tau in thresholds:
+        if not 0.1 <= float(tau) <= 0.9:
+            raise ValueError("Shared thresholds must lie in [0.1, 0.9].")
+        row = compute_classification_metrics_at_threshold(
+            (truth >= tau).astype(int), predictions, float(tau)
+        )
+        row["selection_score"] = round(_threshold_selection_score(row), 4)
+        row["selection_policy"] = "max_harmonic_mean_f1_specificity"
+        results.append(row)
+    best = max(results, key=lambda row: (
+        row["selection_score"], row["f1_score"], row["specificity"], row["accuracy"]
+    ))
+    return {"results": results, "best_threshold": best["threshold"],
+            "best_f1": best["f1_score"], "accuracy": best["accuracy"],
+            "precision": best["precision"], "recall": best["recall"],
+            "f1": best["f1_score"], "specificity": best["specificity"]}

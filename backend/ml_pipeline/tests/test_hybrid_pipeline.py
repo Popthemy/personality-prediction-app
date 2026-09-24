@@ -14,10 +14,30 @@ from backend.ml_pipeline.services.metrics_engine import (
     compute_classification_metrics_at_threshold,
     evaluate_lstm_binary_classifier,
     evaluate_lstm_binary_with_thresholds,
+    shared_thresholds_from_validation,
+    sweep_shared_bfi_thresholds,
 )
 
 
 class TestBinaryMetricsEngine(TestCase):
+    def test_validation_means_produce_shared_shifted_grid(self):
+        labels = np.full((4, 5), 0.30)
+        plan = shared_thresholds_from_validation(labels)
+        self.assertEqual(plan["thresholds"], [0.1, 0.2, 0.3, 0.4, 0.5])
+        self.assertAlmostEqual(plan["overall_mean"], 0.30)
+        shifted = shared_thresholds_from_validation(np.full((4, 5), 0.15))
+        self.assertEqual(shifted["thresholds"], [0.1, 0.2, 0.3, 0.4, 0.5])
+
+    def test_each_operating_point_binarizes_truth_and_predictions(self):
+        sweep = sweep_shared_bfi_thresholds(
+            np.array([0.25, 0.45, 0.65]),
+            np.array([0.20, 0.50, 0.70]),
+            [0.3, 0.5, 0.7],
+        )
+        self.assertEqual([row["threshold"] for row in sweep["results"]], [0.3, 0.5, 0.7])
+        self.assertEqual(sweep["results"][0]["accuracy"], 1.0)
+        self.assertEqual(sweep["results"][1]["accuracy"], 0.6667)
+
     def test_candidate_thresholds(self):
         self.assertEqual(CANDIDATE_THRESHOLDS, [0.30, 0.40, 0.50, 0.60, 0.70])
 

@@ -1,9 +1,17 @@
 """Accounts views."""
 from django.views.generic import CreateView, TemplateView, UpdateView
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth import logout
+from django.shortcuts import redirect
 from django.urls import reverse_lazy
 from .models import CustomUser
 from .forms import CustomUserCreationForm, ResearcherProfileForm
+
+
+def logout_view(request):
+    """Log out the user and redirect to login page (supports both GET and POST)."""
+    logout(request)
+    return redirect('accounts:login')
 
 
 class RegisterView(CreateView):
